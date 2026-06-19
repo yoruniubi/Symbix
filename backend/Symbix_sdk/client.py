@@ -2,7 +2,7 @@ import litellm
 from typing import AsyncGenerator, Optional
 from .providers import ProviderRegistry
 
-class OwnNeuroClient:
+class SymbixClient:
     """统一的 AI 调用客户端，封装 litellm，管理 provider 切换"""
 
     def __init__(self, registry: ProviderRegistry, system_prompt: str = ""):

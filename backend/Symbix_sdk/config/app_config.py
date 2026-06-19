@@ -1,4 +1,3 @@
-# config.py
 import json
 import os
 from dataclasses import dataclass, asdict
@@ -32,3 +31,4 @@ class ConfigManager:
         for k, v in kwargs.items():
             setattr(self.data, k, v)
         self.save()
+
