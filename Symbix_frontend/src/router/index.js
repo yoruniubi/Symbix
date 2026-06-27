@@ -4,6 +4,7 @@ import SettingPage from '../pages/Setting.vue'
 import testPage from '../pages/test.vue'
 import ChatWindowPage from '../pages/chat_window.vue'
 import SkinWindowPage from '../pages/SkinWindow.vue'
+import ModelSettingPage from '../pages/model_setting.vue'
 
 const routes = [
   {
@@ -30,6 +31,11 @@ const routes = [
     path: '/skin',
     name: 'SkinWindow',
     component: SkinWindowPage,
+  },
+  {
+    path: '/model_setting',
+    name: 'ModelSetting',
+    component: ModelSettingPage,
   }
 ]
 

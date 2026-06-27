@@ -325,18 +325,29 @@ function handleModelSelect(modelValue: string) {
   flex-shrink: 0;
   width: 36px;
   height: 36px;
-  background: #2a2a35 !important;
-  transition: all 0.25s ease;
   opacity: 0.5;
+  transition: all 0.25s ease;
+}
+.send-btn :deep(.n-button__border),
+.send-btn :deep(.n-button__state-border) {
+  border: none !important;
+}
+.send-btn :deep(.n-button__content) {
+  background: #2a2a35 !important;
+  border-radius: 50%;
 }
 .send-btn.has-content {
-  background: linear-gradient(135deg, #6366f1, #4f46e5) !important;
   opacity: 1;
 }
+.send-btn.has-content :deep(.n-button__content) {
+  background: linear-gradient(135deg, #6366f1, #4f46e5) !important;
+}
 .send-btn.has-content:not(:disabled):hover {
-  background: linear-gradient(135deg, #818cf8, #6366f1) !important;
   transform: scale(1.08);
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+.send-btn.has-content:not(:disabled):hover :deep(.n-button__content) {
+  background: linear-gradient(135deg, #818cf8, #6366f1) !important;
 }
 .send-btn:disabled {
   opacity: 0.35;
@@ -382,40 +393,5 @@ function handleModelSelect(modelValue: string) {
 }
 :deep(.n-upload-trigger) {
   width: auto !important;
-}
-.send-btn :deep(.n-button__border) {
-  display: none !important;
-}
-.send-btn :deep(.n-button__state-border) {
-  display: none !important;
-}
-.send-btn:focus {
-  outline: none !important;
-  box-shadow: none !important;
-}
-.chat-input :deep(.n-input__textarea-el) {
-  background: transparent !important;
-  border: none !important;
-  border-radius: 0 !important;
-  padding: 8px 4px 6px 4px;
-  caret-color: #6366f1;
-  color: #e4e4e7;
-  font-size: 14px;
-  line-height: 1.55;
-  /* 关键：覆盖 focus 状态的背景 */
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.chat-input :deep(.n-input__textarea-el:focus) {
-  background: transparent !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-/* 覆盖浏览器默认的 focus 高亮 */
-.chat-input :deep(.n-input__textarea-el:focus-visible) {
-  background: transparent !important;
-  outline: none !important;
 }
 </style>

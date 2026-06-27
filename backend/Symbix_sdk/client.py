@@ -1,5 +1,8 @@
 import litellm
 from typing import AsyncGenerator, Optional
+
+from backend.Symbix_sdk.skill import SkillLoader
+from backend.Symbix_sdk.skill.registry import SkillRegistry
 from .providers import ProviderRegistry
 
 class SymbixClient:
@@ -10,10 +13,13 @@ class SymbixClient:
         self.system_prompt = system_prompt
         litellm.drop_params = True  # 不支持的参数自动丢弃，避免报错
 
-    def _build_messages(self, history: list[dict], user_input: str) -> list[dict]:
+    def _build_messages(self, history, user_input, registry=None):
         messages = []
-        if self.system_prompt:
-            messages.append({"role": "system", "content": self.system_prompt})
+        system = self.system_prompt
+        if registry:
+            system += registry.inject_relevant(user_input)  # 自动注入匹配的 skill
+        if system:
+            messages.append({"role": "system", "content": system})
         messages.extend(history)
         messages.append({"role": "user", "content": user_input})
         return messages

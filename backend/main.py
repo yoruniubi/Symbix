@@ -3,7 +3,7 @@ Symbix Backend - FastAPI Server
 提供 AI 对话、Skill 管理和 MCP 支持的 REST API
 """
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException,WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from Symbix_sdk.client import SymbixClient
@@ -11,6 +11,7 @@ from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.config.mcp_config import McpCofing
 from Symbix_sdk.mcp.connector import Connector
+from Symbix_sdk.stt.sensevoice_cpp import SenseVoiceCppProvider
 
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
@@ -30,6 +31,23 @@ symbix_client = SymbixClient(registry=provider_registry)
 # ============ MCP 配置与连接 ============
 mcp_config = McpCofing(path="mcp_config.json")
 
+# 初始化sensevoice
+stt = SenseVoiceCppProvider()
+
+@app.websocket("/stt/stream")
+async def stt_stream(websocket: WebSocket):
+    await websocket.accept()
+
+    async def on_result(text: str):
+        await websocket.send_text(text)
+
+    try:
+        await stt.start_stream(on_result)
+    except Exception as e:
+        await websocket.send_text(f"[error] {e}")
+    finally:
+        stt.stop()
+        await websocket.close()
 
 def get_mcp_connector() -> Connector:
     """创建 MCP Connector 实例"""

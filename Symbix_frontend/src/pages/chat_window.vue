@@ -31,43 +31,63 @@
           MCP
         </n-tooltip>
       </div>
-    </div>
-
-    <!-- Skill Panel -->
-    <div class="side-panel" v-if="activePanel === 'skill'">
-      <div class="side-panel-header">
-        <span class="side-panel-title">Skill 面板</span>
-        <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </n-button>
-      </div>
-      <div class="side-panel-body">
-        <n-text depth="3" style="font-size:13px;">Skill 加载器 - 管理你的 AI 能力扩展</n-text>
-        <n-button size="small" secondary style="margin-top:12px;" block>刷新 Skill 列表</n-button>
-      </div>
-    </div>
-
-    <!-- MCP Panel -->
-    <div class="side-panel" v-if="activePanel === 'mcp'">
-      <div class="side-panel-header">
-        <span class="side-panel-title">MCP 面板</span>
-        <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </n-button>
-      </div>
-      <div class="side-panel-body">
-        <n-text depth="3" style="font-size:13px;">MCP 连接器 - 管理工具和资源</n-text>
-        <n-button size="small" secondary style="margin-top:12px;" block>测试连接</n-button>
+      <div class="activity-bar-bottom">
+        <n-tooltip placement="right" trigger="hover">
+          <template #trigger>
+            <div class="activity-btn" @click="$router.push('/model_setting')">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </div>
+          </template>
+          模型设置
+        </n-tooltip>
       </div>
     </div>
 
-    <!-- Session List -->
-    <SessionList
-      :sessions="sessions"
-      :active-session="activeSession"
-      @new-chat="newChat"
-      @load-session="loadSession"
-    />
+    <!-- Sidebar Area: panels overlay the session list -->
+    <div class="sidebar-container">
+      <!-- Skill Panel -->
+      <transition name="panel-slide">
+        <div class="side-panel" v-if="activePanel === 'skill'">
+          <div class="side-panel-header">
+            <span class="side-panel-title">Skill 面板</span>
+            <n-button text size="tiny" @click="activePanel = null" class="close-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </n-button>
+          </div>
+          <div class="side-panel-body">
+            <n-text depth="3" style="font-size:13px;">Skill 加载器 - 管理你的 AI 能力扩展</n-text>
+            <n-button size="small" secondary style="margin-top:12px;" block>刷新 Skill 列表</n-button>
+          </div>
+        </div>
+      </transition>
+
+      <!-- MCP Panel -->
+      <transition name="panel-slide">
+        <div class="side-panel" v-if="activePanel === 'mcp'">
+          <div class="side-panel-header">
+            <span class="side-panel-title">MCP 面板</span>
+            <n-button text size="tiny" @click="activePanel = null" class="close-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </n-button>
+          </div>
+          <div class="side-panel-body">
+            <n-text depth="3" style="font-size:13px;">MCP 连接器 - 管理工具和资源</n-text>
+            <n-button size="small" secondary style="margin-top:12px;" block>测试连接</n-button>
+          </div>
+        </div>
+      </transition>
+
+      <!-- Session List (underneath, always present) -->
+      <SessionList
+        :sessions="sessions"
+        :active-session="activeSession"
+        @new-chat="newChat"
+        @load-session="loadSession"
+      />
+    </div>
 
     <!-- Main Chat Area -->
     <div class="chat-area">
@@ -282,6 +302,14 @@ function scrollToBottom() {
   align-items: center;
   gap: 6px;
 }
+.activity-bar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-bottom: 8px;
+}
 .activity-btn {
   width: 40px;
   height: 40px;
@@ -293,6 +321,7 @@ function scrollToBottom() {
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
+  transform: translateY(-15px)
 }
 .activity-btn:hover {
   color: #d4d4d8;
@@ -313,21 +342,42 @@ function scrollToBottom() {
   border-radius: 0 2px 2px 0;
 }
 
+/* ---- Sidebar Container ---- */
+.sidebar-container {
+  position: relative;
+  flex-shrink: 0;
+}
+
 /* ---- Side Panel (Skill / MCP) ---- */
 .side-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: 260px;
-  background: rgba(14, 14, 20, 0.8);
-  backdrop-filter: blur(12px);
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(20, 20, 28, 0.95);
+  backdrop-filter: blur(16px);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  z-index: 5;
-  animation: slideIn 0.2s ease;
+  z-index: 20;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
 }
-@keyframes slideIn {
-  from { opacity: 0; transform: translateX(-8px); }
-  to { opacity: 1; transform: translateX(0); }
+
+/* Panel slide transition */
+.panel-slide-enter-active {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.panel-slide-leave-active {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.panel-slide-enter-from {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+.panel-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
 }
 .side-panel-header {
   display: flex;
