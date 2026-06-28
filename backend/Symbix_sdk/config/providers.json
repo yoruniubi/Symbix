@@ -2,9 +2,9 @@
   "active": "default",
   "providers": {
     "default": {
-      "model": "gpt-4o-mini",
-      "api_key": null,
-      "api_base": null
+      "model": "gemini-3-flash-preview",
+      "api_key": "***REDACTED-API-KEY***",
+      "api_base": "https://sukiyoru.eu.cc"
     }
   }
 }

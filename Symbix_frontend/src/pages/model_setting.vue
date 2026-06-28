@@ -1,9 +1,9 @@
 <template>
   <div class="setting-page">
     <TitleBar />
-    <n-card title="设置" style="max-width: 520px; margin: 60px auto;">
+    <n-card title="模型设置" style="max-width: 520px; margin: 60px auto;">
       <template #header-extra>
-        <n-button quirks circle type="text" @click="handleClose">
+        <n-button circle text @click="router.back()">
           <template #icon>
             <span style="font-size: 18px; font-weight: bold;">✕</span>
           </template>
@@ -11,6 +11,24 @@
       </template>
 
       <n-form :model="form" label-placement="top">
+
+        <!-- 厂商选择 -->
+        <n-form-item label="模型厂商">
+          <div class="provider-grid">
+            <div
+              v-for="p in providers"
+              :key="p.id"
+              class="provider-card"
+              :class="{ active: selectedProvider === p.id }"
+              @click="selectProvider(p)"
+            >
+              <span class="provider-icon">{{ p.icon }}</span>
+              <span class="provider-name">{{ p.name }}</span>
+            </div>
+          </div>
+        </n-form-item>
+
+        <!-- API Key -->
         <n-form-item label="API Key">
           <n-input
             v-model:value="form.apiKey"
@@ -19,13 +37,17 @@
             placeholder="输入你的 API Key"
           />
         </n-form-item>
-        <n-form-item label="Base URL">
+
+        <!-- Base URL：仅自定义或需要中转时显示 -->
+        <n-form-item label="Base URL" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
           <n-input
             v-model:value="form.baseUrl"
-            placeholder="例如 https://api.openai.com（自动补全 /v1）"
+            :placeholder="selectedProvider === 'custom' ? '例如 https://your-proxy.com/v1' : '可选，留空使用官方地址'"
           />
         </n-form-item>
-        <n-form-item label="模型选择">
+
+        <!-- 模型选择 -->
+        <n-form-item label="模型">
           <n-input-group>
             <n-select
               v-model:value="form.model"
@@ -33,14 +55,23 @@
               :loading="fetchingModels"
               filterable
               tag
-              placeholder="点击「获取模型」或手动输入"
+              placeholder="选择预设模型或手动输入"
               style="flex: 1"
             />
-            <n-button :loading="fetchingModels" @click="handleFetchModels" style="width: 110px; flex-shrink: 0;">
+            <n-button
+              v-if="selectedProvider === 'custom'"
+              :loading="fetchingModels"
+              @click="handleFetchModels"
+              style="width: 110px; flex-shrink: 0;"
+            >
               {{ fetchingModels ? '获取中...' : '获取模型' }}
             </n-button>
           </n-input-group>
         </n-form-item>
+         <div v-if="form.model" style="margin-top: 6px; font-size: 11px; color: #6b6b80;">
+            litellm 调用标识：<span style="color: #818cf8;">{{ form.model }}</span>
+          </div>
+
         <n-space justify="end" style="margin-top: 8px;">
           <n-button @click="handleReset">重置</n-button>
           <n-button :loading="testing" @click="handleTest">测试连接</n-button>
@@ -52,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
@@ -64,30 +95,135 @@ const message = useMessage()
 const { settings, loadSettings, saveSettings, resetSettings } = useSettings()
 const { fetchModels, testConnection } = useApiClient()
 
+interface Provider {
+  id: string
+  name: string
+  icon: string
+  baseUrl: string        // 官方地址，空字符串表示 litellm 自动处理
+  needsBase: boolean     // 是否需要显示 baseUrl 输入框
+  models: string[]       // litellm 格式的 model string
+}
+
+const providers: Provider[] = [
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    icon: '🤖',
+    baseUrl: '',
+    needsBase: false,
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    icon: '🧠',
+    baseUrl: '',
+    needsBase: false,
+    models: [
+      'anthropic/claude-opus-4-5',
+      'anthropic/claude-sonnet-4-5',
+      'anthropic/claude-haiku-4-5',
+    ],
+  },
+  {
+    id: 'google',
+    name: 'Google',
+    icon: '✨',
+    baseUrl: '',
+    needsBase: false,
+    models: [
+      'gemini/gemini-2.5-pro',
+      'gemini/gemini-2.5-flash',
+      'gemini/gemini-2.0-flash',
+    ],
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    icon: '🐋',
+    baseUrl: 'https://api.deepseek.com/v1',
+    needsBase: false,
+    models: ['openai/deepseek-chat', 'openai/deepseek-reasoner'],
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    icon: '⚡',
+    baseUrl: '',
+    needsBase: false,
+    models: [
+      'groq/llama-3.3-70b-versatile',
+      'groq/llama-3.1-8b-instant',
+      'groq/mixtral-8x7b-32768',
+    ],
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral',
+    icon: '🌬️',
+    baseUrl: '',
+    needsBase: false,
+    models: [
+      'mistral/mistral-large-latest',
+      'mistral/mistral-small-latest',
+      'mistral/codestral-latest',
+    ],
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    icon: '🔧',
+    baseUrl: '',
+    needsBase: true,
+    models: [],
+  },
+]
+
+const selectedProvider = ref<string>('custom')
 const form = ref({ apiKey: '', baseUrl: '', model: '' })
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const fetchingModels = ref(false)
 const testing = ref(false)
 
+const currentProviderNeedsBase = computed(() => {
+  const p = providers.find(p => p.id === selectedProvider.value)
+  return p?.needsBase ?? false
+})
+
 onMounted(() => {
   loadSettings()
   form.value = {
-    apiKey: settings.value.apiKey,
-    baseUrl: settings.value.baseUrl,
-    model: settings.value.model,
+    apiKey: settings.value.apiKey || '',
+    baseUrl: settings.value.baseUrl || '',
+    model: settings.value.model || '',
   }
-  if (settings.value.model) {
-    modelOptions.value = [{ label: settings.value.model, value: settings.value.model }]
+
+  // 根据已保存的 model 前缀自动匹配厂商
+  const model = settings.value.model || ''
+  const matched = providers.find(p =>
+    p.models.some(m => m === model) ||
+    (p.id === 'openai' && !model.includes('/')) ||
+    model.startsWith(p.id + '/')
+  )
+  if (matched) {
+    selectedProvider.value = matched.id
+    modelOptions.value = matched.models.map(m => ({ label: m, value: m }))
+  } else if (model) {
+    selectedProvider.value = 'custom'
+    modelOptions.value = [{ label: model, value: model }]
   }
 })
 
-// 处理关闭返回事件
-function handleClose() {
-  // 方法 A：直接跳转到聊天窗口的路由路径（假设路径为 /chat）
-  // router.push('/chat') 
-  
-  // 或者 方法 B：如果聊天页是上一页，直接返回上一页
-  router.back()
+function selectProvider(p: Provider) {
+  selectedProvider.value = p.id
+  form.value.baseUrl = p.baseUrl
+  if (p.models.length > 0) {
+    modelOptions.value = p.models.map(m => ({ label: m, value: m }))
+    form.value.model = p.models[0]
+  } else {
+    modelOptions.value = []
+    form.value.model = ''
+  }
 }
 
 async function handleFetchModels() {
@@ -98,10 +234,14 @@ async function handleFetchModels() {
   fetchingModels.value = true
   try {
     const models = await fetchModels(form.value.apiKey, form.value.baseUrl)
-    modelOptions.value = models.map(id => ({ label: id, value: id }))
+    // 自定义接口的模型统一加 openai/ 前缀
+    modelOptions.value = models.map(id => ({
+      label: id,
+      value: `openai/${id}`,
+    }))
     if (models.length > 0) {
       message.success(`获取到 ${models.length} 个模型`)
-      if (!form.value.model) form.value.model = models[0]
+      if (!form.value.model) form.value.model = `openai/${models[0]}`
     } else {
       message.warning('未获取到模型列表')
     }
@@ -113,14 +253,14 @@ async function handleFetchModels() {
 }
 
 async function handleTest() {
-  if (!form.value.apiKey || !form.value.baseUrl) {
-    message.warning('请先填写 API Key 和 Base URL')
+  if (!form.value.apiKey) {
+    message.warning('请先填写 API Key')
     return
   }
   testing.value = true
   try {
     await testConnection(form.value.apiKey, form.value.baseUrl)
-    message.success('连接成功！API Key 和 Base URL 有效')
+    message.success('连接成功！')
   } catch (e: any) {
     message.error(`连接失败：${e.message}`)
   } finally {
@@ -131,14 +271,14 @@ async function handleTest() {
 function handleSave() {
   saveSettings(form.value)
   message.success('设置已保存')
-  // 选做：如果你希望保存后自动返回聊天界面，可以在这里解开注释
-  // router.push('/chat')
+  setTimeout(() => router.back(), 300)  
 }
 
 function handleReset() {
   resetSettings()
   form.value = { apiKey: '', baseUrl: '', model: '' }
   modelOptions.value = []
+  selectedProvider.value = 'custom'
   message.info('已重置')
 }
 </script>
@@ -149,5 +289,49 @@ function handleReset() {
   background-color: rgba(16, 16, 20, 0.95);
   padding-top: 32px;
   color: white;
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.provider-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.provider-card:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.provider-card.active {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.provider-icon {
+  font-size: 20px;
+}
+
+.provider-name {
+  font-size: 11px;
+  color: #a0a0b8;
+  text-align: center;
+}
+
+.provider-card.active .provider-name {
+  color: #c7d2fe;
 }
 </style>

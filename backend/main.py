@@ -14,6 +14,7 @@ from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import Connector
 from Symbix_sdk.skill.registry import SkillRegistry
 import os
+import traceback
 
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
@@ -37,7 +38,7 @@ provider_registry = ProviderRegistry(
     config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "providers.json")
 )
 skill_registry = SkillRegistry(
-    skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skills", "installed")
+    skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skill", "installed_skill")
 )
 
 try:
@@ -110,8 +111,12 @@ async def root():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    """标准对话接口"""
     try:
+        # 直接用请求里的配置，不改 provider_registry
+        api_key = request.api_key or provider_registry.get_active().api_key
+        api_base = request.api_base or provider_registry.get_active().api_base
+        model = request.model or provider_registry.get_active().model
+
         memory.add(request.session_id, "user", request.message)
         history = memory.get_history(request.session_id, limit=20)
         symbix_client.system_prompt = request.system_prompt
@@ -120,15 +125,16 @@ async def chat(request: ChatRequest):
             user_input=request.message,
             history=history[:-1],
             registry=skill_registry,
+            # 直接传入覆盖
+            override_api_key=api_key,
+            override_api_base=api_base,
+            override_model=model,
         )
-
         memory.add(request.session_id, "assistant", response["content"])
-
-        return ChatResponse(
-            content=response["content"],
-            session_id=request.session_id,
-        )
+        return ChatResponse(content=response["content"], session_id=request.session_id)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -148,7 +154,6 @@ async def chat_stream(request: ChatRequest):
                 if request.model:
                     cfg.model = request.model
                 provider_registry.save()
-
             memory.add(request.session_id, "user", request.message)
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt

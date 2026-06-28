@@ -25,6 +25,15 @@
     "core:webview:allow-webview-size",
     "core:tray:default",
     "core:menu:default",
-    "core:app:default"
+    "core:app:default",
+    "http:default",
+    "http:allow-fetch",
+    "http:allow-fetch-send",
+    "http:allow-fetch-cancel-body",
+    "http:allow-fetch-read-body",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [{ "url": "http://127.0.0.1:8000/**" }]
+    }
   ]
 }

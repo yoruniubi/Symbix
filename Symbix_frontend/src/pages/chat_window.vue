@@ -58,8 +58,12 @@
             </n-button>
           </div>
           <div class="side-panel-body">
-            <n-text depth="3" style="font-size:13px;">Skill 加载器 - 管理你的 AI 能力扩展</n-text>
-            <n-button size="small" secondary style="margin-top:12px;" block>刷新 Skill 列表</n-button>
+            <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill</n-text>
+            <div v-for="skill in skillList" :key="skill.name" style="margin-top:8px; padding:8px; border-radius:8px; background:rgba(255,255,255,0.04)">
+              <div style="font-size:13px; color:#c7d2fe">{{ skill.display_name }}</div>
+              <div style="font-size:11px; color:#6b6b80; margin-top:2px">{{ skill.description }}</div>
+            </div>
+            <n-button size="small" secondary style="margin-top:12px;" block @click="refreshSkillList">刷新列表</n-button>
           </div>
         </div>
       </transition>
@@ -74,8 +78,11 @@
             </n-button>
           </div>
           <div class="side-panel-body">
-            <n-text depth="3" style="font-size:13px;">MCP 连接器 - 管理工具和资源</n-text>
-            <n-button size="small" secondary style="margin-top:12px;" block @click = "testMcpConnection">测试连接</n-button>
+            <div v-if="mcpConfigData" style="font-size:13px; color:#a0a0b8">
+              <div>Host: {{ mcpConfigData.host }}</div>
+              <div>Port: {{ mcpConfigData.port }}</div>
+            </div>
+            <n-button size="small" secondary style="margin-top:12px;" block @click="testMcpConnection">测试连接</n-button>
           </div>
         </div>
       </transition>
@@ -121,8 +128,15 @@
 
       <!-- Message List -->
       <div class="message-list" ref="messageListRef" v-else>
-        <ChatMessage v-for="(msg, idx) in messages" :key="idx" :msg="msg" />
-        <div v-if="loading" class="loading-row">
+        <ChatMessage 
+          v-for="(msg, idx) in messages" 
+          :key="idx" 
+          :msg="msg" 
+          v-show="!(msg.role === 'assistant' && msg.content === '' && loading)"
+        />
+        <div v-if="loading && messages[messages.length - 1]?.role === 'assistant' 
+            && messages[messages.length - 1]?.content === ''" 
+            class="loading-row">
           <div class="loading-bubble">
             <span class="loading-dot"></span>
             <span class="loading-dot"></span>
@@ -158,7 +172,7 @@ import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
-
+import { fetch } from '@tauri-apps/plugin-http'
 const router = useRouter()
 const messageUi = useMessage()
 const { settings, loadSettings, saveSettings } = useSettings()
@@ -170,12 +184,18 @@ const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 interface Message { role: 'user' | 'assistant'; content: string }
 interface Session { title: string; messages: Message[] }
 
-const sessions = ref<Session[]>([])
-const activeSession = ref(-1)
-const messages = ref<Message[]>([])
+import { useChatStore } from '@/composables/useChatStore'
+const { messages, sessions, activeSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
-const skillList = ref([])
+interface Skill {
+  name: string
+  display_name: string
+  description: string
+  trigger_keywords: string[]
+}
+
+const skillList = ref<Skill[]>([])
 const activePanel = ref<'skill' | 'mcp' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref(settings.value.model || 'gpt-4o-mini')
@@ -184,7 +204,7 @@ const hasApiKey = computed(() => !!settings.value.apiKey)
 
 onMounted(async () => {
   loadSettings()
-  if (settings.value.model) {
+  if (!currentModel.value && settings.value.model) {
     currentModel.value = settings.value.model
   }
   // 尝试获取模型列表
@@ -210,10 +230,23 @@ async function testMcpConnection()
     }
   } catch (err) {
     messageUi.error('无法连接到 MCP 服务')
-    console.log(err)
+    console.log("mcp服务:",err)
+  }
+}
+
+async function refreshSkillList() {
+  try {
+    const res = await fetch('http://127.0.0.1:8000/skills')
+    const data = await res.json()
+    skillList.value = data.skills
+    messageUi.success('Skill 列表已刷新')
+  } catch (err) {
+    console.log("mcp服务:",err)
+    messageUi.error('获取 Skill 列表失败')
   }
 }
 async function togglePanel(panel: 'skill' | 'mcp') {
+  console.log('🟡 togglePanel called', panel)
   // 如果当前已经是激活状态，点击则是关闭，不需要请求
   if (activePanel.value === panel) {
     activePanel.value = null
@@ -230,6 +263,7 @@ async function togglePanel(panel: 'skill' | 'mcp') {
       const data = await res.json()
       skillList.value = data.skills
     } catch (err) {
+      console.log("具体错误为：",err)
       messageUi.error('获取 Skill 列表失败')
     }
   } else if (panel === 'mcp') {
@@ -238,6 +272,7 @@ async function togglePanel(panel: 'skill' | 'mcp') {
       const res = await fetch('http://127.0.0.1:8000/mcp/config')
       mcpConfigData.value = await res.json()
     } catch (err) {
+      console.log("具体错误为：",err)
       messageUi.error('获取 MCP 配置失败')
     }
   }
@@ -272,7 +307,9 @@ function sendQuick(text: string) {
 const BACKEND_URL = 'http://127.0.0.1:8000'
 
 async function sendMessage(text: string, files: File[]) {
-  // 0. 如果当前是新对话（非加载的历史会话）且有历史消息，先归档到左侧列表
+  console.log('=== sendMessage 开始 ===')
+  console.log('settings:', JSON.stringify(settings.value))
+
   if (activeSession.value === -1 && messages.value.length > 0) {
     sessions.value.unshift({
       title: messages.value[0].content.slice(0, 20) || '新对话',
@@ -280,97 +317,53 @@ async function sendMessage(text: string, files: File[]) {
     })
   }
 
-  // 1. 构建用户发送的消息内容
   let displayContent = text
   if (files.length > 0) {
     const fileNames = files.map(f => `[文件: ${f.name}]`).join(' ')
     displayContent = text ? `${fileNames}\n${text}` : fileNames
   }
 
-  // 压入用户消息
   messages.value.push({ role: 'user', content: displayContent })
   loading.value = true
   await nextTick()
   scrollToBottom()
 
   try {
-    // 2. 创建一条空的 assistant 消息，用来接收流式追加的文本
     const assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
 
-    // 3. 请求本地后端流式接口 /chat/stream (SSE)
-    //    后端格式: data: <chunk>\n\n，chunk 是纯文本，不是 JSON
-    const response = await fetch(`${BACKEND_URL}/chat/stream`, {
+    const requestBody = {
+      message: displayContent,
+      session_id: 'default',
+      system_prompt: '',
+      api_key: settings.value.apiKey || '',
+      api_base: settings.value.baseUrl || '',
+      model: settings.value.model || currentModel.value,
+    }
+    console.log('=== 请求体 ===', JSON.stringify(requestBody))
+
+    const response = await window.fetch(`${BACKEND_URL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: displayContent,
-        session_id: 'default',
-        system_prompt: '',
-        api_key: settings.value.apiKey || '',
-        api_base: settings.value.baseUrl || '',
-        model: settings.value.model || currentModel.value,
-      })
+      body: JSON.stringify(requestBody)
     })
 
-    if (!response.ok || !response.body) {
+    console.log('=== 收到响应 ===', response.status, response.ok)
+
+    if (!response.ok) {
       throw new Error(`HTTP 错误! 状态码: ${response.status}`)
     }
 
-    // 4. 读取流数据
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder('utf-8')
-    let done = false
-    let buffer = ''
+    const data = await response.json()
+    console.log('=== 响应数据 ===', data)
 
-    while (!done) {
-      const { value, done: readerDone } = await reader.read()
-      done = readerDone
-      if (value) {
-        buffer += decoder.decode(value, { stream: !done })
-
-        // 5. 按 SSE 格式解析: data: <chunk>\n\n
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed) continue
-
-          if (trimmed.startsWith('data:')) {
-            const payload = trimmed.slice(5).trim()
-
-            if (payload === '[DONE]') {
-              done = true
-              break
-            }
-            if (payload.startsWith('[ERROR]')) {
-              throw new Error(payload.slice(8))
-            }
-
-            // 后端直接 yield 文本，不需要 JSON.parse
-            messages.value[assistantMsgIndex].content += payload
-            nextTick(() => scrollToBottom())
-          }
-        }
-      }
-    }
-
-    // 处理 buffer 中剩余的数据
-    const remaining = buffer.trim()
-    if (remaining.startsWith('data:')) {
-      const payload = remaining.slice(5).trim()
-      if (payload && payload !== '[DONE]' && !payload.startsWith('[ERROR]')) {
-        messages.value[assistantMsgIndex].content += payload
-      }
-    }
+    messages.value[assistantMsgIndex].content = data.content
 
     loading.value = false
-
-    // 6. 流式结束后保存为 Markdown
     await saveSessionToLocalMarkdown()
 
   } catch (e: any) {
     loading.value = false
+    console.error('=== 捕获到异常 ===', e)
     messageUi.error(`请求失败：${e.message}`)
     messages.value.push({ role: 'assistant', content: `⚠️ 请求失败：${e.message}` })
   }
