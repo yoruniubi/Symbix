@@ -75,7 +75,7 @@
           </div>
           <div class="side-panel-body">
             <n-text depth="3" style="font-size:13px;">MCP 连接器 - 管理工具和资源</n-text>
-            <n-button size="small" secondary style="margin-top:12px;" block>测试连接</n-button>
+            <n-button size="small" secondary style="margin-top:12px;" block @click = "testMcpConnection">测试连接</n-button>
           </div>
         </div>
       </transition>
@@ -175,11 +175,11 @@ const activeSession = ref(-1)
 const messages = ref<Message[]>([])
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
-
+const skillList = ref([])
 const activePanel = ref<'skill' | 'mcp' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref(settings.value.model || 'gpt-4o-mini')
-
+const mcpConfigData = ref<any>(null)
 const hasApiKey = computed(() => !!settings.value.apiKey)
 
 onMounted(async () => {
@@ -198,9 +198,49 @@ onMounted(async () => {
     modelOptions.value = [{ label: currentModel.value, value: currentModel.value }]
   }
 })
+async function testMcpConnection()
+{
+  try {
+    // 对应 FastAPI: @app.get("/mcp/test")
+    const res = await fetch('http://127.0.0.1:8000/mcp/test')
+    const data = await res.json()
+    if (data.status === 'connected') {
+      messageUi.success('MCP 服务连接成功！')
+      console.log("成功连接")
+    }
+  } catch (err) {
+    messageUi.error('无法连接到 MCP 服务')
+    console.log(err)
+  }
+}
+async function togglePanel(panel: 'skill' | 'mcp') {
+  // 如果当前已经是激活状态，点击则是关闭，不需要请求
+  if (activePanel.value === panel) {
+    activePanel.value = null
+    return
+  }
 
-function togglePanel(panel: 'skill' | 'mcp') {
-  activePanel.value = activePanel.value === panel ? null : panel
+  activePanel.value = panel
+
+  // 根据打开的面板动态请求后端 FastAPI
+  if (panel === 'skill') {
+    try {
+      // 对应你的 FastAPI: @app.get("/skills")
+      const res = await fetch('http://127.0.0.1:8000/skills')
+      const data = await res.json()
+      skillList.value = data.skills
+    } catch (err) {
+      messageUi.error('获取 Skill 列表失败')
+    }
+  } else if (panel === 'mcp') {
+    try {
+      // 对应你的 FastAPI: @app.get("/mcp/config")
+      const res = await fetch('http://127.0.0.1:8000/mcp/config')
+      mcpConfigData.value = await res.json()
+    } catch (err) {
+      messageUi.error('获取 MCP 配置失败')
+    }
+  }
 }
 
 function setModel(model: string) {
@@ -229,42 +269,134 @@ function sendQuick(text: string) {
   sendMessage(text, [])
 }
 
+const BACKEND_URL = 'http://127.0.0.1:8000'
+
 async function sendMessage(text: string, files: File[]) {
-  if (!settings.value.apiKey) {
-    messageUi.warning('请先在设置页面配置 API Key')
-    return
+  // 0. 如果当前是新对话（非加载的历史会话）且有历史消息，先归档到左侧列表
+  if (activeSession.value === -1 && messages.value.length > 0) {
+    sessions.value.unshift({
+      title: messages.value[0].content.slice(0, 20) || '新对话',
+      messages: [...messages.value],
+    })
   }
 
-  // Build display content
+  // 1. 构建用户发送的消息内容
   let displayContent = text
   if (files.length > 0) {
     const fileNames = files.map(f => `[文件: ${f.name}]`).join(' ')
     displayContent = text ? `${fileNames}\n${text}` : fileNames
   }
 
+  // 压入用户消息
   messages.value.push({ role: 'user', content: displayContent })
   loading.value = true
   await nextTick()
   scrollToBottom()
 
   try {
-    const reply = await chatCompletion(
-      settings.value.apiKey,
-      settings.value.baseUrl,
-      currentModel.value,
-      messages.value.map(m => ({ role: m.role, content: m.content }))
-    )
-    messages.value.push({ role: 'assistant', content: reply })
+    // 2. 创建一条空的 assistant 消息，用来接收流式追加的文本
+    const assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
+
+    // 3. 请求本地后端流式接口 /chat/stream (SSE)
+    //    后端格式: data: <chunk>\n\n，chunk 是纯文本，不是 JSON
+    const response = await fetch(`${BACKEND_URL}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: displayContent,
+        session_id: 'default',
+        system_prompt: '',
+        api_key: settings.value.apiKey || '',
+        api_base: settings.value.baseUrl || '',
+        model: settings.value.model || currentModel.value,
+      })
+    })
+
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP 错误! 状态码: ${response.status}`)
+    }
+
+    // 4. 读取流数据
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let done = false
+    let buffer = ''
+
+    while (!done) {
+      const { value, done: readerDone } = await reader.read()
+      done = readerDone
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done })
+
+        // 5. 按 SSE 格式解析: data: <chunk>\n\n
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+
+          if (trimmed.startsWith('data:')) {
+            const payload = trimmed.slice(5).trim()
+
+            if (payload === '[DONE]') {
+              done = true
+              break
+            }
+            if (payload.startsWith('[ERROR]')) {
+              throw new Error(payload.slice(8))
+            }
+
+            // 后端直接 yield 文本，不需要 JSON.parse
+            messages.value[assistantMsgIndex].content += payload
+            nextTick(() => scrollToBottom())
+          }
+        }
+      }
+    }
+
+    // 处理 buffer 中剩余的数据
+    const remaining = buffer.trim()
+    if (remaining.startsWith('data:')) {
+      const payload = remaining.slice(5).trim()
+      if (payload && payload !== '[DONE]' && !payload.startsWith('[ERROR]')) {
+        messages.value[assistantMsgIndex].content += payload
+      }
+    }
+
+    loading.value = false
+
+    // 6. 流式结束后保存为 Markdown
+    await saveSessionToLocalMarkdown()
+
   } catch (e: any) {
+    loading.value = false
     messageUi.error(`请求失败：${e.message}`)
     messages.value.push({ role: 'assistant', content: `⚠️ 请求失败：${e.message}` })
-  } finally {
-    loading.value = false
-    await nextTick()
-    scrollToBottom()
   }
 }
+// 将当前 Session 保存为本地 MD 文件
+async function saveSessionToLocalMarkdown() {
+  if (messages.value.length === 0) return
 
+  // 获取会话标题（首条用户消息前20个字）
+  const sessionTitle = messages.value[0].content.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || 'untitled'
+
+  try {
+    await fetch(`${BACKEND_URL}/api/save_markdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: sessionTitle,
+        // 把整个对话数组传过去
+        history: messages.value.map(m => ({ role: m.role, content: m.content }))
+      })
+    })
+    console.log('历史记录已同步保存为本地 Markdown 文件')
+  } catch (err) {
+    console.error('保存 MD 文件失败:', err)
+  }
+}
 function scrollToBottom() {
   if (messageListRef.value) {
     messageListRef.value.scrollTop = messageListRef.value.scrollHeight

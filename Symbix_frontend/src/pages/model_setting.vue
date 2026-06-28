@@ -2,6 +2,14 @@
   <div class="setting-page">
     <TitleBar />
     <n-card title="设置" style="max-width: 520px; margin: 60px auto;">
+      <template #header-extra>
+        <n-button quirks circle type="text" @click="handleClose">
+          <template #icon>
+            <span style="font-size: 18px; font-weight: bold;">✕</span>
+          </template>
+        </n-button>
+      </template>
+
       <n-form :model="form" label-placement="top">
         <n-form-item label="API Key">
           <n-input
@@ -73,6 +81,15 @@ onMounted(() => {
   }
 })
 
+// 处理关闭返回事件
+function handleClose() {
+  // 方法 A：直接跳转到聊天窗口的路由路径（假设路径为 /chat）
+  // router.push('/chat') 
+  
+  // 或者 方法 B：如果聊天页是上一页，直接返回上一页
+  router.back()
+}
+
 async function handleFetchModels() {
   if (!form.value.apiKey || !form.value.baseUrl) {
     message.warning('请先填写 API Key 和 Base URL')
@@ -114,6 +131,8 @@ async function handleTest() {
 function handleSave() {
   saveSettings(form.value)
   message.success('设置已保存')
+  // 选做：如果你希望保存后自动返回聊天界面，可以在这里解开注释
+  // router.push('/chat')
 }
 
 function handleReset() {

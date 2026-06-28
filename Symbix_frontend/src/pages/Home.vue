@@ -220,7 +220,7 @@ onMounted(async () => {
   const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
   sprite = new AnimatedSprite(frames)
   sprite.animationSpeed = FPS / 60
-  sprite.scale.set(1.1)
+  sprite.scale.set(1)
   sprite.loop = true
   sprite.play()
   app.stage.addChild(sprite)

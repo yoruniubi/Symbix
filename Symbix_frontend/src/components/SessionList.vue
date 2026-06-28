@@ -47,11 +47,13 @@ const emit = defineEmits<{
 .left-panel {
   width: 220px;
   min-width: 180px;
+  height: 100%;
   background: #18181c;
   border-right: 1px solid #2a2a2f;
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
+  overflow: hidden;
 }
 .left-panel-header {
   display: flex;

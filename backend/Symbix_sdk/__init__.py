@@ -5,7 +5,7 @@
 from .client import SymbixClient
 from .providers import ProviderRegistry, ProviderConfig
 from .memory import ConversationMemory
-from .config.mcp_config import McpCofing
+from .config.mcp_config import McpConfig
 from .mcp.connector import Connector
 
 __all__ = [
@@ -13,6 +13,6 @@ __all__ = [
     "ProviderRegistry",
     "ProviderConfig",
     "ConversationMemory",
-    "McpCofing",
+    "McpConfig",
     "Connector",
 ]

@@ -3,24 +3,43 @@ Symbix Backend - FastAPI Server
 提供 AI 对话、Skill 管理和 MCP 支持的 REST API
 """
 import uvicorn
-from fastapi import FastAPI, HTTPException,WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from typing import List
 from Symbix_sdk.client import SymbixClient
 from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
-from Symbix_sdk.config.mcp_config import McpCofing
+from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import Connector
-from Symbix_sdk.stt.sensevoice_cpp import SenseVoiceCppProvider
+from Symbix_sdk.skill.registry import SkillRegistry
+import os
 
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
 
-# ============ 初始化核心组件 ============
-memory = ConversationMemory(db_path="memory.db")
-provider_registry = ProviderRegistry(config_path="providers.json")
+# ============ CORS 跨域支持 ============
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 尝试初始化 provider registry，如果没有配置则使用默认值
+# ============ 初始化核心组件 ============
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+memory = ConversationMemory(
+    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db")
+)
+provider_registry = ProviderRegistry(
+    config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "providers.json")
+)
+skill_registry = SkillRegistry(
+    skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skills", "installed")
+)
+
 try:
     _ = provider_registry.get_active()
 except RuntimeError:
@@ -29,25 +48,10 @@ except RuntimeError:
 symbix_client = SymbixClient(registry=provider_registry)
 
 # ============ MCP 配置与连接 ============
-mcp_config = McpCofing(path="mcp_config.json")
+mcp_config = McpConfig(
+    path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json")
+)
 
-# 初始化sensevoice
-stt = SenseVoiceCppProvider()
-
-@app.websocket("/stt/stream")
-async def stt_stream(websocket: WebSocket):
-    await websocket.accept()
-
-    async def on_result(text: str):
-        await websocket.send_text(text)
-
-    try:
-        await stt.start_stream(on_result)
-    except Exception as e:
-        await websocket.send_text(f"[error] {e}")
-    finally:
-        stt.stop()
-        await websocket.close()
 
 def get_mcp_connector() -> Connector:
     """创建 MCP Connector 实例"""
@@ -65,6 +69,9 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     history: list[dict] = []
     system_prompt: str = ""
+    api_key: str = ""
+    api_base: str = ""
+    model: str = ""
 
 
 class ChatResponse(BaseModel):
@@ -77,6 +84,16 @@ class ProviderAddRequest(BaseModel):
     model: str
     api_key: str = None
     api_base: str = None
+
+
+class MessageItem(BaseModel):
+    role: str
+    content: str
+
+
+class SessionPayload(BaseModel):
+    title: str
+    history: List[MessageItem]
 
 
 # ============ API 路由 ============
@@ -93,27 +110,18 @@ async def root():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    """
-    AI 对话接口
-    接收用户消息，返回 AI 回复
-    """
+    """标准对话接口"""
     try:
-        # 保存用户消息到记忆
         memory.add(request.session_id, "user", request.message)
-
-        # 获取历史消息
         history = memory.get_history(request.session_id, limit=20)
-
-        # 更新 client 的 system prompt
         symbix_client.system_prompt = request.system_prompt
 
-        # 调用 AI
         response = await symbix_client.chat(
             user_input=request.message,
-            history=history[:-1],  # 排除刚添加的用户消息
+            history=history[:-1],
+            registry=skill_registry,
         )
 
-        # 保存 AI 回复到记忆
         memory.add(request.session_id, "assistant", response["content"])
 
         return ChatResponse(
@@ -126,14 +134,21 @@ async def chat(request: ChatRequest):
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """
-    AI 流式对话接口 (SSE)
-    返回 Server-Sent Events 格式的流式响应
-    """
+    """AI 流式对话接口 (SSE)"""
     from fastapi.responses import StreamingResponse
 
     async def generate():
         try:
+            # 如果前端传了 API Key，更新到默认 provider
+            if request.api_key:
+                cfg = provider_registry.get_active()
+                cfg.api_key = request.api_key
+                if request.api_base:
+                    cfg.api_base = request.api_base
+                if request.model:
+                    cfg.model = request.model
+                provider_registry.save()
+
             memory.add(request.session_id, "user", request.message)
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt
@@ -142,6 +157,7 @@ async def chat_stream(request: ChatRequest):
             async for chunk in symbix_client.chat_stream(
                 user_input=request.message,
                 history=history[:-1],
+                registry=skill_registry,
             ):
                 full_response += chunk
                 yield f"data: {chunk}\n\n"
@@ -163,7 +179,6 @@ async def chat_stream(request: ChatRequest):
 
 @app.get("/history/{session_id}")
 async def get_history(session_id: str, limit: int = 20):
-    """获取指定会话的对话历史"""
     try:
         history = memory.get_history(session_id, limit=limit)
         return {"session_id": session_id, "messages": history}
@@ -175,7 +190,6 @@ async def get_history(session_id: str, limit: int = 20):
 
 @app.get("/providers")
 async def list_providers():
-    """列出所有 AI 提供商"""
     providers = {
         name: {
             "model": p.model,
@@ -188,7 +202,6 @@ async def list_providers():
 
 @app.post("/providers")
 async def add_provider(request: ProviderAddRequest):
-    """添加新的 AI 提供商"""
     try:
         provider_registry.add(
             name=request.name,
@@ -203,7 +216,6 @@ async def add_provider(request: ProviderAddRequest):
 
 @app.post("/providers/{name}/activate")
 async def activate_provider(name: str):
-    """激活指定的 AI 提供商"""
     try:
         provider_registry.set_active(name)
         return {"status": "ok", "message": f"Provider '{name}' activated"}
@@ -211,30 +223,10 @@ async def activate_provider(name: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# ============ Skill 管理 ============
-
-@app.get("/skills")
-async def list_skills():
-    """列出所有可用的 Skills"""
-    # TODO: 从 skill loader 获取实际 skill 列表
-    return {"skills": []}
-
-
-@app.get("/skills/{skill_name}")
-async def get_skill(skill_name: str):
-    """获取指定 Skill 的详情"""
-    # TODO: 从 skill loader 获取实际 skill
-    return {
-        "name": skill_name,
-        "description": "Skill placeholder",
-    }
-
-
 # ============ MCP 管理 ============
 
 @app.get("/mcp/config")
 async def get_mcp_config():
-    """获取 MCP 配置"""
     return mcp_config.data
 
 
@@ -245,7 +237,6 @@ async def update_mcp_config(
     username: str = None,
     password: str = None,
 ):
-    """更新 MCP 配置"""
     kwargs = {}
     if host is not None:
         kwargs["host"] = host
@@ -262,7 +253,6 @@ async def update_mcp_config(
 
 @app.get("/mcp/test")
 async def test_mcp_connection():
-    """测试 MCP 服务连接"""
     connector = get_mcp_connector()
     result = connector._request("GET", "")
     if result is not None:
@@ -271,30 +261,67 @@ async def test_mcp_connection():
         raise HTTPException(status_code=503, detail="Cannot connect to MCP server")
 
 
-@app.get("/mcp/resources/{resource_path:path}")
-async def access_mcp_resource(resource_path: str):
-    """访问 MCP 资源"""
-    connector = get_mcp_connector()
-    result = connector._request("GET", resource_path)
-    if result is not None:
-        return result
-    else:
-        raise HTTPException(status_code=502, detail="Failed to access MCP resource")
+# ============ Skill 管理 ============
+
+@app.get("/skills")
+async def get_skills():
+    """获取所有已安装的 skill 列表"""
+    skills = skill_registry.list()
+    return {
+        "skills": [
+            {
+                "name": s.name,
+                "display_name": s.display_name,
+                "description": s.description,
+                "trigger_keywords": s.trigger_keywords,
+            }
+            for s in skills
+        ]
+    }
 
 
-@app.post("/mcp/tools/{tool_name}")
-async def call_mcp_tool(tool_name: str, arguments: dict = None):
-    """调用 MCP 工具"""
-    connector = get_mcp_connector()
-    result = connector._request(
-        "POST",
-        f"tools/{tool_name}",
-        json=arguments or {},
-    )
-    if result is not None:
-        return result
-    else:
-        raise HTTPException(status_code=502, detail="Failed to call MCP tool")
+@app.post("/skills/reload")
+async def reload_skills():
+    """重新扫描并加载 skills"""
+    skill_registry.scan()
+    return {"status": "ok", "count": len(skill_registry.list())}
+
+
+@app.get("/skills/match")
+async def match_skills(user_input: str):
+    """根据用户输入匹配相关 skill"""
+    matched = skill_registry.find_by_trigger(user_input)
+    return {
+        "matched": [
+            {
+                "name": s.name,
+                "display_name": s.display_name,
+                "description": s.description,
+            }
+            for s in matched
+        ]
+    }
+
+
+# ============ Markdown 导出 ============
+
+SDK_CONFIG_DIR = os.path.join(BASE_DIR, "Symbix_sdk", "config")
+os.makedirs(SDK_CONFIG_DIR, exist_ok=True)
+
+
+@app.post("/api/save_markdown")
+async def save_markdown(payload: SessionPayload):
+    """保存对话为 Markdown 文件"""
+    md_content = f"# {payload.title}\n\n"
+    for msg in payload.history:
+        role_label = "**User**" if msg.role == "user" else "**Assistant**"
+        md_content += f"### {role_label}:\n{msg.content}\n\n---\n\n"
+
+    file_path = os.path.join(SDK_CONFIG_DIR, f"{payload.title}.md")
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(md_content)
+
+    return {"status": "success", "path": file_path}
 
 
 # ============ 启动入口 ============

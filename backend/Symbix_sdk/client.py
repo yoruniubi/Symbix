@@ -1,8 +1,8 @@
 import litellm
 from typing import AsyncGenerator, Optional
 
-from backend.Symbix_sdk.skill import SkillLoader
-from backend.Symbix_sdk.skill.registry import SkillRegistry
+from .skill import SkillLoader
+from .skill.registry import SkillRegistry
 from .providers import ProviderRegistry
 
 class SymbixClient:
@@ -29,10 +29,11 @@ class SymbixClient:
         user_input: str,
         history: list[dict] = None,
         tools: Optional[list[dict]] = None,
+        registry=None,
     ) -> AsyncGenerator[str, None]:
         """流式对话，逐字 yield"""
         provider = self.registry.get_active()
-        messages = self._build_messages(history or [], user_input)
+        messages = self._build_messages(history or [], user_input, registry=registry)
 
         kwargs = {
             "model": provider.model,
@@ -57,10 +58,11 @@ class SymbixClient:
         user_input: str,
         history: list[dict] = None,
         tools: Optional[list[dict]] = None,
+        registry=None,
     ) -> dict:
         """非流式对话，返回完整响应（含 tool_calls）"""
         provider = self.registry.get_active()
-        messages = self._build_messages(history or [], user_input)
+        messages = self._build_messages(history or [], user_input, registry=registry)
 
         kwargs = {
             "model": provider.model,

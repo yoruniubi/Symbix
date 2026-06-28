@@ -1,0 +1,10 @@
+{
+  "active": "default",
+  "providers": {
+    "default": {
+      "model": "gpt-4o-mini",
+      "api_key": null,
+      "api_base": null
+    }
+  }
+}
