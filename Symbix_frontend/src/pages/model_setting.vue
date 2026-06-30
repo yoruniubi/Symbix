@@ -178,7 +178,8 @@ const providers: Provider[] = [
     models: [],
   },
 ]
-
+const customBaseUrl = ref('')
+const customModel = ref('')
 const selectedProvider = ref<string>('custom')
 const form = ref({ apiKey: '', baseUrl: '', model: '' })
 const modelOptions = ref<{ label: string; value: string }[]>([])
@@ -198,31 +199,50 @@ onMounted(() => {
     model: settings.value.model || '',
   }
 
-  // 根据已保存的 model 前缀自动匹配厂商
   const model = settings.value.model || ''
+  const baseUrl = settings.value.baseUrl || ''
+  customBaseUrl.value = settings.value.baseUrl || ''
+  customModel.value = settings.value.model || ''
+  // 如果有 baseUrl 说明是自定义
+  if (baseUrl) {
+    selectedProvider.value = 'custom'
+    modelOptions.value = model ? [{ label: model, value: model }] : []
+    return
+  }
+
+  // 没有 baseUrl 则按模型前缀匹配厂商
   const matched = providers.find(p =>
-    p.models.some(m => m === model) ||
-    (p.id === 'openai' && !model.includes('/')) ||
-    model.startsWith(p.id + '/')
+    p.id !== 'custom' && p.models.some(m => m === model)
   )
   if (matched) {
     selectedProvider.value = matched.id
     modelOptions.value = matched.models.map(m => ({ label: m, value: m }))
-  } else if (model) {
+  } else {
     selectedProvider.value = 'custom'
-    modelOptions.value = [{ label: model, value: model }]
+    modelOptions.value = model ? [{ label: model, value: model }] : []
   }
 })
 
 function selectProvider(p: Provider) {
+  // 离开自定义时，先保存当前填的内容
+  if (selectedProvider.value === 'custom') {
+    customBaseUrl.value = form.value.baseUrl
+    customModel.value = form.value.model
+  }
+
   selectedProvider.value = p.id
-  form.value.baseUrl = p.baseUrl
-  if (p.models.length > 0) {
-    modelOptions.value = p.models.map(m => ({ label: m, value: m }))
-    form.value.model = p.models[0]
+
+  if (p.id === 'custom') {
+    // 切回自定义时，恢复之前保存的内容
+    form.value.baseUrl = customBaseUrl.value
+    form.value.model = customModel.value
+    modelOptions.value = customModel.value
+      ? [{ label: customModel.value, value: customModel.value }]
+      : []
   } else {
-    modelOptions.value = []
-    form.value.model = ''
+    form.value.baseUrl = p.baseUrl
+    modelOptions.value = p.models.map(m => ({ label: m, value: m }))
+    form.value.model = p.models[0] || ''
   }
 }
 
@@ -237,11 +257,14 @@ async function handleFetchModels() {
     // 自定义接口的模型统一加 openai/ 前缀
     modelOptions.value = models.map(id => ({
       label: id,
-      value: `openai/${id}`,
+      value: id,
     }))
     if (models.length > 0) {
       message.success(`获取到 ${models.length} 个模型`)
-      if (!form.value.model) form.value.model = `openai/${models[0]}`
+      if (!form.value.model) {
+        form.value.model = models[0]
+        customModel.value = models[0]
+      }
     } else {
       message.warning('未获取到模型列表')
     }

@@ -1,38 +1,170 @@
-class toolkit:
-    def __init__(self):
-        self.tools = {}
+from __future__ import annotations
+from typing import Callable, Any
+import json
 
-    def register_tool(self, name: str, func):
-        """注册工具函数"""
+
+class toolkit:
+    """MCP 工具包 - 注册、管理和执行工具函数"""
+
+    def __init__(self):
+        self.tools: dict[str, Callable] = {}
+        self.tool_schemas: dict[str, dict] = {}
+
+    def register_tool(
+        self,
+        name: str,
+        func: Callable,
+        description: str = "",
+        parameters: dict | None = None,
+    ):
+        """注册工具函数，同时记录其 JSON Schema 描述
+
+        Args:
+            name: 工具名称
+            func: 工具函数
+            description: 工具功能描述（给 LLM 看）
+            parameters: 参数 JSON Schema，例如
+                {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "文件路径"},
+                        "new_content": {"type": "string", "description": "新内容"}
+                    },
+                    "required": ["file_path", "new_content"]
+                }
+        """
         self.tools[name] = func
-    
-    def edit_file_tool(self, file_path: str, new_content: str):
-        """编辑文件工具函数"""
+        self.tool_schemas[name] = {
+            "description": description or func.__doc__ or name,
+            "parameters": parameters or self._infer_params(func),
+        }
+
+    def get_openai_tools(self) -> list[dict]:
+        """返回 OpenAI function calling 格式的 tools 列表，可直接传入 litellm"""
+        result = []
+        for name, schema in self.tool_schemas.items():
+            result.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": schema["description"],
+                    "parameters": schema["parameters"],
+                },
+            })
+        return result
+
+    def execute_tool(self, name: str, arguments: dict | str) -> str:
+        """执行指定工具并返回结果字符串
+
+        Args:
+            name: 工具名称
+            arguments: 工具参数，可以是 dict 或 JSON 字符串
+        """
+        func = self.tools.get(name)
+        if not func:
+            return f"[Error] Tool '{name}' not found"
+
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                return f"[Error] Invalid JSON arguments: {arguments}"
+
+        try:
+            result = func(**arguments)
+            return str(result) if result is not None else ""
+        except Exception as e:
+            return f"[Error] Execution failed: {e}"
+
+    # ---- 内置工具 ----
+
+    def edit_file(self, file_path: str, new_content: str):
+        """编辑（覆盖写入）文件"""
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
+            return f"File saved: {file_path}"
         except Exception as e:
-            print(f"Error editing file {file_path}: {e}")
+            return f"Error editing file {file_path}: {e}"
 
-    def read_file_tool(self, file_path: str) -> str:
-        """读取文件工具函数"""
+    def read_file(self, file_path: str) -> str:
+        """读取文件内容"""
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
-            print(f"Error reading file {file_path}: {e}")
-            return ""
+            return f"Error reading file {file_path}: {e}"
+
+    def setup_builtin_tools(self):
+        """注册内置的文件读写工具"""
+        self.register_tool(
+            name="edit_file",
+            func=self.edit_file,
+            description="编辑或创建文件，将内容写入指定路径",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "要编辑的文件路径",
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "要写入的新内容",
+                    },
+                },
+                "required": ["file_path", "new_content"],
+            },
+        )
+        self.register_tool(
+            name="read_file",
+            func=self.read_file,
+            description="读取指定路径的文件内容",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "要读取的文件路径",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        )
+
+    # ---- 私有辅助 ----
+
+    @staticmethod
+    def _infer_params(func: Callable) -> dict:
+        """从函数签名简单推断参数 schema（无注解时默认 string）"""
+        import inspect
+
+        sig = inspect.signature(func)
+        properties = {}
+        required = []
+        for pname, param in sig.parameters.items():
+            if pname == "self":
+                continue
+            properties[pname] = {"type": "string", "description": pname}
+            if param.default is inspect.Parameter.empty:
+                required.append(pname)
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": properties,
+        }
+        if required:
+            schema["required"] = required
+        return schema
+
 
 if __name__ == "__main__":
     tk = toolkit()
+    tk.setup_builtin_tools()
 
-    # 示例工具函数
-    def example_tool(input_text: str) -> str:
-        return f"Processed: {input_text}"
+    # 查看生成的 OpenAI tools 格式
+    import json
+    print(json.dumps(tk.get_openai_tools(), indent=2, ensure_ascii=False))
 
-    # 注册工具函数
-    tk.register_tool("example_tool", example_tool)
-
-    # 使用注册的工具函数
-    result = tk.tools["example_tool"]("Hello, World!")
-    print(result)  # 输出: Processed: Hello, World!
+    # 执行工具
+    result = tk.execute_tool("read_file", {"file_path": "test.txt"})
+    print(f"read_file result: {result}")

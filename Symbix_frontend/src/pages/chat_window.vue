@@ -78,10 +78,20 @@
             </n-button>
           </div>
           <div class="side-panel-body">
-            <div v-if="mcpConfigData" style="font-size:13px; color:#a0a0b8">
-              <div>Host: {{ mcpConfigData.host }}</div>
-              <div>Port: {{ mcpConfigData.port }}</div>
+            <div v-if="mcpConfigData" style="font-size:12px; color:#6b6b80; margin-bottom:10px;">
+              <span>{{ mcpConfigData.host }}:{{ mcpConfigData.port }}</span>
             </div>
+            <n-text depth="3" style="font-size:13px;">已注册 {{ mcpToolList.length }} 个工具</n-text>
+            <div v-for="tool in mcpToolList" :key="tool.function.name" class="mcp-tool-item">
+              <div class="mcp-tool-name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                </svg>
+                {{ tool.function.name }}
+              </div>
+              <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+            </div>
+            <n-empty v-if="mcpToolList.length === 0" description="暂无工具" size="small" style="margin-top:20px;" />
             <n-button size="small" secondary style="margin-top:12px;" block @click="testMcpConnection">测试连接</n-button>
           </div>
         </div>
@@ -93,6 +103,7 @@
         :active-session="activeSession"
         @new-chat="newChat"
         @load-session="loadSession"
+        @delete-session="deleteSession"
       />
     </div>
 
@@ -128,14 +139,15 @@
 
       <!-- Message List -->
       <div class="message-list" ref="messageListRef" v-else>
-        <ChatMessage 
-          v-for="(msg, idx) in messages" 
-          :key="idx" 
-          :msg="msg" 
+        <ChatMessage
+          v-for="(msg, idx) in messages"
+          :key="idx"
+          :msg="msg"
           v-show="!(msg.role === 'assistant' && msg.content === '' && loading)"
+          @edit="handleEditMessage(idx, $event)"
         />
-        <div v-if="loading && messages[messages.length - 1]?.role === 'assistant' 
-            && messages[messages.length - 1]?.content === ''" 
+        <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'
+            && messages[messages.length - 1]?.content === ''"
             class="loading-row">
           <div class="loading-bubble">
             <span class="loading-dot"></span>
@@ -157,13 +169,14 @@
         :current-model="currentModel"
         @send="sendMessage"
         @update:model="setModel"
+        @stop="handleStopGeneration"
       />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
@@ -188,6 +201,7 @@ import { useChatStore } from '@/composables/useChatStore'
 const { messages, sessions, activeSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
+const abortController = ref<AbortController | null>(null)
 interface Skill {
   name: string
   display_name: string
@@ -198,15 +212,19 @@ interface Skill {
 const skillList = ref<Skill[]>([])
 const activePanel = ref<'skill' | 'mcp' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
-const currentModel = ref(settings.value.model || 'gpt-4o-mini')
+const currentModel = ref('gpt-4o-mini')
 const mcpConfigData = ref<any>(null)
+const mcpToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
 const hasApiKey = computed(() => !!settings.value.apiKey)
+
+// 监听 settings 变化，同步 currentModel
+watch(() => settings.value.model, (newModel) => {
+  if (newModel) currentModel.value = newModel
+}, { immediate: true })
 
 onMounted(async () => {
   loadSettings()
-  if (!currentModel.value && settings.value.model) {
-    currentModel.value = settings.value.model
-  }
+  currentModel.value = settings.value.model || 'gpt-4o-mini'
   // 尝试获取模型列表
   if (settings.value.apiKey && settings.value.baseUrl) {
     try {
@@ -268,14 +286,35 @@ async function togglePanel(panel: 'skill' | 'mcp') {
     }
   } else if (panel === 'mcp') {
     try {
-      // 对应你的 FastAPI: @app.get("/mcp/config")
       const res = await fetch('http://127.0.0.1:8000/mcp/config')
       mcpConfigData.value = await res.json()
     } catch (err) {
       console.log("具体错误为：",err)
       messageUi.error('获取 MCP 配置失败')
     }
+    try {
+      const res = await fetch('http://127.0.0.1:8000/mcp/tools')
+      const data = await res.json()
+      mcpToolList.value = data.tools || []
+    } catch (err) {
+      console.log("获取MCP工具列表失败:", err)
+    }
   }
+}
+
+function handleStopGeneration() {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+  }
+  loading.value = false
+}
+
+function handleEditMessage(idx: number, newText: string) {
+  // 截断到该消息位置，替换为新文本并重新发送
+  messages.value.splice(idx)
+  loading.value = false
+  sendMessage(newText, [])
 }
 
 function setModel(model: string) {
@@ -298,6 +337,18 @@ function loadSession(idx: number) {
   activeSession.value = idx
   messages.value = [...sessions.value[idx].messages]
   nextTick(() => scrollToBottom())
+}
+
+function deleteSession(idx: number) {
+  sessions.value.splice(idx, 1)
+  // 如果删除的是当前激活的会话，清空聊天区
+  if (activeSession.value === idx) {
+    messages.value = []
+    activeSession.value = -1
+  } else if (activeSession.value > idx) {
+    // 索引前移
+    activeSession.value -= 1
+  }
 }
 
 function sendQuick(text: string) {
@@ -327,9 +378,9 @@ async function sendMessage(text: string, files: File[]) {
   loading.value = true
   await nextTick()
   scrollToBottom()
-
+  let assistantMsgIndex = -1
   try {
-    const assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
+    assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
 
     const requestBody = {
       message: displayContent,
@@ -338,13 +389,16 @@ async function sendMessage(text: string, files: File[]) {
       api_key: settings.value.apiKey || '',
       api_base: settings.value.baseUrl || '',
       model: settings.value.model || currentModel.value,
+      use_mcp: true,
     }
     console.log('=== 请求体 ===', JSON.stringify(requestBody))
 
+    abortController.value = new AbortController()
     const response = await window.fetch(`${BACKEND_URL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: abortController.value.signal
     })
 
     console.log('=== 收到响应 ===', response.status, response.ok)
@@ -359,13 +413,25 @@ async function sendMessage(text: string, files: File[]) {
     messages.value[assistantMsgIndex].content = data.content
 
     loading.value = false
+    abortController.value = null
     await saveSessionToLocalMarkdown()
 
   } catch (e: any) {
     loading.value = false
+    abortController.value = null
+    if (e.name === 'AbortError') {
+      console.log('=== 请求被用户中断 ===')
+      // 如果中断时 assistant 消息为空，则移除
+      if (assistantMsgIndex !== -1 && messages.value[assistantMsgIndex]?.content === '') {
+        messages.value.splice(assistantMsgIndex, 1)
+      }
+      return
+    }
     console.error('=== 捕获到异常 ===', e)
+    if (assistantMsgIndex !== -1) {
+      messages.value.splice(assistantMsgIndex, 1)
+    }
     messageUi.error(`请求失败：${e.message}`)
-    messages.value.push({ role: 'assistant', content: `⚠️ 请求失败：${e.message}` })
   }
 }
 // 将当前 Session 保存为本地 MD 文件
@@ -528,6 +594,18 @@ function scrollToBottom() {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
+}
+.mcp-tool-item {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.mcp-tool-name {
+  font-size: 13px;
+  color: #c7d2fe;
+  display: flex;
+  align-items: center;
 }
 
 /* ---- Chat Area ---- */

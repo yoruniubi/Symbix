@@ -12,6 +12,7 @@ from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import Connector
+from Symbix_sdk.mcp.native_tools import toolkit
 from Symbix_sdk.skill.registry import SkillRegistry
 import os
 import traceback
@@ -48,10 +49,14 @@ except RuntimeError:
 
 symbix_client = SymbixClient(registry=provider_registry)
 
-# ============ MCP 配置与连接 ============
+# ============ MCP 配置与工具包 ============
 mcp_config = McpConfig(
     path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json")
 )
+
+# 初始化 MCP 工具包并注册内置工具
+mcp_toolkit = toolkit()
+mcp_toolkit.setup_builtin_tools()
 
 
 def get_mcp_connector() -> Connector:
@@ -73,6 +78,7 @@ class ChatRequest(BaseModel):
     api_key: str = ""
     api_base: str = ""
     model: str = ""
+    use_mcp: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -121,15 +127,51 @@ async def chat(request: ChatRequest):
         history = memory.get_history(request.session_id, limit=20)
         symbix_client.system_prompt = request.system_prompt
 
+        # 决定是否传入 MCP tools
+        mcp_tools = None
+        if request.use_mcp:
+            mcp_tools = mcp_toolkit.get_openai_tools()
+
         response = await symbix_client.chat(
             user_input=request.message,
             history=history[:-1],
             registry=skill_registry,
+            tools=mcp_tools,
             # 直接传入覆盖
             override_api_key=api_key,
             override_api_base=api_base,
             override_model=model,
         )
+
+        # 处理 tool calling 循环：如果 LLM 返回了 tool_calls，执行工具并继续对话
+        max_tool_rounds = 5
+        round_count = 0
+        while response.get("tool_calls") and round_count < max_tool_rounds:
+            round_count += 1
+            tool_results = []
+            for tc in response["tool_calls"]:
+                fn = tc.function
+                tool_output = mcp_toolkit.execute_tool(fn.name, fn.arguments)
+                tool_results.append({
+                    "tool_call_id": tc.id,
+                    "role": "tool",
+                    "name": fn.name,
+                    "content": tool_output,
+                })
+                print(f"[MCP Tool] {fn.name} -> {tool_output[:200]}")
+
+            # 将工具结果回传 LLM 继续对话
+            response = await symbix_client.chat_with_tool_results(
+                user_input=request.message,
+                history=history[:-1],
+                registry=skill_registry,
+                tools=mcp_tools,
+                tool_results=tool_results,
+                override_api_key=api_key,
+                override_api_base=api_base,
+                override_model=model,
+            )
+
         memory.add(request.session_id, "assistant", response["content"])
         return ChatResponse(content=response["content"], session_id=request.session_id)
     except Exception as e:
@@ -158,11 +200,17 @@ async def chat_stream(request: ChatRequest):
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt
 
+            # 流式也支持 MCP tools
+            mcp_tools = None
+            if request.use_mcp:
+                mcp_tools = mcp_toolkit.get_openai_tools()
+
             full_response = ""
             async for chunk in symbix_client.chat_stream(
                 user_input=request.message,
                 history=history[:-1],
                 registry=skill_registry,
+                tools=mcp_tools,
             ):
                 full_response += chunk
                 yield f"data: {chunk}\n\n"
@@ -264,6 +312,13 @@ async def test_mcp_connection():
         return {"status": "connected", "data": result}
     else:
         raise HTTPException(status_code=503, detail="Cannot connect to MCP server")
+
+
+@app.get("/mcp/tools")
+async def list_mcp_tools():
+    """列出当前 MCP 工具包中所有注册的工具"""
+    tools = mcp_toolkit.get_openai_tools()
+    return {"count": len(tools), "tools": tools}
 
 
 # ============ Skill 管理 ============

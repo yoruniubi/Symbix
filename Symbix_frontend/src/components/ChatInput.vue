@@ -33,12 +33,29 @@
         class="chat-input"
       />
 
+      <!-- 停止按钮 (loading 时显示) -->
+      <n-button
+        v-if="loading"
+        circle
+        @click="emit('stop')"
+        class="stop-btn"
+        title="停止生成"
+      >
+        <template #icon>
+          <n-icon size="16">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2"/>
+            </svg>
+          </n-icon>
+        </template>
+      </n-button>
       <!-- 发送按钮 -->
       <n-button
+        v-else
         type="primary"
         circle
         @click="handleSend"
-        :disabled="!canSend || loading"
+        :disabled="!canSend"
         class="send-btn"
         :class="{ 'has-content': canSend }"
       >
@@ -85,14 +102,28 @@
         </n-icon>
         <span v-if="isRecording" class="recording-dot"></span>
       </n-button>
-      <n-dropdown trigger="click" :options="modelOptions" @select="handleModelSelect">
-        <n-button text size="tiny" class="footer-btn">
-          <n-icon size="14" style="margin-right:3px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
-          </n-icon>
-          {{ currentModelLabel }}
-        </n-button>
-      </n-dropdown>
+      <n-popover v-model:show="showModelPopover" trigger="click" placement="top-start" :show-arrow="false" :content-style="{ padding: 0 }" content-class="model-popover-content">
+        <template #trigger>
+          <n-button text size="tiny" class="footer-btn">
+            <n-icon size="14" style="margin-right:3px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            </n-icon>
+            {{ currentModelLabel }}
+          </n-button>
+        </template>
+        <div class="model-list-scroll">
+          <div
+            v-for="opt in modelOptions"
+            :key="opt.value"
+            class="model-item"
+            :class="{ active: opt.value === currentModel }"
+            @click="handleModelSelect(opt.value)"
+          >
+            <span class="model-item-label">{{ opt.label }}</span>
+            <svg v-if="opt.value === currentModel" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+      </n-popover>
       <span class="footer-hint" v-if="!loading">Enter 发送 · Shift+Enter 换行</span>
       <span class="footer-hint recording-hint" v-else-if="isRecording">🎤 正在聆听...</span>
     </div>
@@ -112,12 +143,14 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [text: string, files: File[]]
   'update:model': [model: string]
+  stop: []
 }>()
 
 const inputValue = ref('')
 const inputRef = ref<any>(null)
 const attachments = ref<File[]>([])
 const isRecording = ref(false)
+const showModelPopover = ref(false)
 let recordTimer: any = null
 
 const canSend = computed(() => inputValue.value.trim() || attachments.value.length > 0)
@@ -170,6 +203,7 @@ function stopVoice() {
 
 function handleModelSelect(modelValue: string) {
   emit('update:model', modelValue)
+  showModelPopover.value = false
 }
 </script>
 
@@ -353,6 +387,30 @@ function handleModelSelect(modelValue: string) {
   opacity: 0.35;
 }
 
+/* 停止按钮 */
+.stop-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  transition: all 0.25s ease;
+}
+.stop-btn :deep(.n-button__border),
+.stop-btn :deep(.n-button__state-border) {
+  border: none !important;
+}
+.stop-btn :deep(.n-button__content) {
+  background: rgba(239, 68, 68, 0.15);
+  border-radius: 50%;
+  color: #ef4444;
+}
+.stop-btn:hover {
+  transform: scale(1.08);
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+}
+.stop-btn:hover :deep(.n-button__content) {
+  background: rgba(239, 68, 68, 0.25);
+}
+
 /* 底部栏 */
 .input-footer {
   display: flex;
@@ -393,5 +451,49 @@ function handleModelSelect(modelValue: string) {
 }
 :deep(.n-upload-trigger) {
   width: auto !important;
+}
+</style>
+
+<style>
+/* 模型选择弹出框 - 渲染到 body，需要全局样式 */
+/*  */
+.model-list-scroll {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.model-list-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.model-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.model-list-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+.model-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #a0a0b8;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.model-item:hover {
+  background: rgba(99, 102, 241, 0.1);
+  color: #c7d2fe;
+}
+.model-item.active {
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.12);
+}
+.model-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

@@ -11,14 +11,42 @@
     </div>
 
     <div class="message-content" :class="msg.role">
-      <div class="message-bubble" :class="msg.role">
-        <!-- 渲染消息内容：支持简单 Markdown -->
-        <div class="msg-text" v-html="renderedContent"></div>
-      </div>
+      <!-- 编辑模式 (仅 user) -->
+      <template v-if="isEditing">
+        <div class="edit-area">
+          <n-input
+            ref="editInputRef"
+            v-model:value="editText"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 5 }"
+            @keydown.enter.exact.prevent="submitEdit"
+            @keydown.esc.exact="cancelEdit"
+            class="edit-input"
+          />
+          <div class="edit-actions">
+            <n-button size="tiny" type="primary" @click="submitEdit" :disabled="!editText.trim()">
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"/>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </template>
+              保存并发送
+            </n-button>
+            <n-button size="tiny" text @click="cancelEdit" class="cancel-btn">取消</n-button>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <div class="message-bubble" :class="msg.role">
+          <!-- 渲染消息内容：支持简单 Markdown -->
+          <div class="msg-text" v-html="renderedContent"></div>
+        </div>
+      </template>
 
-      <!-- 复制按钮 (仅 assistant) -->
-      <div v-if="msg.role === 'assistant'" class="msg-actions">
-        <n-button text size="tiny" @click="copyContent" class="action-btn">
+      <!-- 操作按钮 (仅 assistant: 复制) -->
+      <div v-if="msg.role === 'assistant' && !isEditing" class="msg-actions">
+        <n-button text size="tiny" @click="copyContent" class="action-btn" title="复制">
           <template #icon>
             <svg v-if="!copied" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -26,6 +54,18 @@
             </svg>
             <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </template>
+        </n-button>
+      </div>
+
+      <!-- 操作按钮 (仅 user: 编辑) -->
+      <div v-if="msg.role === 'user' && !isEditing" class="msg-actions user-actions">
+        <n-button text size="tiny" @click="startEdit" class="action-btn" title="编辑">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </template>
         </n-button>
@@ -43,18 +83,46 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 
 const props = defineProps<{
   msg: { role: 'user' | 'assistant'; content: string }
 }>()
 
+const emit = defineEmits<{
+  edit: [newText: string]
+}>()
+
 const copied = ref(false)
+const isEditing = ref(false)
+const editText = ref('')
+const editInputRef = ref<any>(null)
 
 function copyContent() {
   navigator.clipboard.writeText(props.msg.content)
   copied.value = true
   setTimeout(() => { copied.value = false }, 2000)
+}
+
+function startEdit() {
+  if (props.msg.role !== 'user') return
+  editText.value = props.msg.content
+  isEditing.value = true
+  nextTick(() => {
+    editInputRef.value?.focus()
+  })
+}
+
+function cancelEdit() {
+  isEditing.value = false
+  editText.value = ''
+}
+
+function submitEdit() {
+  const trimmed = editText.value.trim()
+  if (!trimmed) return
+  emit('edit', trimmed)
+  isEditing.value = false
 }
 
 // Simple markdown-like rendering
@@ -208,6 +276,53 @@ const renderedContent = computed(() => {
 .action-btn:hover {
   color: #a0a0b8 !important;
   background: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* ---- User Actions (right-aligned) ---- */
+.user-actions {
+  margin-left: auto;
+  margin-right: 2px;
+}
+
+/* ---- Edit Area ---- */
+.edit-area {
+  max-width: min(72%, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.edit-input {
+  background: rgba(30, 30, 40, 0.9);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 14px;
+  padding: 4px;
+}
+.edit-input :deep(.n-input__textarea-el) {
+  color: #e4e4e7 !important;
+  padding: 10px 14px !important;
+  font-size: 14px;
+  line-height: 1.55;
+  caret-color: #6366f1;
+}
+.edit-input :deep(.n-input__border),
+.edit-input :deep(.n-input__state-border) {
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+.edit-input :deep(.n-input__placeholder) {
+  color: #55556b !important;
+}
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.cancel-btn {
+  color: #6b6b80 !important;
+  font-size: 12px !important;
+}
+.cancel-btn:hover {
+  color: #a0a0b8 !important;
 }
 
 /* ---- Scrollbar for code blocks ---- */
