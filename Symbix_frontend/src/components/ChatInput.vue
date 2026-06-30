@@ -28,7 +28,7 @@
         type="textarea"
         :autosize="{ minRows: 1, maxRows: 5 }"
         placeholder="输入消息，Enter 发送，Shift+Enter 换行..."
-        @keydown.enter.exact.prevent="handleSend"
+        @keydown="handleInputKeydown"
         :disabled="loading"
         class="chat-input"
       />
@@ -204,6 +204,13 @@ function stopVoice() {
 function handleModelSelect(modelValue: string) {
   emit('update:model', modelValue)
   showModelPopover.value = false
+}
+
+function handleInputKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    handleSend()
+  }
 }
 </script>
 

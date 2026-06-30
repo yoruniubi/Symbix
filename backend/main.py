@@ -12,10 +12,16 @@ from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import Connector
-from Symbix_sdk.mcp.native_tools import toolkit
+from Symbix_sdk.tools.native_tools import NativeToolkit
 from Symbix_sdk.skill.registry import SkillRegistry
 import os
 import traceback
+# main.py 里加
+from Symbix_sdk.mcp.installer import McpInstaller
+
+
+
+
 
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
@@ -53,9 +59,14 @@ symbix_client = SymbixClient(registry=provider_registry)
 mcp_config = McpConfig(
     path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json")
 )
+mcp_installer = McpInstaller(config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json"))
 
+class InstallNpmRequest(BaseModel):
+    package_name: str
+    server_id: str
+    args: list[str] = []
 # 初始化 MCP 工具包并注册内置工具
-mcp_toolkit = toolkit()
+mcp_toolkit = NativeToolkit()
 mcp_toolkit.setup_builtin_tools()
 
 
@@ -277,7 +288,14 @@ async def activate_provider(name: str):
 
 
 # ============ MCP 管理 ============
-
+@app.post("/mcp/install/npm")
+async def install_npm_mcp(req: InstallNpmRequest):
+    try:
+        result = mcp_installer.install_npm_server(req.package_name, req.server_id, req.args)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
 @app.get("/mcp/config")
 async def get_mcp_config():
     return mcp_config.data
@@ -362,7 +380,16 @@ async def match_skills(user_input: str):
         ]
     }
 
-
+@app.get("/debug/skills-path")
+def debug_skills_path():
+    import os
+    return {
+        "skills_dir": skill_registry.skills_dir,
+        "absolute_path": os.path.abspath(skill_registry.skills_dir),
+        "cwd": os.getcwd(),
+        "exists": os.path.exists(skill_registry.skills_dir),
+        "loaded_skills": skill_registry.list_skills() if hasattr(skill_registry, 'list_skills') else list(skill_registry._skills.keys()),
+    }
 # ============ Markdown 导出 ============
 
 SDK_CONFIG_DIR = os.path.join(BASE_DIR, "Symbix_sdk", "config")

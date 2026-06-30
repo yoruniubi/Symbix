@@ -1,10 +1,16 @@
+# tools/native_tools.py
+"""
+本地原生工具包
+负责注册、管理和执行运行在本应用进程内部的 Python 函数工具
+（例如：文件读写、桌宠状态控制等），与外部 MCP server 区分开
+"""
 from __future__ import annotations
 from typing import Callable, Any
 import json
 
 
-class toolkit:
-    """MCP 工具包 - 注册、管理和执行工具函数"""
+class NativeToolkit:
+    """本地原生工具包 - 注册、管理和执行本地 Python 函数工具"""
 
     def __init__(self):
         self.tools: dict[str, Callable] = {}
@@ -76,7 +82,7 @@ class toolkit:
         except Exception as e:
             return f"[Error] Execution failed: {e}"
 
-    # ---- 内置工具 ----
+    # ---- 内置工具：文件操作 ----
 
     def edit_file(self, file_path: str, new_content: str):
         """编辑（覆盖写入）文件"""
@@ -95,8 +101,16 @@ class toolkit:
         except Exception as e:
             return f"Error reading file {file_path}: {e}"
 
+    # ---- 内置工具：桌宠状态控制 ----
+
+    def emit_pet_action(self, action: str):
+        """触发桌宠的动画/表情状态切换（通过事件总线通知前端）"""
+        # TODO: 接入实际的事件推送机制（如 WebSocket / asyncio.Queue）
+        # 暂时只返回确认文本，前端推送逻辑后续补充
+        return f"已触发桌宠动作: {action}"
+
     def setup_builtin_tools(self):
-        """注册内置的文件读写工具"""
+        """注册内置的文件读写工具 + 桌宠控制工具"""
         self.register_tool(
             name="edit_file",
             func=self.edit_file,
@@ -131,6 +145,22 @@ class toolkit:
                 "required": ["file_path"],
             },
         )
+        self.register_tool(
+            name="emit_pet_action",
+            func=self.emit_pet_action,
+            description="触发桌宠做出特定动作或表情反应，比如开心、思考、挥手、跳跃",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["happy", "thinking", "waving", "jumping", "idle"],
+                        "description": "要触发的动作类型",
+                    }
+                },
+                "required": ["action"],
+            },
+        )
 
     # ---- 私有辅助 ----
 
@@ -158,11 +188,10 @@ class toolkit:
 
 
 if __name__ == "__main__":
-    tk = toolkit()
+    tk = NativeToolkit()
     tk.setup_builtin_tools()
 
     # 查看生成的 OpenAI tools 格式
-    import json
     print(json.dumps(tk.get_openai_tools(), indent=2, ensure_ascii=False))
 
     # 执行工具

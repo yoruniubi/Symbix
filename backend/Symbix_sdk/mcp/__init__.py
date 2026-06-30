@@ -3,5 +3,5 @@
 
 from .connector import Connector
 from .native_tools import toolkit
-
-__all__ = ["Connector", "toolkit"]
+from .installer import McpInstaller
+__all__ = ["Connector", "toolkit","McpInstaller"]

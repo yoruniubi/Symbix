@@ -198,6 +198,7 @@ interface Message { role: 'user' | 'assistant'; content: string }
 interface Session { title: string; messages: Message[] }
 
 import { useChatStore } from '@/composables/useChatStore'
+import { safeLog } from '@/utils/logMask'
 const { messages, sessions, activeSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
@@ -359,7 +360,7 @@ const BACKEND_URL = 'http://127.0.0.1:8000'
 
 async function sendMessage(text: string, files: File[]) {
   console.log('=== sendMessage 开始 ===')
-  console.log('settings:', JSON.stringify(settings.value))
+  safeLog('settings:', settings.value)
 
   if (activeSession.value === -1 && messages.value.length > 0) {
     sessions.value.unshift({
@@ -391,10 +392,10 @@ async function sendMessage(text: string, files: File[]) {
       model: settings.value.model || currentModel.value,
       use_mcp: true,
     }
-    console.log('=== 请求体 ===', JSON.stringify(requestBody))
+    safeLog('=== 请求体 ===', requestBody)
 
     abortController.value = new AbortController()
-    const response = await window.fetch(`${BACKEND_URL}/chat`, {
+    const response = await fetch(`${BACKEND_URL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -408,9 +409,15 @@ async function sendMessage(text: string, files: File[]) {
     }
 
     const data = await response.json()
-    console.log('=== 响应数据 ===', data)
+    console.log('=== 响应数据 ===', JSON.stringify(data))
 
-    messages.value[assistantMsgIndex].content = data.content
+    // 兼容多种响应格式：{ content } 或 { response } 或 { message }
+    const reply = data.content || data.response || data.message || data.text || ''
+    if (!reply) {
+      console.warn('=== 响应中没有有效内容字段 ===', JSON.stringify(data))
+      throw new Error(data.detail || data.error || '响应中无有效内容')
+    }
+    messages.value[assistantMsgIndex].content = reply
 
     loading.value = false
     abortController.value = null
@@ -454,6 +461,16 @@ async function saveSessionToLocalMarkdown() {
     console.log('历史记录已同步保存为本地 Markdown 文件')
   } catch (err) {
     console.error('保存 MD 文件失败:', err)
+  }
+}
+async function installMcpServer(packageName: string, serverId: string) {
+  const res = await fetch('http://127.0.0.1:8000/mcp/install/npm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ package_name: packageName, server_id: serverId })
+  })
+  if (res.ok) {
+    messageUi.success('MCP Server 安装成功')
   }
 }
 function scrollToBottom() {

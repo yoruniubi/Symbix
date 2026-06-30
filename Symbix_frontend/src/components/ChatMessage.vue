@@ -19,8 +19,7 @@
             v-model:value="editText"
             type="textarea"
             :autosize="{ minRows: 1, maxRows: 5 }"
-            @keydown.enter.exact.prevent="submitEdit"
-            @keydown.esc.exact="cancelEdit"
+            @keydown="handleKeydown"
             class="edit-input"
           />
           <div class="edit-actions">
@@ -123,6 +122,16 @@ function submitEdit() {
   if (!trimmed) return
   emit('edit', trimmed)
   isEditing.value = false
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    submitEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelEdit()
+  }
 }
 
 // Simple markdown-like rendering
