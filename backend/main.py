@@ -13,11 +13,11 @@ from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import Connector
 from Symbix_sdk.tools.native_tools import NativeToolkit
+from Symbix_sdk.tools.registry import ToolRegistry
 from Symbix_sdk.skill.registry import SkillRegistry
+from Symbix_sdk.mcp.installer import McpInstaller
 import os
 import traceback
-# main.py 里加
-from Symbix_sdk.mcp.installer import McpInstaller
 
 
 
@@ -65,19 +65,39 @@ class InstallNpmRequest(BaseModel):
     package_name: str
     server_id: str
     args: list[str] = []
-# 初始化 MCP 工具包并注册内置工具
-mcp_toolkit = NativeToolkit()
-mcp_toolkit.setup_builtin_tools()
+
+
+# 初始化 MCP Connector（如果配置了 MCP server 则自动连接）
+_mcp_connector = None
 
 
 def get_mcp_connector() -> Connector:
-    """创建 MCP Connector 实例"""
-    return Connector(
-        host=mcp_config.data.get("host", "localhost"),
-        port=mcp_config.data.get("port", 8000),
-        username=mcp_config.data.get("username", "admin"),
-        password=mcp_config.data.get("password", "admin"),
-    )
+    """获取或创建 MCP Connector 实例（懒加载单例）"""
+    global _mcp_connector
+    if _mcp_connector is None:
+        _mcp_connector = Connector(
+            host=mcp_config.data.get("host", "localhost"),
+            port=mcp_config.data.get("port", 8000),
+            username=mcp_config.data.get("username", "admin"),
+            password=mcp_config.data.get("password", "admin"),
+        )
+    return _mcp_connector
+
+
+# 使用 ToolRegistry 统一管理 native + mcp 工具
+tool_registry = ToolRegistry(mcp_connector=None)  # 先初始化 native 工具
+
+# 尝试连接 MCP server，成功则挂载到 ToolRegistry
+try:
+    connector = get_mcp_connector()
+    test_result = connector._request("GET", "")
+    if test_result is not None:
+        tool_registry.mcp_connector = connector
+        print("[MCP] 已成功连接 MCP server，工具已合并")
+    else:
+        print("[MCP] MCP server 不可用，仅使用 native 工具")
+except Exception:
+    print("[MCP] MCP server 未启动，仅使用 native 工具")
 
 
 # ============ 请求模型 ============
@@ -138,10 +158,10 @@ async def chat(request: ChatRequest):
         history = memory.get_history(request.session_id, limit=20)
         symbix_client.system_prompt = request.system_prompt
 
-        # 决定是否传入 MCP tools
+        # 决定是否传入 tools（native + mcp 统一由 ToolRegistry 管理）
         mcp_tools = None
         if request.use_mcp:
-            mcp_tools = mcp_toolkit.get_openai_tools()
+            mcp_tools = tool_registry.get_openai_tools()
 
         response = await symbix_client.chat(
             user_input=request.message,
@@ -162,7 +182,7 @@ async def chat(request: ChatRequest):
             tool_results = []
             for tc in response["tool_calls"]:
                 fn = tc.function
-                tool_output = mcp_toolkit.execute_tool(fn.name, fn.arguments)
+                tool_output = tool_registry.execute(fn.name, fn.arguments)
                 tool_results.append({
                     "tool_call_id": tc.id,
                     "role": "tool",
@@ -211,10 +231,10 @@ async def chat_stream(request: ChatRequest):
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt
 
-            # 流式也支持 MCP tools
+            # 流式也支持 tools（native + mcp 统一由 ToolRegistry 管理）
             mcp_tools = None
             if request.use_mcp:
-                mcp_tools = mcp_toolkit.get_openai_tools()
+                mcp_tools = tool_registry.get_openai_tools()
 
             full_response = ""
             async for chunk in symbix_client.chat_stream(
@@ -222,6 +242,9 @@ async def chat_stream(request: ChatRequest):
                 history=history[:-1],
                 registry=skill_registry,
                 tools=mcp_tools,
+                override_api_key=request.api_key or None,
+                override_api_base=request.api_base or None,
+                override_model=request.model or None,
             ):
                 full_response += chunk
                 yield f"data: {chunk}\n\n"
@@ -334,9 +357,16 @@ async def test_mcp_connection():
 
 @app.get("/mcp/tools")
 async def list_mcp_tools():
-    """列出当前 MCP 工具包中所有注册的工具"""
-    tools = mcp_toolkit.get_openai_tools()
-    return {"count": len(tools), "tools": tools}
+    """列出当前所有可用的工具（native + mcp）"""
+    tools = tool_registry.get_openai_tools()
+    native_count = len(tool_registry.native.tools)
+    mcp_count = len(tools) - native_count
+    return {
+        "count": len(tools),
+        "native_count": native_count,
+        "mcp_count": mcp_count,
+        "tools": tools,
+    }
 
 
 # ============ Skill 管理 ============

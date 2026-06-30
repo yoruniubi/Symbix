@@ -76,12 +76,19 @@ class SymbixClient:
         history: list[dict] = None,
         tools: Optional[list[dict]] = None,
         registry=None,
+        override_api_key: str = None,
+        override_api_base: str = None,
+        override_model: str = None,
     ) -> AsyncGenerator[str, None]:
         provider = self.registry.get_active()
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools)
-        model, custom_provider, api_base = self._resolve_model(provider.model, provider.api_base)
+        raw_model = override_model or provider.model
+        raw_base = override_api_base or provider.api_base
+        model, custom_provider, api_base = self._resolve_model(raw_model, raw_base)
+        api_key = override_api_key or provider.api_key
 
-        kwargs = self._build_kwargs(model, custom_provider, api_base, provider.api_key, messages, tools)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools)
+
+        kwargs = self._build_kwargs(model, custom_provider, api_base, api_key, messages, tools)
 
         print("chat_stream kwargs:", {k: v for k, v in kwargs.items() if k != "messages"})
         response = await litellm.acompletion(**kwargs)
