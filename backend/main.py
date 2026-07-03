@@ -218,15 +218,17 @@ async def chat_stream(request: ChatRequest):
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt
 
-            # 流式模式下暂不传 tools：tool_calls 在流式里不产生文本增量，
-            # 会导致前端收不到任何内容。工具调用请走 /chat（非流式）端点。
-            # skill 概览仍通过 registry 注入到 system prompt，模型可引用 skill 知识。
+            # 流式也支持 tools（native + mcp 统一由 ToolRegistry 管理）
+            mcp_tools = None
+            if request.use_mcp:
+                mcp_tools = tool_registry.get_openai_tools()
+
             full_response = ""
             async for chunk in symbix_client.chat_stream(
                 user_input=request.message,
                 history=history[:-1],
                 registry=skill_registry,
-                tools=None,
+                tools=mcp_tools,
                 override_api_key=request.api_key or None,
                 override_api_base=request.api_base or None,
                 override_model=request.model or None,

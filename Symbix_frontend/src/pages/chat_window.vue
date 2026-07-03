@@ -453,11 +453,7 @@ async function sendMessage(text: string, files: File[]) {
     safeLog('=== 请求体 ===', requestBody)
 
     abortController.value = new AbortController()
-
-    // ====== 流式对话 (SSE) ======
-    // 使用原生 window.fetch 以支持 ReadableStream
-    const nativeFetch = (window as any).fetch
-    const response = await nativeFetch(`${BACKEND_URL}/chat/stream`, {
+    const response = await fetch(`${BACKEND_URL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -465,56 +461,21 @@ async function sendMessage(text: string, files: File[]) {
     })
 
     console.log('=== 收到响应 ===', response.status, response.ok)
+
     if (!response.ok) {
-      const errText = await response.text()
-      throw new Error(`HTTP 错误! 状态码: ${response.status} ${errText}`)
+      throw new Error(`HTTP 错误! 状态码: ${response.status}`)
     }
 
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader()
-    const decoder = new TextDecoder('utf-8')
-    let buffer = ''
-    let full_reply = ''
+    const data = await response.json()
+    console.log('=== 响应数据 ===', JSON.stringify(data))
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      // 解析 SSE：以 \n\n 分隔事件
-      let sepIdx
-      while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
-        const rawEvent = buffer.slice(0, sepIdx)
-        buffer = buffer.slice(sepIdx + 2)
-
-        // 每个事件可能有多行 data:
-        const lines = rawEvent.split('\n')
-        let payload = ''
-        for (const line of lines) {
-          if (line.startsWith('data:')) {
-            payload += line.slice(5).trimStart()
-          }
-        }
-        if (!payload) continue
-
-        if (payload === '[DONE]') {
-          buffer = ''
-          break
-        }
-        if (payload.startsWith('[ERROR]')) {
-          throw new Error(payload.slice('[ERROR]'.length).trim())
-        }
-
-        full_reply += payload
-        messages.value[assistantMsgIndex].content = full_reply
-        await nextTick()
-        scrollToBottom()
-      }
+    // 兼容多种响应格式：{ content } 或 { response } 或 { message }
+    const reply = data.content || data.response || data.message || data.text || ''
+    if (!reply) {
+      console.warn('=== 响应中没有有效内容字段 ===', JSON.stringify(data))
+      throw new Error(data.detail || data.error || '响应中无有效内容')
     }
-
-    if (!full_reply) {
-      console.warn('=== 响应中没有有效内容 ===')
-      messages.value[assistantMsgIndex].content = '(无内容返回)'
-    }
+    messages.value[assistantMsgIndex].content = reply
 
     loading.value = false
     abortController.value = null
