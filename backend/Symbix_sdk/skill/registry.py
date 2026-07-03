@@ -55,3 +55,25 @@ class SkillRegistry:
         if not matched:
             return ""
         return "".join(self.inject_into_prompt(s.name) for s in matched)
+
+    def inject_skill_overview(self) -> str:
+        """
+        注入所有 skill 的概要信息
+        即使没有匹配到具体 skill，也告诉模型有哪些技能可用
+        """
+        if not self._skills:
+            return ""
+        
+        overview = "\n\n[可用技能列表]\n"
+        overview += "你拥有以下技能，可以在适当时候使用：\n\n"
+        
+        for skill in self._skills.values():
+            overview += f"- **{skill.display_name}** ({skill.name}): {skill.description}\n"
+            if skill.trigger_keywords:
+                keywords = ", ".join(f'"{kw}"' for kw in skill.trigger_keywords[:5])  # 只显示前5个
+                overview += f"  触发关键词: {keywords}\n"
+        
+        overview += "\n当用户的请求与上述技能的描述或触发关键词匹配时，"
+        overview += "系统会自动将完整的技能指南注入到对话中。\n"
+        
+        return overview

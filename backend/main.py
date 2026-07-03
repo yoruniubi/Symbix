@@ -11,17 +11,12 @@ from Symbix_sdk.client import SymbixClient
 from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.config.mcp_config import McpConfig
-from Symbix_sdk.mcp.connector import Connector
-from Symbix_sdk.tools.native_tools import NativeToolkit
+from Symbix_sdk.mcp.connector import McpServerManager
 from Symbix_sdk.tools.registry import ToolRegistry
 from Symbix_sdk.skill.registry import SkillRegistry
 from Symbix_sdk.mcp.installer import McpInstaller
 import os
 import traceback
-
-
-
-
 
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
@@ -66,38 +61,30 @@ class InstallNpmRequest(BaseModel):
     server_id: str
     args: list[str] = []
 
+# MCP Server 管理器
+mcp_manager = McpServerManager()
 
-# 初始化 MCP Connector（如果配置了 MCP server 则自动连接）
-_mcp_connector = None
+# 初始化 MCP servers（从配置文件启动）
+def initialize_mcp_servers():
+    """从配置文件启动所有 MCP servers"""
+    servers = mcp_config.get_servers()
+    for server_id, config in servers.items():
+        command = config.get("command")
+        args = config.get("args", [])
+        if command:
+            success = mcp_manager.add_server(server_id, command, args)
+            if success:
+                print(f"[MCP] Started server: {server_id}")
+            else:
+                print(f"[MCP] Failed to start server: {server_id}")
 
-
-def get_mcp_connector() -> Connector:
-    """获取或创建 MCP Connector 实例（懒加载单例）"""
-    global _mcp_connector
-    if _mcp_connector is None:
-        _mcp_connector = Connector(
-            host=mcp_config.data.get("host", "localhost"),
-            port=mcp_config.data.get("port", 8000),
-            username=mcp_config.data.get("username", "admin"),
-            password=mcp_config.data.get("password", "admin"),
-        )
-    return _mcp_connector
-
+# 启动时初始化 MCP servers
+initialize_mcp_servers()
 
 # 使用 ToolRegistry 统一管理 native + mcp 工具
-tool_registry = ToolRegistry(mcp_connector=None)  # 先初始化 native 工具
-
-# 尝试连接 MCP server，成功则挂载到 ToolRegistry
-try:
-    connector = get_mcp_connector()
-    test_result = connector._request("GET", "")
-    if test_result is not None:
-        tool_registry.mcp_connector = connector
-        print("[MCP] 已成功连接 MCP server，工具已合并")
-    else:
-        print("[MCP] MCP server 不可用，仅使用 native 工具")
-except Exception:
-    print("[MCP] MCP server 未启动，仅使用 native 工具")
+tool_registry = ToolRegistry(mcp_manager=mcp_manager)
+# 把已加载的 skill 注册为可调用工具（出现在工具列表中）
+tool_registry.set_skill_registry(skill_registry)
 
 
 # ============ 请求模型 ============
@@ -231,17 +218,15 @@ async def chat_stream(request: ChatRequest):
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt
 
-            # 流式也支持 tools（native + mcp 统一由 ToolRegistry 管理）
-            mcp_tools = None
-            if request.use_mcp:
-                mcp_tools = tool_registry.get_openai_tools()
-
+            # 流式模式下暂不传 tools：tool_calls 在流式里不产生文本增量，
+            # 会导致前端收不到任何内容。工具调用请走 /chat（非流式）端点。
+            # skill 概览仍通过 registry 注入到 system prompt，模型可引用 skill 知识。
             full_response = ""
             async for chunk in symbix_client.chat_stream(
                 user_input=request.message,
                 history=history[:-1],
                 registry=skill_registry,
-                tools=mcp_tools,
+                tools=None,
                 override_api_key=request.api_key or None,
                 override_api_base=request.api_base or None,
                 override_model=request.model or None,
@@ -315,6 +300,11 @@ async def activate_provider(name: str):
 async def install_npm_mcp(req: InstallNpmRequest):
     try:
         result = mcp_installer.install_npm_server(req.package_name, req.server_id, req.args)
+        # 安装成功后自动启动服务器
+        if result.get("status") == "ok":
+            server_config = mcp_config.get_server(req.server_id)
+            if server_config:
+                mcp_manager.add_server(req.server_id, server_config["command"], server_config["args"])
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -325,48 +315,53 @@ async def get_mcp_config():
 
 
 @app.post("/mcp/config")
-async def update_mcp_config(
-    host: str = None,
-    port: int = None,
-    username: str = None,
-    password: str = None,
-):
-    kwargs = {}
-    if host is not None:
-        kwargs["host"] = host
-    if port is not None:
-        kwargs["port"] = port
-    if username is not None:
-        kwargs["username"] = username
-    if password is not None:
-        kwargs["password"] = password
-
-    mcp_config.update(**kwargs)
+async def update_mcp_config(mcpServers: dict = None):
+    """更新 MCP 配置（新格式）"""
+    if mcpServers is not None:
+        mcp_config.data["mcpServers"] = mcpServers
+        mcp_config.save()
+        # 重新启动服务器
+        mcp_manager.stop_all()
+        initialize_mcp_servers()
     return {"status": "ok", "config": mcp_config.data}
 
 
 @app.get("/mcp/test")
 async def test_mcp_connection():
-    connector = get_mcp_connector()
-    result = connector._request("GET", "")
-    if result is not None:
-        return {"status": "connected", "data": result}
-    else:
-        raise HTTPException(status_code=503, detail="Cannot connect to MCP server")
+    """测试 MCP 连接状态"""
+    servers_status = {}
+    for server_id, client in mcp_manager.servers.items():
+        try:
+            tools = client.list_tools()
+            servers_status[server_id] = {
+                "status": "connected",
+                "tools_count": len(tools)
+            }
+        except Exception as e:
+            servers_status[server_id] = {
+                "status": "error",
+                "error": str(e)
+            }
+    return {"servers": servers_status}
 
 
 @app.get("/mcp/tools")
 async def list_mcp_tools():
-    """列出当前所有可用的工具（native + mcp）"""
-    tools = tool_registry.get_openai_tools()
-    native_count = len(tool_registry.native.tools)
-    mcp_count = len(tools) - native_count
-    return {
-        "count": len(tools),
-        "native_count": native_count,
-        "mcp_count": mcp_count,
-        "tools": tools,
-    }
+    """列出所有 MCP 工具（包括所有 server）"""
+    try:
+        mcp_tools = mcp_manager.list_tools_as_openai_format()
+        return {"count": len(mcp_tools), "tools": mcp_tools}
+    except Exception as e:
+        return {"count": 0, "tools": [], "error": str(e)}
+
+
+# ============ Native Tools 管理 ============
+
+@app.get("/native/tools")
+async def list_native_tools():
+    """列出所有内置 native 工具"""
+    tools = tool_registry.native.get_openai_tools()
+    return {"count": len(tools), "tools": tools}
 
 
 # ============ Skill 管理 ============
@@ -390,8 +385,10 @@ async def get_skills():
 
 @app.post("/skills/reload")
 async def reload_skills():
-    """重新扫描并加载 skills"""
+    """重新扫描并加载 skills，并刷新已注册的 skill 工具"""
     skill_registry.scan()
+    # 让 tool_registry 重新注册 skill 为可调用工具
+    tool_registry.refresh_skills()
     return {"status": "ok", "count": len(skill_registry.list())}
 
 
@@ -444,10 +441,15 @@ async def save_markdown(payload: SessionPayload):
 # ============ 启动入口 ============
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
-        log_level="info",
-    )
+    try:
+        uvicorn.run(
+            "main:app",
+            host="127.0.0.1",
+            port=8000,
+            reload=True,
+            log_level="info",
+        )
+    finally:
+        # 关闭时清理 MCP 服务器
+        mcp_manager.stop_all()
+        print("[MCP] All servers stopped")

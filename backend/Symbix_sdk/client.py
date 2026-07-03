@@ -31,8 +31,15 @@ class SymbixClient:
 
         # 注入 Skill 相关内容到 system prompt
         if registry:
+            # 始终注入 skill 概要，让模型知道有哪些技能可用
+            skill_overview = registry.inject_skill_overview()
+            system += skill_overview
+            
+            # 如果匹配到具体 skill，注入完整技能指南
             skill_injection = registry.inject_relevant(user_input)
-            system += skill_injection
+            if skill_injection:
+                system += "\n\n[匹配到的技能指南]\n"
+                system += skill_injection
 
         # 如果有 tools，在 system prompt 中添加工具使用说明
         if tools:

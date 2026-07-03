@@ -30,6 +30,16 @@
           </template>
           MCP
         </n-tooltip>
+        <n-tooltip placement="right" trigger="hover">
+          <template #trigger>
+            <div class="activity-btn" :class="{ active: activePanel === 'native_tools' }" @click="togglePanel('native_tools')">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </div>
+          </template>
+          Native Tools
+        </n-tooltip>
       </div>
       <div class="activity-bar-bottom">
         <n-tooltip placement="right" trigger="hover">
@@ -68,6 +78,31 @@
         </div>
       </transition>
 
+      <!-- Native Tools Panel -->
+      <transition name="panel-slide">
+        <div class="side-panel" v-if="activePanel === 'native_tools'">
+          <div class="side-panel-header">
+            <span class="side-panel-title">Native Tools 面板</span>
+            <n-button text size="tiny" @click="activePanel = null" class="close-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </n-button>
+          </div>
+          <div class="side-panel-body">
+            <n-text depth="3" style="font-size:13px;">已注册 {{ nativeToolList.length }} 个内置工具</n-text>
+            <div v-for="tool in nativeToolList" :key="tool.function.name" class="mcp-tool-item">
+              <div class="mcp-tool-name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                </svg>
+                {{ tool.function.name }}
+              </div>
+              <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+            </div>
+            <n-empty v-if="nativeToolList.length === 0" description="暂无内置工具" size="small" style="margin-top:20px;" />
+          </div>
+        </div>
+      </transition>
+
       <!-- MCP Panel -->
       <transition name="panel-slide">
         <div class="side-panel" v-if="activePanel === 'mcp'">
@@ -79,7 +114,7 @@
           </div>
           <div class="side-panel-body">
             <div v-if="mcpConfigData" style="font-size:12px; color:#6b6b80; margin-bottom:10px;">
-              <span>{{ mcpConfigData.host }}:{{ mcpConfigData.port }}</span>
+              已配置 {{ Object.keys(mcpConfigData.mcpServers || {}).length }} 个 MCP Server
             </div>
             <n-text depth="3" style="font-size:13px;">已注册 {{ mcpToolList.length }} 个工具</n-text>
             <div v-for="tool in mcpToolList" :key="tool.function.name" class="mcp-tool-item">
@@ -211,11 +246,12 @@ interface Skill {
 }
 
 const skillList = ref<Skill[]>([])
-const activePanel = ref<'skill' | 'mcp' | null>(null)
+const activePanel = ref<'skill' | 'mcp' | 'native_tools' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref('gpt-4o-mini')
 const mcpConfigData = ref<any>(null)
 const mcpToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
+const nativeToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
 const hasApiKey = computed(() => !!settings.value.apiKey)
 
 // 监听 settings 变化，同步 currentModel
@@ -237,34 +273,47 @@ onMounted(async () => {
     modelOptions.value = [{ label: currentModel.value, value: currentModel.value }]
   }
 })
-async function testMcpConnection()
-{
+async function testMcpConnection() {
   try {
-    // 对应 FastAPI: @app.get("/mcp/test")
-    const res = await fetch('http://127.0.0.1:8000/mcp/test')
-    const data = await res.json()
-    if (data.status === 'connected') {
-      messageUi.success('MCP 服务连接成功！')
-      console.log("成功连接")
+    const res = await fetch('http://127.0.0.1:8000/mcp/test', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.status === 'connected') {
+        messageUi.success('MCP 服务连接成功！')
+      } else {
+        messageUi.warning('MCP 服务返回异常状态')
+      }
+    } else {
+      messageUi.error('无法连接到 MCP 服务 (HTTP ' + res.status + ')')
     }
-  } catch (err) {
-    messageUi.error('无法连接到 MCP 服务')
-    console.log("mcp服务:",err)
+  } catch (err: any) {
+    console.error('MCP测试连接失败:', err)
+    messageUi.error('无法连接到 MCP 服务: ' + (err.message || err))
   }
 }
 
 async function refreshSkillList() {
   try {
-    const res = await fetch('http://127.0.0.1:8000/skills')
-    const data = await res.json()
-    skillList.value = data.skills
-    messageUi.success('Skill 列表已刷新')
-  } catch (err) {
-    console.log("mcp服务:",err)
-    messageUi.error('获取 Skill 列表失败')
+    const res = await fetch('http://127.0.0.1:8000/skills', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      skillList.value = data.skills || []
+      messageUi.success('Skill 列表已刷新')
+    } else {
+      messageUi.error('获取 Skill 列表失败 (HTTP ' + res.status + ')')
+    }
+  } catch (err: any) {
+    console.error('获取Skill列表失败:', err)
+    messageUi.error('获取 Skill 列表失败: ' + (err.message || err))
   }
 }
-async function togglePanel(panel: 'skill' | 'mcp') {
+async function togglePanel(panel: 'skill' | 'mcp' | 'native_tools') {
   console.log('🟡 togglePanel called', panel)
   // 如果当前已经是激活状态，点击则是关闭，不需要请求
   if (activePanel.value === panel) {
@@ -284,6 +333,15 @@ async function togglePanel(panel: 'skill' | 'mcp') {
     } catch (err) {
       console.log("具体错误为：",err)
       messageUi.error('获取 Skill 列表失败')
+    }
+  } else if (panel === 'native_tools') {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/native/tools')
+      const data = await res.json()
+      nativeToolList.value = data.tools || []
+    } catch (err) {
+      console.log("获取 Native Tools 列表失败:", err)
+      messageUi.error('获取 Native Tools 列表失败')
     }
   } else if (panel === 'mcp') {
     try {
@@ -395,7 +453,11 @@ async function sendMessage(text: string, files: File[]) {
     safeLog('=== 请求体 ===', requestBody)
 
     abortController.value = new AbortController()
-    const response = await fetch(`${BACKEND_URL}/chat`, {
+
+    // ====== 流式对话 (SSE) ======
+    // 使用原生 window.fetch 以支持 ReadableStream
+    const nativeFetch = (window as any).fetch
+    const response = await nativeFetch(`${BACKEND_URL}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -403,21 +465,56 @@ async function sendMessage(text: string, files: File[]) {
     })
 
     console.log('=== 收到响应 ===', response.status, response.ok)
-
     if (!response.ok) {
-      throw new Error(`HTTP 错误! 状态码: ${response.status}`)
+      const errText = await response.text()
+      throw new Error(`HTTP 错误! 状态码: ${response.status} ${errText}`)
     }
 
-    const data = await response.json()
-    console.log('=== 响应数据 ===', JSON.stringify(data))
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    let full_reply = ''
 
-    // 兼容多种响应格式：{ content } 或 { response } 或 { message }
-    const reply = data.content || data.response || data.message || data.text || ''
-    if (!reply) {
-      console.warn('=== 响应中没有有效内容字段 ===', JSON.stringify(data))
-      throw new Error(data.detail || data.error || '响应中无有效内容')
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // 解析 SSE：以 \n\n 分隔事件
+      let sepIdx
+      while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
+        const rawEvent = buffer.slice(0, sepIdx)
+        buffer = buffer.slice(sepIdx + 2)
+
+        // 每个事件可能有多行 data:
+        const lines = rawEvent.split('\n')
+        let payload = ''
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            payload += line.slice(5).trimStart()
+          }
+        }
+        if (!payload) continue
+
+        if (payload === '[DONE]') {
+          buffer = ''
+          break
+        }
+        if (payload.startsWith('[ERROR]')) {
+          throw new Error(payload.slice('[ERROR]'.length).trim())
+        }
+
+        full_reply += payload
+        messages.value[assistantMsgIndex].content = full_reply
+        await nextTick()
+        scrollToBottom()
+      }
     }
-    messages.value[assistantMsgIndex].content = reply
+
+    if (!full_reply) {
+      console.warn('=== 响应中没有有效内容 ===')
+      messages.value[assistantMsgIndex].content = '(无内容返回)'
+    }
 
     loading.value = false
     abortController.value = null

@@ -50,7 +50,7 @@ except Exception as e:
     print(f"  NativeToolkit instance: FAIL - {e}")
 
 try:
-    tr = ToolRegistry(mcp_connector=None)
+    tr = ToolRegistry(mcp_manager=None)
     tools = tr.get_openai_tools()
     print(f"  ToolRegistry instance: {len(tools)} tools total")
 except Exception as e:

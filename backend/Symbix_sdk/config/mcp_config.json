@@ -1,6 +1,8 @@
 {
-  "host": "localhost",
-  "port": 8000,
-  "username": "admin",
-  "password": "admin"
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
 }

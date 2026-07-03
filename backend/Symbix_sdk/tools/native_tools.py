@@ -15,6 +15,51 @@ class NativeToolkit:
     def __init__(self):
         self.tools: dict[str, Callable] = {}
         self.tool_schemas: dict[str, dict] = {}
+        self._skill_registry = None  # 关联的 SkillRegistry，用于注册 skill 为工具
+
+    def set_skill_registry(self, registry):
+        """关联 SkillRegistry，把每个已加载 skill 注册为可调用工具"""
+        self._skill_registry = registry
+        self.register_skill_tools()
+
+    def register_skill_tools(self):
+        """把所有已加载的 skill 注册为 native 工具
+        每个工具名为 'skill__<skill_name>'，调用后返回该 skill 的完整 SKILL.md 内容
+        """
+        if not self._skill_registry:
+            return
+        for skill in self._skill_registry.list():
+            tool_name = f"skill__{skill.name}"
+            # 避免重复注册
+            if tool_name in self.tools:
+                continue
+            description = (skill.description or skill.display_name or skill.name)[:200]
+            full_desc = (
+                f"加载并返回名为 '{skill.display_name or skill.name}' 的技能指南。"
+                f"当用户的请求与该技能相关时调用此工具以获取完整技能说明。"
+                f"简介: {description}"
+            )
+            self.tools[tool_name] = self._make_skill_executor(skill.name)
+            self.tool_schemas[tool_name] = {
+                "description": full_desc,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            }
+
+    def _make_skill_executor(self, skill_name: str) -> Callable:
+        """生成一个执行函数：返回指定 skill 的完整 SKILL.md 内容"""
+        def _execute(**kwargs):
+            if not self._skill_registry:
+                return "[Error] SkillRegistry not attached"
+            skill = self._skill_registry.get(skill_name)
+            if not skill:
+                return f"[Error] Skill '{skill_name}' not found"
+            return skill.skill_md_content
+        _execute.__name__ = f"skill__{skill_name}"
+        return _execute
 
     def register_tool(
         self,
