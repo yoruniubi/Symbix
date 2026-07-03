@@ -60,6 +60,8 @@ const emit = defineEmits<{
 
 <style scoped>
 .left-panel {
+  position: relative;
+  z-index: 1;
   width: 220px;
   min-width: 180px;
   height: 100%;

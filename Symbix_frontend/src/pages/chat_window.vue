@@ -382,12 +382,7 @@ function setModel(model: string) {
 }
 
 function newChat() {
-  if (messages.value.length > 0) {
-    sessions.value.unshift({
-      title: messages.value[0].content.slice(0, 20) || '新对话',
-      messages: [...messages.value],
-    })
-  }
+  // 直接清空当前对话区，开始新对话；历史已由 sendMessage 首轮归档
   messages.value = []
   activeSession.value = -1
 }
@@ -420,13 +415,6 @@ async function sendMessage(text: string, files: File[]) {
   console.log('=== sendMessage 开始 ===')
   safeLog('settings:', settings.value)
 
-  if (activeSession.value === -1 && messages.value.length > 0) {
-    sessions.value.unshift({
-      title: messages.value[0].content.slice(0, 20) || '新对话',
-      messages: [...messages.value],
-    })
-  }
-
   let displayContent = text
   if (files.length > 0) {
     const fileNames = files.map(f => `[文件: ${f.name}]`).join(' ')
@@ -434,6 +422,16 @@ async function sendMessage(text: string, files: File[]) {
   }
 
   messages.value.push({ role: 'user', content: displayContent })
+
+  // 新对话首轮：当前未激活历史 session 时，归档为新 session
+  if (activeSession.value === -1) {
+    const title = displayContent.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || '新对话'
+    sessions.value.unshift({
+      title,
+      messages: [...messages.value],
+    })
+  }
+
   loading.value = true
   await nextTick()
   scrollToBottom()

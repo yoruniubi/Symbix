@@ -175,7 +175,7 @@ class SymbixClient:
                     "type": "function",
                     "function": {
                         "name": tr["name"],
-                        "arguments": "{}",  # 已执行，参数不再重要
+                        "arguments": tr.get("arguments", "{}") or "{}",
                     },
                 }
                 for tr in (tool_results or [])

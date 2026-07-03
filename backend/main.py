@@ -17,7 +17,7 @@ from Symbix_sdk.skill.registry import SkillRegistry
 from Symbix_sdk.mcp.installer import McpInstaller
 import os
 import traceback
-
+import json as _json
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
 
@@ -167,14 +167,20 @@ async def chat(request: ChatRequest):
         while response.get("tool_calls") and round_count < max_tool_rounds:
             round_count += 1
             tool_results = []
+           
             for tc in response["tool_calls"]:
                 fn = tc.function
                 tool_output = tool_registry.execute(fn.name, fn.arguments)
+                # 强制 content 为字符串，避免部分网关对非字符串 tool content 校验失败
+                if not isinstance(tool_output, str):
+                    tool_output = _json.dumps(tool_output, ensure_ascii=False)
                 tool_results.append({
                     "tool_call_id": tc.id,
                     "role": "tool",
                     "name": fn.name,
                     "content": tool_output,
+                    # 保留原始 arguments，供 chat_with_tool_results 还原 assistant 消息
+                    "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
                 })
                 print(f"[MCP Tool] {fn.name} -> {tool_output[:200]}")
 
