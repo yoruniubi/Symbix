@@ -73,7 +73,10 @@
               <div style="font-size:13px; color:#c7d2fe">{{ skill.display_name }}</div>
               <div style="font-size:11px; color:#6b6b80; margin-top:2px">{{ skill.description }}</div>
             </div>
-            <n-button size="small" secondary style="margin-top:12px;" block @click="refreshSkillList">刷新列表</n-button>
+            <n-empty v-if="skillList.length === 0" description="暂无 Skill" size="small" style="margin-top:20px;" />
+          </div>
+          <div class="side-panel-footer">
+            <n-button size="small" secondary block @click="refreshSkillList">刷新列表</n-button>
           </div>
         </div>
       </transition>
@@ -127,7 +130,9 @@
               <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
             </div>
             <n-empty v-if="mcpToolList.length === 0" description="暂无工具" size="small" style="margin-top:20px;" />
-            <n-button size="small" secondary style="margin-top:12px;" block @click="testMcpConnection">测试连接</n-button>
+          </div>
+          <div class="side-panel-footer">
+            <n-button size="small" secondary block @click="testMcpConnection">测试连接</n-button>
           </div>
         </div>
       </transition>
@@ -180,6 +185,7 @@
           :msg="msg"
           v-show="!(msg.role === 'assistant' && msg.content === '' && loading)"
           @edit="handleEditMessage(idx, $event)"
+          @approve="approveTool(idx, $event)"
         />
         <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'
             && messages[messages.length - 1]?.content === ''"
@@ -232,7 +238,7 @@ const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 interface Message { role: 'user' | 'assistant'; content: string }
 interface Session { title: string; messages: Message[] }
 
-import { useChatStore } from '@/composables/useChatStore'
+import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { safeLog } from '@/utils/logMask'
 const { messages, sessions, activeSession } = useChatStore()
 const loading = ref(false)
@@ -446,7 +452,7 @@ async function sendMessage(text: string, files: File[]) {
       api_key: settings.value.apiKey || '',
       api_base: settings.value.baseUrl || '',
       model: settings.value.model || currentModel.value,
-      use_mcp: true,
+      // use_mcp: true,
     }
     safeLog('=== 请求体 ===', requestBody)
 
@@ -468,13 +474,22 @@ async function sendMessage(text: string, files: File[]) {
     console.log('=== 响应数据 ===', JSON.stringify(data))
 
     // 兼容多种响应格式：{ content } 或 { response } 或 { message }
-    const reply = data.content || data.response || data.message || data.text || ''
-    if (!reply) {
-      console.warn('=== 响应中没有有效内容字段 ===', JSON.stringify(data))
-      throw new Error(data.detail || data.error || '响应中无有效内容')
-    }
-    messages.value[assistantMsgIndex].content = reply
+    const steps = mapBackendSteps(data.steps || [], data.pending_tool)
 
+    if (data.status === 'pending_approval') {
+      messages.value[assistantMsgIndex].reasoning = data.reasoning
+      messages.value[assistantMsgIndex].steps = steps
+      messages.value[assistantMsgIndex].approval_id = data.approval_id
+      loading.value = false
+      abortController.value = null
+      await saveSessionToLocalMarkdown()
+      return
+    }
+
+    const reply = data.content || data.response || data.message || data.text || ''
+    messages.value[assistantMsgIndex].content = reply
+    messages.value[assistantMsgIndex].reasoning = data.reasoning
+    messages.value[assistantMsgIndex].steps = steps
     loading.value = false
     abortController.value = null
     await saveSessionToLocalMarkdown()
@@ -529,6 +544,50 @@ async function installMcpServer(packageName: string, serverId: string) {
     messageUi.success('MCP Server 安装成功')
   }
 }
+// 工具审批：用户在 ChatMessage 卡片点击 同意/拒绝 后回调
+async function approveTool(msgIdx: number, approved: boolean) {
+  const msg: any = messages.value[msgIdx]
+  if (!msg || !msg.approval_id) return
+  loading.value = true
+  try {
+    const res = await fetch(`${BACKEND_URL}/chat/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approval_id: msg.approval_id,
+        approved,
+        session_id: 'default',
+        api_key: settings.value.apiKey || '',
+        api_base: settings.value.baseUrl || '',
+        model: settings.value.model || currentModel.value,
+      }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    const steps = mapBackendSteps(data.steps || [], data.pending_tool)
+
+    if (data.status === 'pending_approval') {
+      msg.reasoning = data.reasoning
+      msg.steps = steps
+      msg.approval_id = data.approval_id
+      msg.content = ''
+      loading.value = false
+      return
+    }
+
+    msg.content = data.content || data.response || data.message || data.text || ''
+    msg.reasoning = data.reasoning
+    msg.steps = steps
+    msg.approval_id = undefined
+    loading.value = false
+    await saveSessionToLocalMarkdown()
+  } catch (e: any) {
+    loading.value = false
+    console.error('审批失败:', e)
+    messageUi.error(`审批失败：${e.message}`)
+  }
+}
+
 function scrollToBottom() {
   if (messageListRef.value) {
     messageListRef.value.scrollTop = messageListRef.value.scrollHeight
@@ -679,6 +738,13 @@ function scrollToBottom() {
   color: #c7d2fe;
   display: flex;
   align-items: center;
+}
+
+/* ---- Side Panel Footer (固定底部按钮区) ---- */
+.side-panel-footer {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* ---- Chat Area ---- */

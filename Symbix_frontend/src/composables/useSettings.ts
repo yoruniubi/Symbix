@@ -4,12 +4,14 @@ interface Settings {
   apiKey: string
   baseUrl: string
   model: string
+  systemPrompt: string
 }
 
 const settings = ref<Settings>({
   apiKey: '',
   baseUrl: '',
   model: '',
+  systemPrompt: '',
 })
 
 export function useSettings() {
@@ -28,7 +30,7 @@ export function useSettings() {
   }
 
   function resetSettings() {
-    settings.value = { apiKey: '', baseUrl: '', model: '' }
+    settings.value = { apiKey: '', baseUrl: '', model: '', systemPrompt: '' }
     localStorage.removeItem('symbix_settings')
   }
 

@@ -135,6 +135,7 @@ class SymbixClient:
         message = response.choices[0].message
         return {
             "content": message.content,
+            "reasoning": getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None),
             "tool_calls": message.tool_calls,
             "model": response.model,
         }
@@ -201,6 +202,7 @@ class SymbixClient:
         message = response.choices[0].message
         return {
             "content": message.content,
+            "reasoning": getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None),
             "tool_calls": message.tool_calls,
             "model": response.model,
         }

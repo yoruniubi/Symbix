@@ -3,6 +3,8 @@ Symbix Backend - FastAPI Server
 提供 AI 对话、Skill 管理和 MCP 支持的 REST API
 """
 import uvicorn
+import asyncio
+import uuid
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -102,6 +104,15 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     content: str
     session_id: str
+    reasoning: str = None
+    steps: list = []
+
+
+# 需要用户确认的工具白名单（操作类工具）
+APPROVAL_TOOLS = {"edit_file", "write_to_file", "replace_in_file", "delete_file", "run_command"}
+
+# 内存中的待审批任务：approval_id -> {event, decision, info}
+_pending_approvals: dict[str, dict] = {}
 
 
 class ProviderAddRequest(BaseModel):
@@ -150,28 +161,67 @@ async def chat(request: ChatRequest):
         if request.use_mcp:
             mcp_tools = tool_registry.get_openai_tools()
 
+        steps = []
+        last_reasoning = None
+
         response = await symbix_client.chat(
             user_input=request.message,
             history=history[:-1],
             registry=skill_registry,
             tools=mcp_tools,
-            # 直接传入覆盖
             override_api_key=api_key,
             override_api_base=api_base,
             override_model=model,
         )
+        last_reasoning = response.get("reasoning")
 
-        # 处理 tool calling 循环：如果 LLM 返回了 tool_calls，执行工具并继续对话
         max_tool_rounds = 5
         round_count = 0
         while response.get("tool_calls") and round_count < max_tool_rounds:
             round_count += 1
             tool_results = []
-           
+
+            steps.append({
+                "type": "tool_calls",
+                "reasoning": response.get("reasoning"),
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
+                    for tc in response["tool_calls"]
+                ],
+            })
+
             for tc in response["tool_calls"]:
                 fn = tc.function
+                if fn.name in APPROVAL_TOOLS:
+                    approval_id = str(uuid.uuid4())
+                    _pending_approvals[approval_id] = {
+                        "session_id": request.session_id,
+                        "user_input": request.message,
+                        "history": history[:-1],
+                        "mcp_tools": mcp_tools,
+                        "api_key": api_key,
+                        "api_base": api_base,
+                        "model": model,
+                        "steps": steps,
+                        "last_reasoning": last_reasoning,
+                        "round_count": round_count,
+                        "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                        "remaining_tcs": [
+                            {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
+                            for r in response["tool_calls"]
+                        ],
+                    }
+                    return {
+                        "status": "pending_approval",
+                        "approval_id": approval_id,
+                        "session_id": request.session_id,
+                        "content": "",
+                        "reasoning": last_reasoning,
+                        "steps": steps,
+                        "pending_tool": {"tool_call_id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                    }
+
                 tool_output = tool_registry.execute(fn.name, fn.arguments)
-                # 强制 content 为字符串，避免部分网关对非字符串 tool content 校验失败
                 if not isinstance(tool_output, str):
                     tool_output = _json.dumps(tool_output, ensure_ascii=False)
                 tool_results.append({
@@ -179,12 +229,16 @@ async def chat(request: ChatRequest):
                     "role": "tool",
                     "name": fn.name,
                     "content": tool_output,
-                    # 保留原始 arguments，供 chat_with_tool_results 还原 assistant 消息
                     "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
+                })
+                steps.append({
+                    "type": "tool_result",
+                    "tool_call_id": tc.id,
+                    "name": fn.name,
+                    "content": tool_output,
                 })
                 print(f"[MCP Tool] {fn.name} -> {tool_output[:200]}")
 
-            # 将工具结果回传 LLM 继续对话
             response = await symbix_client.chat_with_tool_results(
                 user_input=request.message,
                 history=history[:-1],
@@ -195,13 +249,178 @@ async def chat(request: ChatRequest):
                 override_api_base=api_base,
                 override_model=model,
             )
+            last_reasoning = response.get("reasoning")
 
         memory.add(request.session_id, "assistant", response["content"])
-        return ChatResponse(content=response["content"], session_id=request.session_id)
+        return ChatResponse(
+            content=response["content"],
+            session_id=request.session_id,
+            reasoning=last_reasoning,
+            steps=steps,
+        )
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApproveRequest(BaseModel):
+    approval_id: str
+    approve: bool
+
+
+@app.post("/chat/approve")
+async def chat_approve(req: ApproveRequest):
+    ctx = _pending_approvals.pop(req.approval_id, None)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="approval not found")
+
+    steps = ctx["steps"]
+    user_input = ctx["user_input"]
+    history = ctx["history"]
+    mcp_tools = ctx["mcp_tools"]
+    api_key = ctx["api_key"]
+    api_base = ctx["api_base"]
+    model = ctx["model"]
+    round_count = ctx["round_count"]
+    pending_tc = ctx["pending_tc"]
+    remaining_tcs = ctx["remaining_tcs"]
+
+    tool_results = []
+    if req.approve:
+        out = tool_registry.execute(pending_tc["name"], pending_tc["arguments"])
+        if not isinstance(out, str):
+            out = _json.dumps(out, ensure_ascii=False)
+        steps.append({
+            "type": "tool_result",
+            "tool_call_id": pending_tc["id"],
+            "name": pending_tc["name"],
+            "content": out,
+            "approved": True,
+        })
+    else:
+        out = f"[用户拒绝执行工具 {pending_tc['name']}]"
+        steps.append({
+            "type": "tool_result",
+            "tool_call_id": pending_tc["id"],
+            "name": pending_tc["name"],
+            "content": out,
+            "approved": False,
+        })
+    tool_results.append({
+        "tool_call_id": pending_tc["id"],
+        "role": "tool",
+        "name": pending_tc["name"],
+        "content": out,
+        "arguments": pending_tc["arguments"],
+    })
+
+    for tc in remaining_tcs:
+        if tc["id"] == pending_tc["id"]:
+            continue
+        r_out = tool_registry.execute(tc["name"], tc["arguments"])
+        if not isinstance(r_out, str):
+            r_out = _json.dumps(r_out, ensure_ascii=False)
+        tool_results.append({
+            "tool_call_id": tc["id"],
+            "role": "tool",
+            "name": tc["name"],
+            "content": r_out,
+            "arguments": tc["arguments"],
+        })
+        steps.append({
+            "type": "tool_result",
+            "tool_call_id": tc["id"],
+            "name": tc["name"],
+            "content": r_out,
+        })
+
+    last_reasoning = ctx.get("last_reasoning")
+    max_tool_rounds = 5
+    response = await symbix_client.chat_with_tool_results(
+        user_input=user_input,
+        history=history,
+        registry=skill_registry,
+        tools=mcp_tools,
+        tool_results=tool_results,
+        override_api_key=api_key,
+        override_api_base=api_base,
+        override_model=model,
+    )
+    last_reasoning = response.get("reasoning")
+
+    while response.get("tool_calls") and round_count < max_tool_rounds:
+        round_count += 1
+        tool_results = []
+        steps.append({
+            "type": "tool_calls",
+            "reasoning": response.get("reasoning"),
+            "tool_calls": [
+                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
+                for tc in response["tool_calls"]
+            ],
+        })
+        for tc in response["tool_calls"]:
+            fn = tc.function
+            if fn.name in APPROVAL_TOOLS:
+                approval_id = str(uuid.uuid4())
+                _pending_approvals[approval_id] = {
+                    "session_id": ctx["session_id"],
+                    "user_input": user_input,
+                    "history": history,
+                    "mcp_tools": mcp_tools,
+                    "api_key": api_key,
+                    "api_base": api_base,
+                    "model": model,
+                    "steps": steps,
+                    "last_reasoning": last_reasoning,
+                    "round_count": round_count,
+                    "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                    "remaining_tcs": [
+                        {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
+                        for r in response["tool_calls"]
+                    ],
+                }
+                return {
+                    "status": "pending_approval",
+                    "approval_id": approval_id,
+                    "session_id": ctx["session_id"],
+                    "content": "",
+                    "reasoning": last_reasoning,
+                    "steps": steps,
+                    "pending_tool": {"tool_call_id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                }
+            out = tool_registry.execute(fn.name, fn.arguments)
+            if not isinstance(out, str):
+                out = _json.dumps(out, ensure_ascii=False)
+            tool_results.append({
+                "tool_call_id": tc.id,
+                "role": "tool",
+                "name": fn.name,
+                "content": out,
+                "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
+            })
+            steps.append({"type": "tool_result", "tool_call_id": tc.id, "name": fn.name, "content": out})
+        response = await symbix_client.chat_with_tool_results(
+            user_input=user_input,
+            history=history,
+            registry=skill_registry,
+            tools=mcp_tools,
+            tool_results=tool_results,
+            override_api_key=api_key,
+            override_api_base=api_base,
+            override_model=model,
+        )
+        last_reasoning = response.get("reasoning")
+
+    memory.add(ctx["session_id"], "assistant", response["content"])
+    return {
+        "status": "ok",
+        "content": response["content"],
+        "session_id": ctx["session_id"],
+        "reasoning": last_reasoning,
+        "steps": steps,
+    }
 
 
 @app.post("/chat/stream")

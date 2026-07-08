@@ -37,7 +37,45 @@
         </div>
       </template>
       <template v-else>
-        <div class="message-bubble" :class="msg.role">
+        <!-- Reasoning (思维过程) -->
+        <div v-if="msg.reasoning" class="reasoning-block">
+          <div class="reasoning-header" @click="toggleReasoning">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+            </svg>
+            <span>思维过程</span>
+            <svg class="reasoning-arrow" :class="{ expanded: showReasoning }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div v-show="showReasoning" class="reasoning-text">{{ msg.reasoning }}</div>
+        </div>
+
+        <!-- Steps / 工具卡片 -->
+        <div v-if="msg.steps && msg.steps.length" class="steps-block">
+          <div v-for="(step, i) in msg.steps" :key="i" class="step-card" :class="step.status">
+            <div class="step-header">
+              <span class="step-icon">
+                <svg v-if="step.status === 'done'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                <svg v-else-if="step.status === 'pending'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              </span>
+              <span class="step-name">{{ step.name || step.tool || ('Step ' + (Number(i)+1)) }}</span>
+              <span class="step-status">{{ step.status }}</span>
+            </div>
+            <div v-if="step.args" class="step-args">{{ typeof step.args === 'string' ? step.args : JSON.stringify(step.args, null, 2) }}</div>
+            <div v-if="step.result" class="step-result">{{ typeof step.result === 'string' ? step.result : JSON.stringify(step.result) }}</div>
+          </div>
+        </div>
+
+        <!-- 审批按钮 -->
+        <div v-if="msg.approval_id" class="approval-block">
+          <div class="approval-hint">⚠️ Agent 想执行工具，需要你的审批</div>
+          <div class="approval-actions">
+            <n-button size="small" type="primary" @click="emit('approve', true)">同意执行</n-button>
+            <n-button size="small" tertiary @click="emit('approve', false)">拒绝</n-button>
+          </div>
+        </div>
+
+        <div v-if="msg.content" class="message-bubble" :class="msg.role">
           <!-- 渲染消息内容：支持简单 Markdown -->
           <div class="msg-text" v-html="renderedContent"></div>
         </div>
@@ -85,17 +123,23 @@
 import { ref, computed, nextTick } from 'vue'
 
 const props = defineProps<{
-  msg: { role: 'user' | 'assistant'; content: string }
+  msg: any
 }>()
 
 const emit = defineEmits<{
   edit: [newText: string]
+  approve: [approved: boolean]
 }>()
 
 const copied = ref(false)
 const isEditing = ref(false)
 const editText = ref('')
 const editInputRef = ref<any>(null)
+const showReasoning = ref(false)
+
+function toggleReasoning() {
+  showReasoning.value = !showReasoning.value
+}
 
 function copyContent() {
   navigator.clipboard.writeText(props.msg.content)
@@ -332,6 +376,64 @@ const renderedContent = computed(() => {
 }
 .cancel-btn:hover {
   color: #a0a0b8 !important;
+}
+
+/* ---- Reasoning Block ---- */
+.reasoning-block {
+  max-width: min(72%, 760px);
+  margin-bottom: 8px;
+}
+
+.reasoning-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: #818cf8;
+  font-size: 12px;
+  padding: 4px 0;
+  user-select: none;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.reasoning-header:hover {
+  opacity: 1;
+}
+
+.reasoning-header .reasoning-arrow {
+  transition: transform 0.2s ease;
+}
+
+.reasoning-header .reasoning-arrow.expanded {
+  transform: rotate(180deg);
+}
+
+.reasoning-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 12px;
+  color: #8b8ba0;
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border-left: 2px solid rgba(99, 102, 241, 0.3);
+}
+
+/* ---- Steps Block ---- */
+.steps-block {
+  max-width: min(72%, 760px);
+  margin-bottom: 8px;
+}
+
+.step-card {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  margin-top: 6px;
 }
 
 /* ---- Scrollbar for code blocks ---- */
