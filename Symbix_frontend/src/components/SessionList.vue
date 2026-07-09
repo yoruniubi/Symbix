@@ -62,20 +62,21 @@ const emit = defineEmits<{
 .left-panel {
   position: relative;
   z-index: 1;
-  width: 220px;
-  min-width: 180px;
+  width: 170px;
+  min-width: 140px;
   height: 100%;
   background: #18181c;
   border-right: 1px solid #2a2a2f;
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
+  padding: 12px 8px;
   overflow: hidden;
 }
 .left-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  font-size: 13px;
 }
 .history-list {
   flex: 1;
@@ -86,15 +87,15 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
   cursor: pointer;
-  font-size: 13px;
-  color: #aaa;
+  font-size: 12px;
+  color: #999;
   transition: background 0.15s;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
-.history-item:hover { background: #232328; color: #fff; }
+.history-item:hover { background: #232328; color: #ddd; }
 .history-item.active { background: #2e2e38; color: #fff; }
 .delete-btn {
   opacity: 0;

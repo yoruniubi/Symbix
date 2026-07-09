@@ -240,7 +240,7 @@ interface Session { title: string; messages: Message[] }
 
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { safeLog } from '@/utils/logMask'
-const { messages, sessions, activeSession } = useChatStore()
+const { messages, sessions, activeSession, persistSessions } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
@@ -264,6 +264,11 @@ const hasApiKey = computed(() => !!settings.value.apiKey)
 watch(() => settings.value.model, (newModel) => {
   if (newModel) currentModel.value = newModel
 }, { immediate: true })
+
+// 自动持久化 sessions 到 localStorage
+watch(sessions, () => {
+  persistSessions()
+}, { deep: true })
 
 onMounted(async () => {
   loadSettings()
@@ -418,7 +423,7 @@ function sendQuick(text: string) {
 const BACKEND_URL = 'http://127.0.0.1:8000'
 
 async function sendMessage(text: string, files: File[]) {
-  console.log('=== sendMessage 开始 ===')
+  console.log('=== sendMessage 开始（SSE 流式）===')
   safeLog('settings:', settings.value)
 
   let displayContent = text
@@ -444,6 +449,7 @@ async function sendMessage(text: string, files: File[]) {
   let assistantMsgIndex = -1
   try {
     assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
+    const assistantMsg = messages.value[assistantMsgIndex] as any
 
     const requestBody = {
       message: displayContent,
@@ -452,44 +458,68 @@ async function sendMessage(text: string, files: File[]) {
       api_key: settings.value.apiKey || '',
       api_base: settings.value.baseUrl || '',
       model: settings.value.model || currentModel.value,
-      // use_mcp: true,
+      use_mcp: true,
     }
-    safeLog('=== 请求体 ===', requestBody)
 
     abortController.value = new AbortController()
-    const response = await fetch(`${BACKEND_URL}/chat`, {
+    const response = await fetch(`${BACKEND_URL}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
-      signal: abortController.value.signal
+      signal: abortController.value.signal,
     })
 
-    console.log('=== 收到响应 ===', response.status, response.ok)
-
     if (!response.ok) {
-      throw new Error(`HTTP 错误! 状态码: ${response.status}`)
+      const errText = await response.text()
+      throw new Error(`HTTP ${response.status}: ${errText}`)
     }
 
-    const data = await response.json()
-    console.log('=== 响应数据 ===', JSON.stringify(data))
+    // ─── 读取 SSE 流 ────────────────────────────────────────
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let done = false
+    const steps: any[] = []
+    const toolCallAcc: Record<number, string> = {} // index → args 累积
 
-    // 兼容多种响应格式：{ content } 或 { response } 或 { message }
-    const steps = mapBackendSteps(data.steps || [], data.pending_tool)
+    while (!done) {
+      const { value, done: readerDone } = await reader.read()
+      if (readerDone) break
+      buffer += decoder.decode(value, { stream: true })
 
-    if (data.status === 'pending_approval') {
-      messages.value[assistantMsgIndex].reasoning = data.reasoning
-      messages.value[assistantMsgIndex].steps = steps
-      messages.value[assistantMsgIndex].approval_id = data.approval_id
-      loading.value = false
-      abortController.value = null
-      await saveSessionToLocalMarkdown()
-      return
+      // 按行解析 SSE
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || '' // 保留不完整的最后一行
+
+      let currentEventType = ''
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEventType = line.slice(7).trim()
+          continue
+        }
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6)
+          if (dataStr === '[DONE]') {
+            done = true
+            break
+          }
+          try {
+            const evt = JSON.parse(dataStr)
+            handleSSEEvent(evt, currentEventType, assistantMsg, steps, toolCallAcc)
+          } catch {
+            // 跳过无法解析的数据
+          }
+          currentEventType = ''
+        }
+      }
+
+      // 如果是 await_approval 之后就 break
+      if (assistantMsg.approval_id) {
+        done = true
+        break
+      }
     }
 
-    const reply = data.content || data.response || data.message || data.text || ''
-    messages.value[assistantMsgIndex].content = reply
-    messages.value[assistantMsgIndex].reasoning = data.reasoning
-    messages.value[assistantMsgIndex].steps = steps
     loading.value = false
     abortController.value = null
     await saveSessionToLocalMarkdown()
@@ -498,18 +528,124 @@ async function sendMessage(text: string, files: File[]) {
     loading.value = false
     abortController.value = null
     if (e.name === 'AbortError') {
-      console.log('=== 请求被用户中断 ===')
-      // 如果中断时 assistant 消息为空，则移除
-      if (assistantMsgIndex !== -1 && messages.value[assistantMsgIndex]?.content === '') {
+      console.log('=== 流被用户中断 ===')
+      if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
         messages.value.splice(assistantMsgIndex, 1)
       }
       return
     }
-    console.error('=== 捕获到异常 ===', e)
-    if (assistantMsgIndex !== -1) {
+    console.error('=== 流式异常 ===', e)
+    if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
       messages.value.splice(assistantMsgIndex, 1)
+    } else if (assistantMsgIndex !== -1) {
+      messages.value[assistantMsgIndex].content += `\n\n[错误] ${e.message}`
     }
     messageUi.error(`请求失败：${e.message}`)
+  }
+}
+
+
+/**
+ * 处理单条 SSE 事件，更新 assistant 消息。
+ */
+function handleSSEEvent(
+  evt: any,
+  eventType: string,
+  msg: any,
+  steps: any[],
+  toolCallAcc: Record<number, string>,
+) {
+  const type = evt.type || eventType
+
+  switch (type) {
+    case 'delta':
+      msg.content += evt.content || ''
+      nextTick(() => scrollToBottom())
+      break
+
+    case 'reasoning':
+      msg.reasoning = (msg.reasoning || '') + (evt.content || '')
+      break
+
+    case 'tool_call': {
+      // 工具调用分片：增量追加参数
+      const idx = steps.length // 简单 index — 后端每个 content_block 唯一
+      const id = evt.id || ''
+      const name = evt.name || ''
+      const argsChunk = evt.arguments || ''
+      if (!toolCallAcc[idx]) {
+        toolCallAcc[idx] = argsChunk
+        steps.push({ id, name, arguments: argsChunk, status: 'pending' })
+      } else {
+        toolCallAcc[idx] += argsChunk
+        const found = steps.find((s: any) => s.id === id)
+        if (found) found.arguments = toolCallAcc[idx]
+      }
+      msg.steps = steps.map((s: any) => ({
+        ...s,
+        arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+      }))
+      nextTick(() => scrollToBottom())
+      break
+    }
+
+    case 'tool_result': {
+      const target = steps.find((s: any) => s.id === evt.id)
+      if (target) {
+        target.result = evt.content || ''
+        target.status = 'done'
+      } else {
+        steps.push({
+          id: evt.id || '',
+          name: evt.name || '(result)',
+          arguments: '',
+          result: evt.content || '',
+          status: 'done',
+        })
+      }
+      msg.steps = steps.map((s: any) => ({
+        ...s,
+        arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+      }))
+      nextTick(() => scrollToBottom())
+      break
+    }
+
+    case 'steps': {
+      const backendSteps = evt.steps || []
+      msg.steps = mapBackendSteps(backendSteps, undefined)
+      nextTick(() => scrollToBottom())
+      break
+    }
+
+    case 'await_approval':
+      msg.approval_id = evt.approval_id
+      if (msg.steps && msg.steps.length > 0) {
+        const pendingStep = msg.steps.find((s: any) => s.name === (evt.tool?.name))
+        if (pendingStep) pendingStep.status = 'awaiting_approval'
+      }
+      break
+
+    case 'done':
+      // done 的 content 是完整文本，覆盖（防止分片遗漏）
+      if (evt.content && evt.content !== msg.content) {
+        msg.content = evt.content
+      }
+      if (evt.reasoning) msg.reasoning = evt.reasoning
+      if (evt.tool_calls) {
+        const mapped = evt.tool_calls.map((tc: any) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+          status: 'done',
+        }))
+        msg.steps = mapped
+      }
+      break
+
+    case 'error':
+      msg.content += `\n\n[错误] ${evt.content || ''}`
+      break
   }
 }
 // 将当前 Session 保存为本地 MD 文件
@@ -752,7 +888,7 @@ function scrollToBottom() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 24px 40px 32px;
+  padding: 18px 24px 28px;
   overflow: hidden;
   min-width: 0;
 }

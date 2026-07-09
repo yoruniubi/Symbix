@@ -425,46 +425,191 @@ async def chat_approve(req: ApproveRequest):
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """AI 流式对话接口 (SSE)"""
+    """AI 流式对话接口 (SSE) - 支持完整的 tool_calls 循环和审批"""
     from fastapi.responses import StreamingResponse
 
     async def generate():
         try:
-            # 如果前端传了 API Key，更新到默认 provider
-            if request.api_key:
-                cfg = provider_registry.get_active()
-                cfg.api_key = request.api_key
-                if request.api_base:
-                    cfg.api_base = request.api_base
-                if request.model:
-                    cfg.model = request.model
-                provider_registry.save()
+            api_key = request.api_key
+            api_base = request.api_base
+            model = request.model or provider_registry.get_active().model
+
             memory.add(request.session_id, "user", request.message)
             history = memory.get_history(request.session_id, limit=20)
             symbix_client.system_prompt = request.system_prompt
 
-            # 流式也支持 tools（native + mcp 统一由 ToolRegistry 管理）
             mcp_tools = None
             if request.use_mcp:
                 mcp_tools = tool_registry.get_openai_tools()
 
-            full_response = ""
-            async for chunk in symbix_client.chat_stream(
+            steps = []
+            full_text = ""
+
+            # ── 第一轮流式 ──────────────────────────────────
+            async for event in symbix_client.chat_stream(
                 user_input=request.message,
                 history=history[:-1],
                 registry=skill_registry,
                 tools=mcp_tools,
-                override_api_key=request.api_key or None,
-                override_api_base=request.api_base or None,
-                override_model=request.model or None,
+                override_api_key=api_key or None,
+                override_api_base=api_base or None,
+                override_model=model or None,
             ):
-                full_response += chunk
-                yield f"data: {chunk}\n\n"
+                yield format_sse(event)
 
-            memory.add(request.session_id, "assistant", full_response)
+                if event["type"] == "delta":
+                    full_text += event["content"]
+                elif event["type"] == "tool_call":
+                    pass  # 分片在 done 中整合
+                elif event["type"] == "done":
+                    full_text = event.get("content") or full_text
+                    tool_calls_raw = event.get("tool_calls")
+
+            # ── 工具调用循环 ────────────────────────────────
+            max_rounds = 5
+            round_count = 0
+            last_reasoning = None
+
+            while tool_calls_raw and round_count < max_rounds:
+                round_count += 1
+
+                steps.append({
+                    "type": "tool_calls",
+                    "reasoning": last_reasoning,
+                    "tool_calls": [
+                        {"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]}
+                        for tc in tool_calls_raw
+                    ],
+                })
+                yield format_sse({"type": "steps", "steps": steps})
+
+                for tc in tool_calls_raw:
+                    tc_id = tc["id"]
+                    tc_name = tc["name"]
+                    tc_args = tc.get("arguments", "{}")
+
+                    # 审批检查
+                    if tc_name in APPROVAL_TOOLS:
+                        approval_id = str(uuid.uuid4())
+                        # 保存上下文
+                        _pending_approvals[approval_id] = {
+                            "session_id": request.session_id,
+                            "user_input": request.message,
+                            "history": history[:-1],
+                            "mcp_tools": mcp_tools,
+                            "api_key": api_key,
+                            "api_base": api_base,
+                            "model": model,
+                            "steps": steps,
+                            "last_reasoning": last_reasoning,
+                            "round_count": round_count,
+                            "full_text": full_text,
+                            "tool_calls_remaining": [
+                                r for r in tool_calls_raw if r["id"] != tc_id
+                            ],
+                        }
+                        yield format_sse({
+                            "type": "await_approval",
+                            "approval_id": approval_id,
+                            "tool": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                        })
+                        yield format_sse({"type": "done", "content": full_text})
+                        return  # 等待审批
+
+                    # 执行工具
+                    tool_output = tool_registry.execute(tc_name, tc_args)
+                    if not isinstance(tool_output, str):
+                        tool_output = _json.dumps(tool_output, ensure_ascii=False)
+                    steps.append({
+                        "type": "tool_result",
+                        "tool_call_id": tc_id,
+                        "name": tc_name,
+                        "content": tool_output,
+                    })
+                    yield format_sse({
+                        "type": "tool_result",
+                        "id": tc_id,
+                        "name": tc_name,
+                        "content": tool_output[:200] + ("..." if len(tool_output) > 200 else ""),
+                    })
+
+                # 回传工具结果继续流式
+                tool_results = [
+                    {"tool_call_id": t["id"], "role": "tool", "name": t["name"],
+                     "content": steps[-len(tool_calls_raw)+i]["content"]
+                     if i < len(steps) and steps[-len(tool_calls_raw)+i]["type"] == "tool_result"
+                     else "{}", "arguments": t.get("arguments", "{}")}
+                    for i, t in enumerate(tool_calls_raw)
+                ]
+
+                # 构建带 tool 结果的消息序列回传
+                msgs = symbix_client._build_messages(
+                    history[:-1], request.message, registry=skill_registry, tools=mcp_tools
+                )
+                msgs.append({
+                    "role": "assistant",
+                    "content": full_text or None,
+                    "tool_calls": [
+                        {"id": t["id"], "type": "function",
+                         "function": {"name": t["name"], "arguments": t.get("arguments", "{}")}}
+                        for t in tool_calls_raw
+                    ],
+                })
+                for tr in tool_results:
+                    msgs.append({
+                        "role": "tool",
+                        "tool_call_id": tr["tool_call_id"],
+                        "name": tr["name"],
+                        "content": tr["content"],
+                    })
+
+                # 重新流式
+                provider = provider_registry.get_active()
+                raw_model = model or provider.model
+                raw_base = api_base or provider.api_base
+                api_key_val = api_key or provider.api_key
+                url, ptype, headers, model_name = symbix_client._resolve_endpoint(raw_model, raw_base, api_key_val)
+
+                tool_calls_raw = None
+                full_text_round = ""
+                if ptype == "anthropic":
+                    async for e in symbix_client._stream_anthropic(url, headers, model_name, msgs, mcp_tools):
+                        yield format_sse(e)
+                        if e["type"] == "delta":
+                            full_text_round += e["content"]
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                elif ptype == "gemini":
+                    async for e in symbix_client._stream_gemini(url, headers, msgs, mcp_tools):
+                        yield format_sse(e)
+                        if e["type"] == "delta":
+                            full_text_round += e["content"]
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                else:
+                    async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools):
+                        yield format_sse(e)
+                        if e["type"] == "delta":
+                            full_text_round += e["content"]
+                        elif e["type"] == "reasoning":
+                            last_reasoning = e.get("content")
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                            if e.get("reasoning"):
+                                last_reasoning = e.get("reasoning")
+
+                if full_text_round:
+                    full_text = full_text_round
+
+            memory.add(request.session_id, "assistant", full_text)
+            yield format_sse({"type": "done", "content": full_text})
             yield "data: [DONE]\n\n"
+
         except Exception as e:
-            yield f"data: [ERROR] {str(e)}\n\n"
+            import traceback
+            traceback.print_exc()
+            yield format_sse({"type": "error", "content": str(e)})
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         generate(),
@@ -474,6 +619,14 @@ async def chat_stream(request: ChatRequest):
             "Connection": "keep-alive",
         },
     )
+
+
+# ─── SSE 格式化工具函数 ──────────────────────────────────────
+def format_sse(event: dict) -> str:
+    """把事件 dict 转成 SSE 文本"""
+    event_type = event.get("type", "message")
+    payload = _json.dumps(event, ensure_ascii=False)
+    return f"event: {event_type}\ndata: {payload}\n\n"
 
 
 @app.get("/history/{session_id}")
