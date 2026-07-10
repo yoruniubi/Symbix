@@ -10,14 +10,56 @@ from .skill.registry import SkillRegistry
 from .providers import ProviderRegistry
 
 
-# ─── SSE 事件结构（统一输出格式）─────────────────────────────
-# 后端生成器 yiels 这些 dict，main.py 的 /chat/stream 负责转成 SSE 文本
-# event: delta          → {"type":"delta", "content":"xxx"}
-# event: reasoning      → {"type":"reasoning", "content":"xxx"}
-# event: tool_call      → {"type":"tool_call", "id":"call_xx", "name":"fn_name", "arguments":"..."}
-# event: tool_result    → {"type":"tool_result", "id":"call_xx", "name":"fn_name", "content":"..."}
-# event: approval       → {"type":"await_approval", "approval_id":"uuid", "tool":{"id","name","arguments"}}
-# event: done           → {"type":"done", "content":"full_text"}
+def _sanitize_tools(tools: list[dict]) -> list[dict]:
+    """统一清洗 tool 列表，确保符合 OpenAI function-calling 严格 schema：
+    - 顶层必须是 {"type": "function", "function": {...}}
+    - parameters 必须是 {"type": "object", ...}，过滤 $ 开头元字段
+    - 名字必填、非空
+    异常工具会被静默丢弃，而不是让整次请求失败。
+    """
+    clean = []
+    for t in tools or []:
+        if not isinstance(t, dict) or t.get("type") != "function":
+            continue
+        fn = t.get("function")
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name")
+        if not name or not isinstance(name, str):
+            continue
+        params = fn.get("parameters")
+        if not isinstance(params, dict) or params.get("type") != "object":
+            params = {"type": "object", "properties": {}}
+        else:
+            props = params.get("properties")
+            if not isinstance(props, dict):
+                props = {}
+            else:
+                clean_props = {}
+                for p_name, p_schema in props.items():
+                    if not isinstance(p_schema, dict):
+                        continue
+                    cp = {k: v for k, v in p_schema.items() if not k.startswith("$")}
+                    if "type" not in cp and "anyOf" not in cp and "oneOf" not in cp:
+                        cp = {"type": "string", **cp}
+                    clean_props[p_name] = cp
+                props = clean_props
+            params = {
+                "type": "object",
+                "properties": props,
+            }
+            req = params.get("required")
+            if isinstance(req, list):
+                params["required"] = [r for r in req if isinstance(r, str)]
+        clean.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": fn.get("description", "") or "",
+                "parameters": params,
+            },
+        })
+    return clean
 
 
 class SymbixClient:
@@ -387,8 +429,10 @@ class SymbixClient:
             "stream": True,
         }
         if tools:
-            body["tools"] = tools
-            body["tool_choice"] = "auto"
+            clean_tools = _sanitize_tools(tools)
+            if clean_tools:
+                body["tools"] = clean_tools
+                body["tool_choice"] = "auto"
 
         full_text = ""
         full_reasoning = ""

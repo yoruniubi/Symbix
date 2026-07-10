@@ -128,8 +128,138 @@ class MessageItem(BaseModel):
 
 
 class SessionPayload(BaseModel):
+    session_id: str = ""
+    title: str = "新对话"
+    history: List[MessageItem] = []
+
+
+class DeleteMarkdownRequest(BaseModel):
+    session_id: str = ""
+    title: str = ""
+
+
+class RenameSessionRequest(BaseModel):
+    session_id: str
     title: str
-    history: List[MessageItem]
+    old_title: str = ""
+
+
+class GenerateTitleRequest(BaseModel):
+    session_id: str = ""
+    context: str = ""
+
+
+# ============ 上下文压缩 & 用户画像 ============
+
+# 触发压缩的消息阈值（超过后压缩旧消息）
+COMPRESS_THRESHOLD = 16
+# 压缩后保留的最近消息数
+RECENT_KEEP = 12
+
+
+async def maybe_compress_session(session_id: str, api_key: str = "", api_base: str = "", model: str = ""):
+    """若消息数超过阈值，对旧消息做阶段性摘要并写入 session_summaries"""
+    total = memory.count_messages(session_id)
+    if total < COMPRESS_THRESHOLD:
+        return
+
+    existing = memory.get_summary(session_id)
+    covered = existing["covered_until_id"] if existing else 0
+
+    # 取尚未被摘要覆盖的旧消息（排除最近 RECENT_KEEP 条）
+    all_msgs = memory.get_history_with_ids(session_id, limit=total)
+    if len(all_msgs) <= RECENT_KEEP:
+        return
+
+    old_msgs = [m for m in all_msgs[:-RECENT_KEEP] if m["id"] > covered]
+    if len(old_msgs) < 4:
+        return  # 新消息不够，暂不压缩
+
+    dialogue = "\n".join(
+        f"{m['role']}: {m['content'][:300]}" for m in old_msgs
+    )
+    prev_summary = existing["summary"] if existing else ""
+    prompt = (
+        "请将以下对话内容压缩为简洁的中文摘要（200字以内），"
+        "保留关键事实、结论、用户意图与未完成事项。"
+        "只输出摘要正文，不要标题或解释。\n\n"
+    )
+    if prev_summary:
+        prompt += f"【已有摘要】\n{prev_summary}\n\n"
+    prompt += f"【需压缩的新对话】\n{dialogue}"
+
+    try:
+        result = await symbix_client.chat(
+            user_input=prompt,
+            history=[],
+            registry=skill_registry,
+            tools=None,
+            override_api_key=api_key or None,
+            override_api_base=api_base or None,
+            override_model=model or None,
+        )
+        summary = (result.get("content") or "").strip()
+        if summary:
+            covered_until = old_msgs[-1]["id"]
+            memory.set_summary(session_id, summary, covered_until)
+            print(f"[Memory] Compressed session {session_id[:8]}… until id={covered_until}")
+    except Exception as e:
+        print(f"[Memory] Compress failed: {e}")
+
+
+async def maybe_extract_profile(session_id: str, user_msg: str, assistant_msg: str = "",
+                                api_key: str = "", api_base: str = "", model: str = ""):
+    """从本轮对话中提取用户画像事实（职业、项目、偏好等），写入 user_profile"""
+    # 只在用户消息较长时才触发，避免每轮都调模型
+    if len(user_msg) < 20:
+        return
+
+    existing = memory.get_profile()
+    existing_text = "\n".join(f"- {k}: {v}" for k, v in existing.items()) if existing else "（暂无）"
+
+    prompt = (
+        "从以下对话中提取关于用户的长期事实（职业、公司、项目、技术栈、偏好、目标等）。\n"
+        "只输出 JSON 对象，key 为中文短标签，value 为简短描述。\n"
+        "如果没有新的可提取事实，返回空对象 {}。\n"
+        "不要编造，不要输出 JSON 以外的内容。\n\n"
+        f"【已有画像】\n{existing_text}\n\n"
+        f"【用户】{user_msg[:500]}\n"
+        f"【助手】{(assistant_msg or '')[:300]}"
+    )
+    try:
+        result = await symbix_client.chat(
+            user_input=prompt,
+            history=[],
+            registry=skill_registry,
+            tools=None,
+            override_api_key=api_key or None,
+            override_api_base=api_base or None,
+            override_model=model or None,
+        )
+        raw = (result.get("content") or "").strip()
+        # 尝试提取 JSON
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            facts = _json.loads(raw[start:end + 1])
+            if isinstance(facts, dict) and facts:
+                # 过滤空值
+                clean = {str(k): str(v) for k, v in facts.items() if k and v}
+                if clean:
+                    memory.set_profile_facts(clean)
+                    print(f"[Memory] Profile updated: {list(clean.keys())}")
+    except Exception as e:
+        print(f"[Memory] Profile extract failed: {e}")
+
+
+def build_system_prompt(base: str = "") -> str:
+    """把用户画像拼进 system_prompt"""
+    profile_text = memory.get_profile_prompt()
+    if not profile_text:
+        return base or ""
+    if base:
+        return f"{base}\n\n{profile_text}"
+    return profile_text
 
 
 # ============ API 路由 ============
@@ -251,9 +381,17 @@ async def chat(request: ChatRequest):
             )
             last_reasoning = response.get("reasoning")
 
-        memory.add(request.session_id, "assistant", response["content"])
+        assistant_content = response["content"]
+        memory.add(request.session_id, "assistant", assistant_content)
+
+        # ── 后台异步：上下文压缩 & 用户画像 ──
+        asyncio.create_task(maybe_compress_session(
+            request.session_id, api_key, api_base, model))
+        asyncio.create_task(maybe_extract_profile(
+            request.session_id, request.message, assistant_content, api_key, api_base, model))
+
         return ChatResponse(
-            content=response["content"],
+            content=assistant_content,
             session_id=request.session_id,
             reasoning=last_reasoning,
             steps=steps,
@@ -267,11 +405,19 @@ async def chat(request: ChatRequest):
 class ApproveRequest(BaseModel):
     approval_id: str
     approve: bool
+    session_id: str = "default"
+    system_prompt: str = ""
+    api_key: str = ""
+    api_base: str = ""
+    model: str = ""
 
 
 @app.post("/chat/approve")
 async def chat_approve(req: ApproveRequest):
     ctx = _pending_approvals.pop(req.approval_id, None)
+    # 注入前端传来的 system_prompt
+    if req.system_prompt:
+        symbix_client.system_prompt = req.system_prompt
     if not ctx:
         raise HTTPException(status_code=404, detail="approval not found")
 
@@ -413,10 +559,21 @@ async def chat_approve(req: ApproveRequest):
         )
         last_reasoning = response.get("reasoning")
 
-    memory.add(ctx["session_id"], "assistant", response["content"])
+    assistant_content = response["content"]
+    memory.add(ctx["session_id"], "assistant", assistant_content)
+
+    # 后台异步压缩 + 画像
+    sid = ctx["session_id"]
+    user_msg = ctx["user_input"]
+    key = ctx.get("api_key", "")
+    base = ctx.get("api_base", "")
+    mdl = ctx.get("model", "")
+    asyncio.create_task(maybe_compress_session(sid, key, base, mdl))
+    asyncio.create_task(maybe_extract_profile(sid, user_msg, assistant_content, key, base, mdl))
+
     return {
         "status": "ok",
-        "content": response["content"],
+        "content": assistant_content,
         "session_id": ctx["session_id"],
         "reasoning": last_reasoning,
         "steps": steps,
@@ -605,6 +762,12 @@ async def chat_stream(request: ChatRequest):
             yield format_sse({"type": "done", "content": full_text})
             yield "data: [DONE]\n\n"
 
+            # 后台异步压缩 + 画像
+            asyncio.create_task(maybe_compress_session(
+                request.session_id, api_key or "", api_base or "", model or ""))
+            asyncio.create_task(maybe_extract_profile(
+                request.session_id, request.message, full_text, api_key or "", api_base or "", model or ""))
+
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -633,9 +796,38 @@ def format_sse(event: dict) -> str:
 async def get_history(session_id: str, limit: int = 20):
     try:
         history = memory.get_history(session_id, limit=limit)
-        return {"session_id": session_id, "messages": history}
+        summary = memory.get_summary(session_id)
+        return {
+            "session_id": session_id,
+            "messages": history,
+            "summary": summary["summary"] if summary else None,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ 用户画像 ============
+
+@app.get("/api/profile")
+async def get_user_profile():
+    """获取当前用户画像"""
+    return {"profile": memory.get_profile()}
+
+
+@app.post("/api/profile")
+async def update_user_profile(facts: dict):
+    """手动更新用户画像（部分覆盖）"""
+    if not isinstance(facts, dict):
+        raise HTTPException(status_code=400, detail="需要 JSON 对象")
+    memory.set_profile_facts({str(k): str(v) for k, v in facts.items()})
+    return {"status": "ok", "profile": memory.get_profile()}
+
+
+@app.delete("/api/profile/{key}")
+async def delete_profile_key(key: str):
+    """删除一条画像事实"""
+    memory.delete_profile_fact(key)
+    return {"status": "ok", "profile": memory.get_profile()}
 
 
 # ============ Provider (AI 提供商) 管理 ============
@@ -799,24 +991,136 @@ def debug_skills_path():
     }
 # ============ Markdown 导出 ============
 
-SDK_CONFIG_DIR = os.path.join(BASE_DIR, "Symbix_sdk", "config")
+SDK_CONFIG_DIR = os.path.join(BASE_DIR, "Symbix_sdk", "config", "history_list")
 os.makedirs(SDK_CONFIG_DIR, exist_ok=True)
+
+# sessions_index.json：id → title 元数据
+SESSION_INDEX_PATH = os.path.join(SDK_CONFIG_DIR, "sessions_index.json")
+
+
+def _load_index() -> dict:
+    if not os.path.exists(SESSION_INDEX_PATH):
+        return {}
+    try:
+        with open(SESSION_INDEX_PATH, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_index(data: dict):
+    with open(SESSION_INDEX_PATH, "w", encoding="utf-8") as f:
+        _json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _get_md_path(session_id: str) -> str:
+    """按 session_id 返回 MD 文件路径"""
+    return os.path.join(SDK_CONFIG_DIR, f"{session_id}.md")
+
+
+def _get_index_title(session_id: str) -> str:
+    """从 index 取标题，没有则返回原首条截取"""
+    idx = _load_index()
+    return idx.get(session_id, "未命名对话")
 
 
 @app.post("/api/save_markdown")
 async def save_markdown(payload: SessionPayload):
-    """保存对话为 Markdown 文件"""
+    """保存/覆盖当前会话为 Markdown 文件"""
+    sid = payload.session_id or "default"
     md_content = f"# {payload.title}\n\n"
     for msg in payload.history:
         role_label = "**User**" if msg.role == "user" else "**Assistant**"
         md_content += f"### {role_label}:\n{msg.content}\n\n---\n\n"
 
-    file_path = os.path.join(SDK_CONFIG_DIR, f"{payload.title}.md")
+    file_path = _get_md_path(sid)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(md_content)
 
-    return {"status": "success", "path": file_path}
+    # 同步 index
+    index = _load_index()
+    index[sid] = payload.title or index.get(sid, "新对话")
+    _save_index(index)
 
+    return {"status": "success", "session_id": sid, "path": file_path}
+
+
+@app.post("/api/delete_markdown")
+async def delete_markdown(req: DeleteMarkdownRequest):
+    """按 session_id 删除 Markdown + memory 中的消息/摘要"""
+    sid = req.session_id or "default"
+    file_path = _get_md_path(sid)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    # 从 index 中移除
+    index = _load_index()
+    index.pop(sid, None)
+    _save_index(index)
+    # 清除该 session 的消息和摘要（不清除跨会话画像）
+    try:
+        memory.clear_session(sid)
+    except Exception as e:
+        print(f"[Memory] clear_session failed: {e}")
+    return {"status": "success", "message": f"Deleted: {sid}.md"}
+
+
+@app.post("/api/rename_session")
+async def rename_session(req: RenameSessionRequest):
+    """重命名会话标题（index + MD 文件标题行）"""
+    sid = req.session_id
+    new_title = req.title.strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+
+    index = _load_index()
+    index[sid] = new_title
+    _save_index(index)
+
+    # 更新 MD 文件的第一行标题
+    md_path = _get_md_path(sid)
+    if os.path.exists(md_path):
+        with open(md_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if lines and lines[0].startswith("# "):
+            lines[0] = f"# {new_title}\n"
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    return {"status": "success", "session_id": sid, "title": new_title}
+
+
+@app.post("/api/generate_title")
+async def generate_title(req: GenerateTitleRequest):
+    """使用 AI 根据对话上下文生成简短标题（≤15 字）"""
+    context = req.context
+    if not context:
+        return {"status": "skipped", "reason": "无对话上下文"}
+
+    prompt = (
+        "根据以下对话内容，生成一个简短的标题（不超过 15 个字）。"
+        "直接返回标题，不要带引号、标点或多余说明：\n\n" + context
+    )
+    try:
+        result = await symbix_client.chat(
+            user_input=prompt,
+            history=[],
+            registry=skill_registry,
+            tools=None,
+        )
+        title = result.get("content", "").strip().strip('"').strip("'")[:30]
+        if len(title) > 15:
+            title = title[:15] + "…"
+
+        # 写入 index
+        sid = req.session_id or "default"
+        if sid and title:
+            index = _load_index()
+            index[sid] = title
+            _save_index(index)
+
+        return {"status": "success", "title": title}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============ 启动入口 ============
 

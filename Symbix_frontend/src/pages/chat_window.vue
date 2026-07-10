@@ -140,10 +140,11 @@
       <!-- Session List (underneath, always present) -->
       <SessionList
         :sessions="sessions"
-        :active-session="activeSession"
+        :active-session-id="activeSessionId"
         @new-chat="newChat"
         @load-session="loadSession"
         @delete-session="deleteSession"
+        @rename-session="renameSession"
       />
     </div>
 
@@ -186,6 +187,7 @@
           v-show="!(msg.role === 'assistant' && msg.content === '' && loading)"
           @edit="handleEditMessage(idx, $event)"
           @approve="approveTool(idx, $event)"
+          @retry="handleRetryMessage(idx)"
         />
         <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'
             && messages[messages.length - 1]?.content === ''"
@@ -235,12 +237,9 @@ const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙吗？', '有什么想聊的吗？', '又见面了！']
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 
-interface Message { role: 'user' | 'assistant'; content: string }
-interface Session { title: string; messages: Message[] }
-
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { safeLog } from '@/utils/logMask'
-const { messages, sessions, activeSession, persistSessions } = useChatStore()
+const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
@@ -387,32 +386,85 @@ function handleEditMessage(idx: number, newText: string) {
   sendMessage(newText, [])
 }
 
+/** 重试 assistant 回复：找到对应 user 消息，截断后重新发送 */
+function handleRetryMessage(idx: number) {
+  if (loading.value) return
+  if (idx <= 0 || messages.value[idx]?.role !== 'assistant') return
+
+  // 向前找到触发该回复的 user 消息
+  let userIdx = idx - 1
+  while (userIdx >= 0 && messages.value[userIdx].role !== 'user') {
+    userIdx--
+  }
+  if (userIdx < 0) return
+
+  const userText = messages.value[userIdx].content
+  // 从 user 消息起截断（含 assistant 及之后），由 sendMessage 重新推入
+  messages.value.splice(userIdx)
+  loading.value = false
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+  }
+  sendMessage(userText, [])
+}
+
 function setModel(model: string) {
   currentModel.value = model
   saveSettings({ model })
 }
 
 function newChat() {
-  // 直接清空当前对话区，开始新对话；历史已由 sendMessage 首轮归档
+  // 清空当前对话区；真正创建会话在首次 sendMessage 时
   messages.value = []
-  activeSession.value = -1
+  activeSessionId.value = null
 }
 
-function loadSession(idx: number) {
-  activeSession.value = idx
-  messages.value = [...sessions.value[idx].messages]
+function loadSession(id: string) {
+  const session = sessions.value.find(s => s.id === id)
+  if (!session) return
+  activeSessionId.value = id
+  messages.value = [...session.messages]
   nextTick(() => scrollToBottom())
 }
 
-function deleteSession(idx: number) {
+async function deleteSession(id: string) {
+  const idx = sessions.value.findIndex(s => s.id === id)
+  if (idx < 0) return
+  const session = sessions.value[idx]
+
   sessions.value.splice(idx, 1)
-  // 如果删除的是当前激活的会话，清空聊天区
-  if (activeSession.value === idx) {
+  if (activeSessionId.value === id) {
     messages.value = []
-    activeSession.value = -1
-  } else if (activeSession.value > idx) {
-    // 索引前移
-    activeSession.value -= 1
+    activeSessionId.value = null
+  }
+
+  // 按 session id 删除后端 Markdown
+  try {
+    await fetch(`${BACKEND_URL}/api/delete_markdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: id, title: session.title }),
+    })
+  } catch (err) {
+    console.error('删除 MD 文件失败:', err)
+  }
+}
+
+async function renameSession(id: string, newTitle: string) {
+  const session = sessions.value.find(s => s.id === id)
+  if (!session || !newTitle.trim()) return
+  const oldTitle = session.title
+  session.title = newTitle.trim()
+  session.titleGenerated = true // 用户手动改过，不再自动生成
+  try {
+    await fetch(`${BACKEND_URL}/api/rename_session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: id, title: session.title, old_title: oldTitle }),
+    })
+  } catch (err) {
+    console.error('重命名失败:', err)
   }
 }
 
@@ -434,14 +486,23 @@ async function sendMessage(text: string, files: File[]) {
 
   messages.value.push({ role: 'user', content: displayContent })
 
-  // 新对话首轮：当前未激活历史 session 时，归档为新 session
-  if (activeSession.value === -1) {
+  // 新对话首轮：创建带 UUID 的 session，并激活
+  if (!activeSessionId.value) {
+    const newId = crypto.randomUUID()
     const title = displayContent.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || '新对话'
     sessions.value.unshift({
+      id: newId,
       title,
       messages: [...messages.value],
+      titleGenerated: false,
     })
+    activeSessionId.value = newId
+  } else {
+    const session = sessions.value.find(s => s.id === activeSessionId.value)
+    if (session) session.messages = [...messages.value]
   }
+
+  const currentSessionId = activeSessionId.value!
 
   loading.value = true
   await nextTick()
@@ -453,8 +514,8 @@ async function sendMessage(text: string, files: File[]) {
 
     const requestBody = {
       message: displayContent,
-      session_id: 'default',
-      system_prompt: '',
+      session_id: currentSessionId,
+      system_prompt: settings.value.systemPrompt || '',
       api_key: settings.value.apiKey || '',
       api_base: settings.value.baseUrl || '',
       model: settings.value.model || currentModel.value,
@@ -522,6 +583,9 @@ async function sendMessage(text: string, files: File[]) {
 
     loading.value = false
     abortController.value = null
+    // 同步当前会话消息，避免侧边栏停留在旧内容
+    const active = sessions.value.find(s => s.id === currentSessionId)
+    if (active) active.messages = [...messages.value]
     await saveSessionToLocalMarkdown()
 
   } catch (e: any) {
@@ -650,24 +714,55 @@ function handleSSEEvent(
 }
 // 将当前 Session 保存为本地 MD 文件
 async function saveSessionToLocalMarkdown() {
-  if (messages.value.length === 0) return
-
-  // 获取会话标题（首条用户消息前20个字）
-  const sessionTitle = messages.value[0].content.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || 'untitled'
+  if (messages.value.length === 0 || !activeSessionId.value) return
 
   try {
     await fetch(`${BACKEND_URL}/api/save_markdown`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: sessionTitle,
-        // 把整个对话数组传过去
-        history: messages.value.map(m => ({ role: m.role, content: m.content }))
-      })
+        session_id: activeSessionId.value,
+        title: messages.value[0].content.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || 'untitled',
+        history: messages.value.map(m => ({ role: m.role, content: m.content })),
+      }),
     })
-    console.log('历史记录已同步保存为本地 Markdown 文件')
+    console.log('历史记录已保存为 Markdown')
+
+    // 新会话首次保存后，异步生成 AI 标题
+    const session = sessions.value.find(s => s.id === activeSessionId.value)
+    if (session && !session.titleGenerated) {
+      tryGenerateTitle(session.id)
+    }
   } catch (err) {
     console.error('保存 MD 文件失败:', err)
+  }
+}
+
+/** 异步调用后端 AI 生成标题 */
+async function tryGenerateTitle(sessionId: string) {
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (!session || session.titleGenerated) return
+
+  // 取对话前 3 轮作为上下文
+  const recent = session.messages.slice(0, 6).map(m => `${m.role}: ${m.content.slice(0, 200)}`).join('\n')
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/generate_title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId,
+        context: recent,
+      }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.title) {
+        session.title = data.title
+        session.titleGenerated = true
+      }
+    }
+  } catch (err) {
+    console.error('生成标题失败:', err)
   }
 }
 async function installMcpServer(packageName: string, serverId: string) {
@@ -692,7 +787,8 @@ async function approveTool(msgIdx: number, approved: boolean) {
       body: JSON.stringify({
         approval_id: msg.approval_id,
         approved,
-        session_id: 'default',
+        session_id: activeSessionId.value || 'default',
+        system_prompt: settings.value.systemPrompt || '',
         api_key: settings.value.apiKey || '',
         api_base: settings.value.baseUrl || '',
         model: settings.value.model || currentModel.value,

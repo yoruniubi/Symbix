@@ -223,25 +223,68 @@ class McpServerManager:
             del self.servers[server_id]
     
     def list_tools_as_openai_format(self) -> List[dict]:
-        """获取所有服务器的工具并转换为 OpenAI 格式"""
+        """获取所有服务器的工具并转换为 OpenAI 格式
+
+        对 MCP server 返回的 inputSchema 做清洗，确保符合 OpenAI 的工具 schema 要求：
+        - 必须是 {"type": "object", ...}
+        - 过滤掉 OpenAI 不识别的 JSON Schema 元字段（$schema, $defs, $ref 等）
+        """
         openai_tools = []
-        
+
         for server_id, client in self.servers.items():
             tools = client.list_tools()
             for tool in tools:
+                name = tool.get("name", "")
+                if not name:
+                    continue
+                schema = self._sanitize_schema(tool.get("inputSchema"))
                 openai_tools.append({
                     "type": "function",
                     "function": {
-                        "name": tool.get("name", ""),
+                        "name": name,
                         "description": tool.get("description", ""),
-                        "parameters": tool.get("inputSchema", {
-                            "type": "object",
-                            "properties": {}
-                        }),
+                        "parameters": schema,
                     },
                 })
-        
+
         return openai_tools
+
+    @staticmethod
+    def _sanitize_schema(raw) -> dict:
+        """清洗 MCP inputSchema，保证符合 OpenAI function calling 要求"""
+        if not isinstance(raw, dict):
+            return {"type": "object", "properties": {}}
+
+        # 顶层必须是 object；否则退化成空 object schema
+        if raw.get("type") != "object":
+            return {"type": "object", "properties": {}}
+
+        cleaned = {"type": "object"}
+        properties = raw.get("properties")
+        if isinstance(properties, dict) and properties:
+            cleaned_props = {}
+            for prop_name, prop_schema in properties.items():
+                if not isinstance(prop_schema, dict):
+                    continue
+                # 过滤掉 OpenAI 不识别的 $ 开头元字段
+                clean_prop = {
+                    k: v for k, v in prop_schema.items()
+                    if not k.startswith("$")
+                }
+                if "type" in clean_prop or "anyOf" in clean_prop or "oneOf" in clean_prop:
+                    cleaned_props[prop_name] = clean_prop
+                else:
+                    # 至少给个 type 兜底
+                    cleaned_props[prop_name] = {"type": "string", **clean_prop}
+            cleaned["properties"] = cleaned_props
+        else:
+            cleaned["properties"] = {}
+
+        required = raw.get("required")
+        if isinstance(required, list):
+            cleaned["required"] = [r for r in required if isinstance(r, str)]
+
+        return cleaned
     
     def call_tool(self, tool_name: str, arguments) -> str:
         """调用指定工具（自动查找服务器）"""

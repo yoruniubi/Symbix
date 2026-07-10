@@ -92,7 +92,7 @@
         </div>
       </template>
 
-      <!-- 操作按钮 (仅 assistant: 复制) -->
+      <!-- 操作按钮 (仅 assistant: 复制 & 重试) -->
       <div v-if="msg.role === 'assistant' && !isEditing" class="msg-actions">
         <n-button text size="tiny" @click="copyContent" class="action-btn" title="复制">
           <template #icon>
@@ -102,6 +102,14 @@
             </svg>
             <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </template>
+        </n-button>
+        <n-button text size="tiny" @click="retry" class="action-btn" title="重试">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
             </svg>
           </template>
         </n-button>
@@ -140,6 +148,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   edit: [newText: string]
   approve: [approved: boolean]
+  retry: []
 }>()
 
 const copied = ref(false)
@@ -204,6 +213,10 @@ function truncateResult(raw: string): string {
   if (!raw) return '(空)'
   if (raw.length > 800) return raw.slice(0, 800) + '\n\n... (结果已截断，共 ' + raw.length + ' 字符)'
   return raw
+}
+
+function retry() {
+  emit('retry')
 }
 
 function copyContent() {

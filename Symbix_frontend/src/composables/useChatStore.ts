@@ -3,8 +3,7 @@ import { ref } from 'vue'
 export interface ToolCallStep {
   id: string
   name: string
-  arguments: string // 原始 JSON 字符串
-  // 运行时状态
+  arguments: string
   result?: string
   status: 'pending' | 'awaiting_approval' | 'approved' | 'rejected' | 'done' | 'skipped'
   need_approval?: boolean
@@ -14,20 +13,35 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   reasoning?: string
-  steps?: ToolCallStep[] // 本轮 assistant 消息内的工具调用步骤
-  approval_id?: string // 待审批任务的 ID（pending_approval 时存在）
+  steps?: ToolCallStep[]
+  approval_id?: string
 }
 
-interface Session { title: string; messages: Message[] }
+export interface Session {
+  id: string
+  title: string
+  messages: Message[]
+  /** 是否已用 AI 生成过标题（避免重复请求） */
+  titleGenerated?: boolean
+}
 
 const CHAT_STORE_KEY = 'symbix_chat_sessions'
 
 function loadPersistedSessions(): Session[] {
   try {
     const raw = localStorage.getItem(CHAT_STORE_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  return []
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as any[]
+    // 兼容旧数据：没有 id 的 session 补上 UUID
+    return parsed.map((s) => ({
+      id: s.id || crypto.randomUUID(),
+      title: s.title || '新对话',
+      messages: s.messages || [],
+      titleGenerated: !!s.titleGenerated,
+    }))
+  } catch {
+    return []
+  }
 }
 
 function saveSessionsToLocal(sessions: Session[]) {
@@ -38,15 +52,11 @@ function saveSessionsToLocal(sessions: Session[]) {
 
 const messages = ref<Message[]>([])
 const sessions = ref<Session[]>(loadPersistedSessions())
-const activeSession = ref(-1)
+/** 当前激活会话 id，null 表示尚未绑定会话（欢迎页 / 新对话未发消息） */
+const activeSessionId = ref<string | null>(null)
 
 /**
  * 把后端 /chat 返回的 steps 数组映射成前端 ToolCallStep[]。
- * 后端 step 形如:
- *   { type: 'reasoning', content }
- *   { type: 'tool_call', id, name, arguments, need_approval }
- *   { type: 'tool_result', id, output }
- * pending_tool: 当轮待审批的工具调用（若有），用于高亮 awaiting_approval。
  */
 export function mapBackendSteps(
   rawSteps: any[],
@@ -63,7 +73,6 @@ export function mapBackendSteps(
         status: pendingTool && pendingTool.id === s.id ? 'awaiting_approval' : 'pending',
       })
     } else if (s.type === 'tool_calls') {
-      // 批量工具调用（流式 /chat/stream 的 steps 事件）
       for (const tc of s.tool_calls || []) {
         steps.push({
           id: tc.id,
@@ -76,7 +85,9 @@ export function mapBackendSteps(
     } else if (s.type === 'tool_result') {
       const target = steps.find(st => st.id === s.tool_call_id || st.id === s.id)
       if (target) {
-        target.result = typeof s.content === 'string' ? s.content : (typeof s.output === 'string' ? s.output : JSON.stringify(s.content ?? s.output ?? ''))
+        target.result = typeof s.content === 'string'
+          ? s.content
+          : (typeof s.output === 'string' ? s.output : JSON.stringify(s.content ?? s.output ?? ''))
         target.status = s.approved === false ? 'rejected' : 'done'
       } else {
         steps.push({
@@ -97,12 +108,29 @@ export function useChatStore() {
     saveSessionsToLocal(sessions.value)
   }
 
+  function findSessionIndex(id: string): number {
+    return sessions.value.findIndex(s => s.id === id)
+  }
+
+  function getActiveSession(): Session | null {
+    if (!activeSessionId.value) return null
+    return sessions.value.find(s => s.id === activeSessionId.value) || null
+  }
+
   function clearAllSessions() {
     sessions.value = []
     messages.value = []
-    activeSession.value = -1
+    activeSessionId.value = null
     localStorage.removeItem(CHAT_STORE_KEY)
   }
 
-  return { messages, sessions, activeSession, persistSessions, clearAllSessions }
+  return {
+    messages,
+    sessions,
+    activeSessionId,
+    persistSessions,
+    findSessionIndex,
+    getActiveSession,
+    clearAllSessions,
+  }
 }
