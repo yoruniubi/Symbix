@@ -130,7 +130,20 @@ class SymbixClient:
 
     def _build_messages(self, history, user_input, registry=None, tools=None):
         messages = []
-        system = self.system_prompt
+        system = self.system_prompt or ""
+
+        # Skill 创建路径规则：始终注入，确保 agent 写入正确目录
+        system += (
+            "\n\n## Skill 创建规则（必须遵守）\n"
+            "- 创建新 skill 时，**必须**写入目录：`backend/Symbix_sdk/skill/installed_skill/<skill-name>/`\n"
+            "- **优先使用 `create_skill` 工具**生成完整骨架（SKILL.md + agents/scripts/references/assets），"
+            "不要在其他路径手动建目录\n"
+            "- skill 名称使用英文小写 + 连字符（如 `pdf-helper`）；"
+            "`description` 写 WHAT + WHEN，第三人称\n"
+            "- 创建后可用 `skill__<name>` 工具加载该 skill 的完整说明；"
+            "也可调用 `/skills/reload` 热加载\n"
+            "- 禁止把 skill 写到项目根目录、临时目录或其他无关路径"
+        )
 
         if registry:
             skill_overview = registry.inject_skill_overview()

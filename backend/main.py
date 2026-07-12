@@ -109,7 +109,7 @@ class ChatResponse(BaseModel):
 
 
 # 需要用户确认的工具白名单（操作类工具）
-APPROVAL_TOOLS = {"edit_file", "write_to_file", "replace_in_file", "delete_file", "run_command"}
+APPROVAL_TOOLS = {"edit_file", "write_to_file", "replace_in_file", "delete_file", "run_command", "open_terminal", "create_skill"}
 
 # 内存中的待审批任务：approval_id -> {event, decision, info}
 _pending_approvals: dict[str, dict] = {}
@@ -283,7 +283,7 @@ async def chat(request: ChatRequest):
         model = request.model or provider_registry.get_active().model
 
         memory.add(request.session_id, "user", request.message)
-        history = memory.get_history(request.session_id, limit=20)
+        history = memory.get_compressed_history(request.session_id, recent_limit=20)
         symbix_client.system_prompt = request.system_prompt
 
         # 决定是否传入 tools（native + mcp 统一由 ToolRegistry 管理）
@@ -592,7 +592,7 @@ async def chat_stream(request: ChatRequest):
             model = request.model or provider_registry.get_active().model
 
             memory.add(request.session_id, "user", request.message)
-            history = memory.get_history(request.session_id, limit=20)
+            history = memory.get_compressed_history(request.session_id, recent_limit=20)
             symbix_client.system_prompt = request.system_prompt
 
             mcp_tools = None
