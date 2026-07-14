@@ -68,10 +68,13 @@
             </n-button>
           </div>
           <div class="side-panel-body">
-            <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill</n-text>
+            <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill（{{ skillToolList.length }} 个工具）</n-text>
             <div v-for="skill in skillList" :key="skill.name" style="margin-top:8px; padding:8px; border-radius:8px; background:rgba(255,255,255,0.04)">
               <div style="font-size:13px; color:#c7d2fe">{{ skill.display_name }}</div>
               <div style="font-size:11px; color:#6b6b80; margin-top:2px">{{ skill.description }}</div>
+              <div v-if="getSkillTool(skill.name)" style="margin-top:4px; font-size:10px; color:#818cf8; padding-left:8px;">
+                🔧 工具: skill__{{ skill.name }}
+              </div>
             </div>
             <n-empty v-if="skillList.length === 0" description="暂无 Skill" size="small" style="margin-top:20px;" />
           </div>
@@ -116,20 +119,33 @@
             </n-button>
           </div>
           <div class="side-panel-body">
-            <div v-if="mcpConfigData" style="font-size:12px; color:#6b6b80; margin-bottom:10px;">
-              已配置 {{ Object.keys(mcpConfigData.mcpServers || {}).length }} 个 MCP Server
+            <div style="font-size:12px; color:#6b6b80; margin-bottom:10px;">
+              {{ mcpServerGroups.length }} 个 Server · {{ mcpToolList.length }} 个工具
             </div>
-            <n-text depth="3" style="font-size:13px;">已注册 {{ mcpToolList.length }} 个工具</n-text>
-            <div v-for="tool in mcpToolList" :key="tool.function.name" class="mcp-tool-item">
-              <div class="mcp-tool-name">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            <!-- 每组一个可折叠 Server -->
+            <div v-for="group in mcpServerGroups" :key="group.server_id" style="margin-bottom:8px;">
+              <div class="mcp-server-group-header" @click="toggleMcpServer(group.server_id)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
+                  :style="{ transform: expandedMcpServers.has(group.server_id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }">
+                  <polygon points="9,5 18,12 9,19"/>
                 </svg>
-                {{ tool.function.name }}
+                <span style="font-weight:600; margin-left:4px;">{{ group.server_id }}</span>
+                <span style="font-size:10px; color:#818cf8; margin-left:auto;">{{ group.tool_count }} 工具</span>
               </div>
-              <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+              <div v-if="expandedMcpServers.has(group.server_id)" style="padding-left:12px; margin-top:4px;">
+                <div v-if="group.error" style="font-size:11px; color:#ef4444; padding:6px 8px;">⚠ {{ group.error }}</div>
+                <div v-else v-for="tool in group.tools" :key="tool.function.name" class="mcp-tool-item">
+                  <div class="mcp-tool-name">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
+                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                    </svg>
+                    {{ tool.function.name }}
+                  </div>
+                  <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+                </div>
+              </div>
             </div>
-            <n-empty v-if="mcpToolList.length === 0" description="暂无工具" size="small" style="margin-top:20px;" />
+            <n-empty v-if="mcpServerGroups.length === 0" description="未连接任何 MCP Server" size="small" style="margin-top:20px;" />
           </div>
           <div class="side-panel-footer">
             <n-button size="small" secondary block @click="testMcpConnection">测试连接</n-button>
@@ -210,6 +226,7 @@
         :loading="loading"
         :model-options="modelOptions"
         :current-model="currentModel"
+        :session-id="activeSessionId"
         @send="sendMessage"
         @update:model="setModel"
         @stop="handleStopGeneration"
@@ -251,11 +268,14 @@ interface Skill {
 }
 
 const skillList = ref<Skill[]>([])
+const skillToolList = ref<any[]>([])
 const activePanel = ref<'skill' | 'mcp' | 'native_tools' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref('gpt-4o-mini')
 const mcpConfigData = ref<any>(null)
 const mcpToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
+const mcpServerGroups = ref<{ server_id: string; tool_count: number; tools: any[]; error?: string }[]>([])
+const expandedMcpServers = ref<Set<string>>(new Set())
 const nativeToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
 const hasApiKey = computed(() => !!settings.value.apiKey)
 
@@ -305,6 +325,10 @@ async function testMcpConnection() {
   }
 }
 
+function getSkillTool(skillName: string): any {
+  return skillToolList.value.find((t: any) => t._skill_name === skillName)
+}
+
 async function refreshSkillList() {
   try {
     const res = await fetch('http://127.0.0.1:8000/skills', {
@@ -322,6 +346,14 @@ async function refreshSkillList() {
     console.error('获取Skill列表失败:', err)
     messageUi.error('获取 Skill 列表失败: ' + (err.message || err))
   }
+  // 同时刷新 skill 工具列表
+  try {
+    const res = await fetch('http://127.0.0.1:8000/skills/tools')
+    if (res.ok) {
+      const data = await res.json()
+      skillToolList.value = data.tools || []
+    }
+  } catch {}
 }
 async function togglePanel(panel: 'skill' | 'mcp' | 'native_tools') {
   console.log('🟡 togglePanel called', panel)
@@ -368,9 +400,31 @@ async function togglePanel(panel: 'skill' | 'mcp' | 'native_tools') {
     } catch (err) {
       console.log("获取MCP工具列表失败:", err)
     }
+    // 按 server 分组获取
+    try {
+      const res = await fetch('http://127.0.0.1:8000/mcp/tools/by_server')
+      const data = await res.json()
+      mcpServerGroups.value = data.servers || []
+      // 默认展开第一个 server
+      expandedMcpServers.value.clear()
+      if (mcpServerGroups.value.length > 0) {
+        expandedMcpServers.value.add(mcpServerGroups.value[0].server_id)
+      }
+    } catch (err) {
+      console.log("获取MCP分组信息失败:", err)
+    }
   }
 }
 
+function toggleMcpServer(serverId: string) {
+  const s = new Set(expandedMcpServers.value)
+  if (s.has(serverId)) {
+    s.delete(serverId)
+  } else {
+    s.add(serverId)
+  }
+  expandedMcpServers.value = s
+}
 function handleStopGeneration() {
   if (abortController.value) {
     abortController.value.abort()
@@ -474,13 +528,14 @@ function sendQuick(text: string) {
 
 const BACKEND_URL = 'http://127.0.0.1:8000'
 
-async function sendMessage(text: string, files: File[]) {
+async function sendMessage(text: string, files: any[]) {
   console.log('=== sendMessage 开始（SSE 流式）===')
   safeLog('settings:', settings.value)
 
   let displayContent = text
-  if (files.length > 0) {
-    const fileNames = files.map(f => `[文件: ${f.name}]`).join(' ')
+  const ready = (files || []).filter((f: any) => f && (f.path || f.name))
+  if (ready.length > 0) {
+    const fileNames = ready.map((f: any) => `[文件: ${f.name || f.filename || 'file'}]`).join(' ')
     displayContent = text ? `${fileNames}\n${text}` : fileNames
   }
 
@@ -512,14 +567,23 @@ async function sendMessage(text: string, files: File[]) {
     assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
     const assistantMsg = messages.value[assistantMsgIndex] as any
 
+    const attachments = ready.map((f: any) => ({
+      path: f.path || '',
+      filename: f.name || f.filename || '',
+      name: f.name || f.filename || '',
+      mime: f.mime || f.type || '',
+      type: f.mime || f.type || '',
+      size: f.size || 0,
+    }))
     const requestBody = {
-      message: displayContent,
+      message: text || '',
       session_id: currentSessionId,
       system_prompt: settings.value.systemPrompt || '',
       api_key: settings.value.apiKey || '',
       api_base: settings.value.baseUrl || '',
       model: settings.value.model || currentModel.value,
       use_mcp: true,
+      attachments,
     }
 
     abortController.value = new AbortController()
@@ -970,6 +1034,21 @@ function scrollToBottom() {
   color: #c7d2fe;
   display: flex;
   align-items: center;
+}
+.mcp-server-group-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.08);
+  cursor: pointer;
+  color: #c0c0d0;
+  font-size: 12px;
+  transition: background 0.15s;
+  user-select: none;
+}
+.mcp-server-group-header:hover {
+  background: rgba(99, 102, 241, 0.14);
 }
 
 /* ---- Side Panel Footer (固定底部按钮区) ---- */

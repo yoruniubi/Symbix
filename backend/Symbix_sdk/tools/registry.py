@@ -24,6 +24,14 @@ class ToolRegistry:
             tools.extend(self.mcp_manager.list_tools_as_openai_format())
         return tools
 
+    def get_native_only_tools(self) -> list[dict]:
+        """返回仅原生内置工具（排除 skill 工具）"""
+        return self.native.get_native_only_tools()
+
+    def get_skill_tools(self) -> list[dict]:
+        """返回仅 skill 工具"""
+        return self.native.get_skill_tools()
+
     def execute(self, tool_name: str, arguments) -> str:
         # 优先在 native 工具中查找
         if tool_name in self.native.tools:

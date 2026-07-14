@@ -10,6 +10,8 @@ import json
 import os
 import re
 
+from Symbix_sdk.tools.file_pipeline import assert_path_allowed, resolve_under_allowed
+
 
 class NativeToolkit:
     """本地原生工具包 - 注册、管理和执行本地 Python 函数工具"""
@@ -18,6 +20,7 @@ class NativeToolkit:
         self.tools: dict[str, Callable] = {}
         self.tool_schemas: dict[str, dict] = {}
         self._skill_registry = None  # 关联的 SkillRegistry，用于注册 skill 为工具
+        self._skill_tool_names: set[str] = set()  # 追踪哪些工具名来自 skill
 
     def set_skill_registry(self, registry):
         """关联 SkillRegistry，把每个已加载 skill 注册为可调用工具"""
@@ -30,8 +33,10 @@ class NativeToolkit:
         """
         if not self._skill_registry:
             return
+        self._skill_tool_names.clear()
         for skill in self._skill_registry.list():
             tool_name = f"skill__{skill.name}"
+            self._skill_tool_names.add(tool_name)
             # 避免重复注册
             if tool_name in self.tools:
                 continue
@@ -93,7 +98,7 @@ class NativeToolkit:
         }
 
     def get_openai_tools(self) -> list[dict]:
-        """返回 OpenAI function calling 格式的 tools 列表，可直接传入 litellm"""
+        """返回 OpenAI function calling 格式的 tools 列表（含 native + skill），可直接传入 litellm"""
         result = []
         for name, schema in self.tool_schemas.items():
             result.append({
@@ -103,6 +108,47 @@ class NativeToolkit:
                     "description": schema["description"],
                     "parameters": schema["parameters"],
                 },
+            })
+        return result
+
+    def get_native_only_tools(self) -> list[dict]:
+        """返回仅原生内置工具（排除 skill__ 前缀的工具）"""
+        result = []
+        for name, schema in self.tool_schemas.items():
+            if name in self._skill_tool_names:
+                continue
+            result.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": schema["description"],
+                    "parameters": schema["parameters"],
+                },
+            })
+        return result
+
+    def get_skill_tools(self) -> list[dict]:
+        """返回仅 skill 工具（skill__ 前缀），附上对应的 skill 名称/描述"""
+        result = []
+        for name in sorted(self._skill_tool_names):
+            schema = self.tool_schemas.get(name)
+            if not schema:
+                continue
+            skill_name = name[len("skill__"):]
+            skill_info = None
+            if self._skill_registry:
+                skill_info = self._skill_registry.get(skill_name)
+            result.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": schema["description"],
+                    "parameters": schema["parameters"],
+                },
+                # 额外元数据，方便前端关联展示
+                "_skill_name": skill_name,
+                "_skill_display": skill_info.display_name if skill_info else skill_name,
+                "_skill_description": skill_info.description if skill_info else "",
             })
         return result
 
@@ -134,9 +180,10 @@ class NativeToolkit:
     def edit_file(self, file_path: str, new_content: str):
         """编辑（覆盖写入）文件"""
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
+            path = assert_path_allowed(file_path)
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            return f"File saved: {file_path}"
+            return f"File saved: {path}"
         except Exception as e:
             return f"Error editing file {file_path}: {e}"
 
@@ -144,6 +191,7 @@ class NativeToolkit:
         """列出指定目录下的文件和子目录"""
         import os
         try:
+            directory = assert_path_allowed(directory)
             entries = []
             if recursive:
                 for root, dirs, files in os.walk(directory):
@@ -168,10 +216,39 @@ class NativeToolkit:
     def read_file(self, file_path: str) -> str:
         """读取文件内容"""
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            path = assert_path_allowed(file_path)
+            with open(path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             return f"Error reading file {file_path}: {e}"
+
+    def parse_file(self, file_path: str, max_chars: int = 50000) -> str:
+        """结构化解析文件（txt/md/json/csv/pdf/docx/图片元信息），返回可读文本摘要。"""
+        from Symbix_sdk.tools.file_pipeline import parse_file_path
+
+        try:
+            max_chars = int(max_chars) if max_chars is not None else 50000
+        except (TypeError, ValueError):
+            max_chars = 50000
+        max_chars = max(500, min(max_chars, 200_000))
+
+        try:
+            parsed = parse_file_path(
+                file_path,
+                max_chars=max_chars,
+                include_image_base64=False,
+            )
+            if parsed.get("status") != "ok":
+                return parsed.get("message") or f"Error parsing {file_path}"
+            kind = parsed.get("kind") or "file"
+            name = parsed.get("filename") or file_path
+            path = parsed.get("path") or file_path
+            body = parsed.get("text") or ""
+            size = parsed.get("size")
+            header = f"[{kind}] {name} ({size} bytes)\npath: {path}\n"
+            return header + body
+        except Exception as e:
+            return f"Error parsing file {file_path}: {e}"
 
     # ---- 内置工具：桌宠状态控制 ----
 
@@ -346,42 +423,19 @@ description: {description}
         skill_md_content: str,
         target_dir: str,
     ) -> dict:
-        """调用 init_skill.create_skill_skeleton；导入失败时回退到内置实现。"""
-        try:
-            from Symbix_sdk.skill.installed_skill.skill_creator_scripts import (  # type: ignore
-                create_skill_skeleton,
-            )
-            return create_skill_skeleton(
-                skill_name=skill_slug,
-                description=description,
-                display_name=display_name,
-                purpose=purpose,
-                instructions=instructions,
-                skill_md_content=skill_md_content,
-                target_dir=target_dir,
-                overwrite=False,
-            )
-        except Exception:
-            pass
-
-        # 直接加载 scripts/init_skill.py（package 名含连字符，不能常规 import）
+        """调用 init_skill.create_skill_skeleton（通过 importlib 加载含连字符路径的模块）；
+        加载失败时回退到内置实现。"""
         try:
             import importlib.util
 
+            # 本文件位于 tools/，目标脚本在 skill/installed_skill/skill-creator/scripts/init_skill.py
+            _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
             init_path = os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "skill",
-                "installed_skill",
-                "skill-creator",
-                "scripts",
-                "init_skill.py",
+                _TOOLS_DIR, "..", "skill", "installed_skill", "skill-creator", "scripts", "init_skill.py"
             )
-            init_path = os.path.abspath(init_path)
+            init_path = os.path.normpath(init_path)
             if os.path.isfile(init_path):
-                spec = importlib.util.spec_from_file_location(
-                    "symbix_init_skill", init_path
-                )
+                spec = importlib.util.spec_from_file_location("symbix_init_skill", init_path)
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
@@ -395,8 +449,8 @@ description: {description}
                         target_dir=target_dir,
                         overwrite=False,
                     )
+            raise FileNotFoundError(f"init_skill.py not found at {init_path}")
         except Exception as e:
-            # 回退到内置实现
             return self._fallback_create_skill_skeleton(
                 skill_slug=skill_slug,
                 description=description,
@@ -407,16 +461,6 @@ description: {description}
                 target_dir=target_dir,
                 import_error=str(e),
             )
-
-        return self._fallback_create_skill_skeleton(
-            skill_slug=skill_slug,
-            description=description,
-            display_name=display_name,
-            purpose=purpose,
-            instructions=instructions,
-            skill_md_content=skill_md_content,
-            target_dir=target_dir,
-        )
 
     def _fallback_create_skill_skeleton(
         self,
@@ -512,6 +556,10 @@ description: {description}
 
         shell = (shell or "powershell").strip().lower()
         cwd = working_directory or "."
+        try:
+            cwd = assert_path_allowed(cwd)
+        except Exception as e:
+            return f"[Error] working_directory 不允许: {e}"
         if not os.path.isdir(cwd):
             return f"[Error] working_directory 不存在: {cwd}"
 
@@ -610,7 +658,33 @@ description: {description}
             },
         )
         self.register_tool(
+            name="parse_file",
+            func=self.parse_file,
+            description=(
+                "结构化解析本地/上传文件内容并返回文本摘要。"
+                "支持 txt/md/json/csv/代码、PDF、DOCX、图片元信息。"
+                "用户附件路径一般在 backend/uploads/<session_id>/ 下；"
+                "比 read_file 更适合 PDF/表格/二进制文档。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "文件绝对路径或工作区内路径（上传接口返回的 path 可直接使用）",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "返回文本最大字符数，默认 50000",
+                        "default": 50000,
+                    },
+                },
+                "required": ["file_path"],
+            },
+        )
+        self.register_tool(
             name="emit_pet_action",
+
             func=self.emit_pet_action,
             description="触发桌宠做出特定动作或表情反应，比如开心、思考、挥手、跳跃",
             parameters={

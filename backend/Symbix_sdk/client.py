@@ -128,7 +128,7 @@ class SymbixClient:
         }
         return url, "openai_compat", headers, model_name
 
-    def _build_messages(self, history, user_input, registry=None, tools=None):
+    def _build_messages(self, history, user_input, registry=None, tools=None, image_parts=None):
         messages = []
         system = self.system_prompt or ""
 
@@ -172,7 +172,29 @@ class SymbixClient:
         if system:
             messages.append({"role": "system", "content": system})
         messages.extend(history)
-        messages.append({"role": "user", "content": user_input})
+        if image_parts:
+            content_parts = [{"type": "text", "text": user_input or ""}]
+            for part in image_parts:
+                if not isinstance(part, dict):
+                    continue
+                # 已是 OpenAI 格式
+                if part.get("type") == "image_url":
+                    content_parts.append(part)
+                    continue
+                # file_pipeline 原始格式 {mime, base64, filename}
+                b64 = part.get("base64") or ""
+                mime = part.get("mime") or "image/png"
+                if b64:
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    })
+            if len(content_parts) == 1:
+                messages.append({"role": "user", "content": user_input or ""})
+            else:
+                messages.append({"role": "user", "content": content_parts})
+        else:
+            messages.append({"role": "user", "content": user_input})
         return messages
 
     # ── 非流式（保留 litellm，用于非流式场景）────────────────
@@ -185,6 +207,7 @@ class SymbixClient:
         override_api_key: str = None,
         override_api_base: str = None,
         override_model: str = None,
+        image_parts: Optional[list[dict]] = None,
     ) -> dict:
         import litellm
         provider = self.registry.get_active()
@@ -203,7 +226,7 @@ class SymbixClient:
             model = raw_model
 
         api_key_val = override_api_key or provider.api_key
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
 
         kwargs = {"model": model, "messages": messages}
         if api_key_val:
@@ -235,6 +258,7 @@ class SymbixClient:
         override_api_key: str = None,
         override_api_base: str = None,
         override_model: str = None,
+        image_parts: Optional[list[dict]] = None,
     ) -> dict:
         import litellm
         provider = self.registry.get_active()
@@ -251,7 +275,7 @@ class SymbixClient:
             model = raw_model
 
         api_key_val = override_api_key or provider.api_key
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
         messages.append({
             "role": "assistant",
             "content": None,
@@ -299,6 +323,7 @@ class SymbixClient:
         override_api_key: str = None,
         override_api_base: str = None,
         override_model: str = None,
+        image_parts: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         流式输出统一的 dict 事件，绕过 litellm：
@@ -312,7 +337,7 @@ class SymbixClient:
         raw_base = override_api_base or provider.api_base
         api_key = override_api_key or provider.api_key
 
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
 
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
         print(f"[stream] {provider_type} → {url}, model={model_name}")

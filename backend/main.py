@@ -5,10 +5,10 @@ Symbix Backend - FastAPI Server
 import uvicorn
 import asyncio
 import uuid
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional, Any
 from Symbix_sdk.client import SymbixClient
 from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
@@ -90,6 +90,17 @@ tool_registry.set_skill_registry(skill_registry)
 
 
 # ============ 请求模型 ============
+class AttachmentMeta(BaseModel):
+    """上传接口返回的附件元数据，发送聊天时回传 path。"""
+    path: str = ""
+    filename: str = ""
+    name: str = ""
+    mime: str = ""
+    type: str = ""
+    content: str = ""  # 可选：前端直接给文本内容
+    size: int = 0
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
@@ -99,6 +110,7 @@ class ChatRequest(BaseModel):
     api_base: str = ""
     model: str = ""
     use_mcp: bool = False
+    attachments: list[AttachmentMeta] = []
 
 
 class ChatResponse(BaseModel):
@@ -274,6 +286,69 @@ async def root():
     }
 
 
+def _prepare_user_message(request: ChatRequest) -> tuple[str, list[dict], list[dict]]:
+    """解析 attachments 并注入用户消息；返回 (enriched_text, parsed_list, image_parts)。"""
+    from Symbix_sdk.tools.file_pipeline import inject_attachments_into_message
+
+    atts = []
+    for a in request.attachments or []:
+        if hasattr(a, "model_dump"):
+            atts.append(a.model_dump())
+        elif isinstance(a, dict):
+            atts.append(a)
+        else:
+            atts.append(dict(a))
+    return inject_attachments_into_message(request.message, atts)
+
+
+@app.post("/upload")
+async def upload_files(
+    files: list[UploadFile] = File(...),
+    session_id: str = Form("default"),
+):
+    """上传一个或多个附件到 uploads/{session_id}/，返回可写入 ChatRequest.attachments 的元数据。"""
+    from Symbix_sdk.tools.file_pipeline import save_upload, parse_file_path
+
+    results = []
+    for uf in files:
+        data = await uf.read()
+        meta = save_upload(
+            session_id=session_id or "default",
+            filename=uf.filename or "file",
+            data=data,
+        )
+        if meta.get("status") == "ok":
+            # 预解析摘要（不内嵌大图 base64，聊天时再完整解析）
+            preview = parse_file_path(
+                meta["path"],
+                max_chars=2000,
+                include_image_base64=False,
+            )
+            meta["kind"] = preview.get("kind")
+            meta["preview"] = (preview.get("text") or "")[:500]
+        results.append(meta)
+
+    ok_count = sum(1 for r in results if r.get("status") == "ok")
+    return {
+        "status": "ok" if ok_count else "error",
+        "uploaded": results,
+        "count": ok_count,
+    }
+
+
+@app.post("/parse_file")
+async def parse_file_api(body: dict):
+    """按路径解析已上传/工作区内文件。body: {path, max_chars?}"""
+    from Symbix_sdk.tools.file_pipeline import parse_file_path
+
+    path = (body or {}).get("path") or (body or {}).get("file_path") or ""
+    max_chars = int((body or {}).get("max_chars") or 50000)
+    if not path:
+        raise HTTPException(status_code=400, detail="path 不能为空")
+    return parse_file_path(path, max_chars=max_chars, include_image_base64=False)
+
+
+
 @app.post("/chat")
 async def chat(request: ChatRequest):
     try:
@@ -282,7 +357,18 @@ async def chat(request: ChatRequest):
         api_base = request.api_base or provider_registry.get_active().api_base
         model = request.model or provider_registry.get_active().model
 
-        memory.add(request.session_id, "user", request.message)
+        # 附件解析注入（LLM 用 enriched；记忆存原始 message + 文件名提示）
+        user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
+        mem_msg = request.message
+        if request.attachments:
+            names = [
+                (a.filename or a.name or a.path or "file")
+                for a in request.attachments
+            ]
+            mem_msg = (mem_msg + "\n" if mem_msg else "") + " ".join(
+                f"[文件: {n}]" for n in names
+            )
+        memory.add(request.session_id, "user", mem_msg)
         history = memory.get_compressed_history(request.session_id, recent_limit=20)
         symbix_client.system_prompt = request.system_prompt
 
@@ -295,14 +381,16 @@ async def chat(request: ChatRequest):
         last_reasoning = None
 
         response = await symbix_client.chat(
-            user_input=request.message,
+            user_input=user_for_llm,
             history=history[:-1],
             registry=skill_registry,
             tools=mcp_tools,
             override_api_key=api_key,
             override_api_base=api_base,
             override_model=model,
+            image_parts=image_parts or None,
         )
+
         last_reasoning = response.get("reasoning")
 
         max_tool_rounds = 5
@@ -326,7 +414,7 @@ async def chat(request: ChatRequest):
                     approval_id = str(uuid.uuid4())
                     _pending_approvals[approval_id] = {
                         "session_id": request.session_id,
-                        "user_input": request.message,
+                        "user_input": user_for_llm,
                         "history": history[:-1],
                         "mcp_tools": mcp_tools,
                         "api_key": api_key,
@@ -341,6 +429,7 @@ async def chat(request: ChatRequest):
                             for r in response["tool_calls"]
                         ],
                     }
+
                     return {
                         "status": "pending_approval",
                         "approval_id": approval_id,
@@ -370,7 +459,7 @@ async def chat(request: ChatRequest):
                 print(f"[MCP Tool] {fn.name} -> {tool_output[:200]}")
 
             response = await symbix_client.chat_with_tool_results(
-                user_input=request.message,
+                user_input=user_for_llm,
                 history=history[:-1],
                 registry=skill_registry,
                 tools=mcp_tools,
@@ -378,6 +467,7 @@ async def chat(request: ChatRequest):
                 override_api_key=api_key,
                 override_api_base=api_base,
                 override_model=model,
+                image_parts=image_parts or None,
             )
             last_reasoning = response.get("reasoning")
 
@@ -388,7 +478,8 @@ async def chat(request: ChatRequest):
         asyncio.create_task(maybe_compress_session(
             request.session_id, api_key, api_base, model))
         asyncio.create_task(maybe_extract_profile(
-            request.session_id, request.message, assistant_content, api_key, api_base, model))
+            request.session_id, mem_msg, assistant_content, api_key, api_base, model))
+
 
         return ChatResponse(
             content=assistant_content,
@@ -591,7 +682,17 @@ async def chat_stream(request: ChatRequest):
             api_base = request.api_base
             model = request.model or provider_registry.get_active().model
 
-            memory.add(request.session_id, "user", request.message)
+            user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
+            mem_msg = request.message
+            if request.attachments:
+                names = [
+                    (a.filename or a.name or a.path or "file")
+                    for a in request.attachments
+                ]
+                mem_msg = (mem_msg + "\n" if mem_msg else "") + " ".join(
+                    f"[文件: {n}]" for n in names
+                )
+            memory.add(request.session_id, "user", mem_msg)
             history = memory.get_compressed_history(request.session_id, recent_limit=20)
             symbix_client.system_prompt = request.system_prompt
 
@@ -601,17 +702,35 @@ async def chat_stream(request: ChatRequest):
 
             steps = []
             full_text = ""
+            tool_calls_raw = None
+
+            if parsed_atts:
+                yield format_sse({
+                    "type": "attachments_parsed",
+                    "count": len(parsed_atts),
+                    "files": [
+                        {
+                            "filename": p.get("filename"),
+                            "kind": p.get("kind"),
+                            "path": p.get("path"),
+                            "status": p.get("status"),
+                        }
+                        for p in parsed_atts
+                    ],
+                })
 
             # ── 第一轮流式 ──────────────────────────────────
             async for event in symbix_client.chat_stream(
-                user_input=request.message,
+                user_input=user_for_llm,
                 history=history[:-1],
                 registry=skill_registry,
                 tools=mcp_tools,
                 override_api_key=api_key or None,
                 override_api_base=api_base or None,
                 override_model=model or None,
+                image_parts=image_parts or None,
             ):
+
                 yield format_sse(event)
 
                 if event["type"] == "delta":
@@ -651,7 +770,7 @@ async def chat_stream(request: ChatRequest):
                         # 保存上下文
                         _pending_approvals[approval_id] = {
                             "session_id": request.session_id,
-                            "user_input": request.message,
+                            "user_input": user_for_llm,
                             "history": history[:-1],
                             "mcp_tools": mcp_tools,
                             "api_key": api_key,
@@ -665,6 +784,7 @@ async def chat_stream(request: ChatRequest):
                                 r for r in tool_calls_raw if r["id"] != tc_id
                             ],
                         }
+
                         yield format_sse({
                             "type": "await_approval",
                             "approval_id": approval_id,
@@ -699,10 +819,16 @@ async def chat_stream(request: ChatRequest):
                     for i, t in enumerate(tool_calls_raw)
                 ]
 
-                # 构建带 tool 结果的消息序列回传
+                # 构建带 tool 结果的消息序列回传（保留 image_parts，避免多轮丢图）
                 msgs = symbix_client._build_messages(
-                    history[:-1], request.message, registry=skill_registry, tools=mcp_tools
+                    history[:-1],
+                    user_for_llm,
+                    registry=skill_registry,
+                    tools=mcp_tools,
+                    image_parts=image_parts or None,
                 )
+
+
                 msgs.append({
                     "role": "assistant",
                     "content": full_text or None,
@@ -766,7 +892,8 @@ async def chat_stream(request: ChatRequest):
             asyncio.create_task(maybe_compress_session(
                 request.session_id, api_key or "", api_base or "", model or ""))
             asyncio.create_task(maybe_extract_profile(
-                request.session_id, request.message, full_text, api_key or "", api_base or "", model or ""))
+                request.session_id, mem_msg, full_text, api_key or "", api_base or "", model or ""))
+
 
         except Exception as e:
             import traceback
@@ -931,9 +1058,49 @@ async def list_mcp_tools():
 
 @app.get("/native/tools")
 async def list_native_tools():
-    """列出所有内置 native 工具"""
-    tools = tool_registry.native.get_openai_tools()
+    """列出所有内置 native 工具（不含 skill 工具）"""
+    tools = tool_registry.get_native_only_tools()
     return {"count": len(tools), "tools": tools}
+
+
+@app.get("/skills/tools")
+async def list_skill_tools():
+    """列出所有 skill 注册的工具（skill__ 前缀）"""
+    tools = tool_registry.get_skill_tools()
+    return {"count": len(tools), "tools": tools}
+
+
+@app.get("/mcp/tools/by_server")
+async def list_mcp_tools_by_server():
+    """按 server 分组列出 MCP 工具"""
+    groups = []  # [{server_id, tools: [...], tool_count}]
+    for server_id, client in mcp_manager.servers.items():
+        try:
+            raw_tools = client.list_tools()
+            tools = []
+            for t in raw_tools:
+                schema = McpServerManager._sanitize_schema(t.get("inputSchema"))
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "parameters": schema,
+                    },
+                })
+            groups.append({
+                "server_id": server_id,
+                "tool_count": len(tools),
+                "tools": tools,
+            })
+        except Exception as e:
+            groups.append({
+                "server_id": server_id,
+                "tool_count": 0,
+                "tools": [],
+                "error": str(e),
+            })
+    return {"server_count": len(groups), "servers": groups}
 
 
 # ============ Skill 管理 ============

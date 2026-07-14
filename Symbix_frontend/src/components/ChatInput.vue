@@ -11,7 +11,7 @@
             <line x1="16" y1="17" x2="8" y2="17"/>
           </svg>
         </n-icon>
-        <span class="file-chip-name">{{ file.name }}</span>
+        <span class="file-chip-name">{{ file.name }}<span v-if="file.status==='uploading'" class="file-chip-status">上传中…</span><span v-else-if="file.status==='error'" class="file-chip-status err">失败</span></span>
         <n-button text size="tiny" @click="removeAttachment(idx)" class="file-chip-remove">
           <n-icon size="14"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></n-icon>
         </n-button>
@@ -132,28 +132,49 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NIcon } from 'naive-ui'
+import { NIcon, useMessage } from 'naive-ui'
+
+export interface AttachmentItem {
+  name: string
+  path?: string
+  mime?: string
+  size?: number
+  kind?: string
+  preview?: string
+  status?: 'uploading' | 'ok' | 'error'
+  error?: string
+  file?: File
+}
+
 
 const props = defineProps<{
   loading: boolean
   modelOptions: { label: string; value: string }[]
   currentModel: string
+  /** 当前会话 id，用于上传目录隔离；未创建会话时用 pending 占位 */
+  sessionId?: string | null
 }>()
 
 const emit = defineEmits<{
-  send: [text: string, files: File[]]
+  send: [text: string, files: AttachmentItem[]]
   'update:model': [model: string]
   stop: []
 }>()
 
+const messageUi = useMessage()
 const inputValue = ref('')
 const inputRef = ref<any>(null)
-const attachments = ref<File[]>([])
+const attachments = ref<AttachmentItem[]>([])
 const isRecording = ref(false)
 const showModelPopover = ref(false)
 let recordTimer: any = null
 
-const canSend = computed(() => inputValue.value.trim() || attachments.value.length > 0)
+const canSend = computed(() => {
+  const textOk = !!inputValue.value.trim()
+  const readyFiles = attachments.value.filter(a => a.status === 'ok' || (!a.status && a.path))
+  const busy = attachments.value.some(a => a.status === 'uploading')
+  return !busy && (textOk || readyFiles.length > 0)
+})
 
 const currentModelLabel = computed(() => {
   const opt = props.modelOptions.find(o => o.value === props.currentModel)
@@ -163,17 +184,72 @@ const currentModelLabel = computed(() => {
 function handleSend() {
   const text = inputValue.value.trim()
   if (!canSend.value || props.loading) return
-  const files = [...attachments.value]
+  const files = attachments.value.filter(a => a.status === 'ok' || (!!a.path && a.status !== 'error'))
   attachments.value = []
   emit('send', text || '', files)
   inputValue.value = ''
 }
 
-function handleFileUpload({ file, onFinish }: any) {
-  if (file.file) {
-    attachments.value.push(file.file)
+const BACKEND_URL = 'http://127.0.0.1:8000'
+
+async function handleFileUpload({ file, onFinish, onError }: any) {
+  const raw: File | undefined = file?.file
+  if (!raw) {
+    onFinish?.()
+    return
   }
-  onFinish()  // 加这一行
+  const item: AttachmentItem = {
+    name: raw.name,
+    size: raw.size,
+    mime: raw.type,
+    status: 'uploading',
+    file: raw,
+  }
+  attachments.value.push(item)
+  const idx = attachments.value.length - 1
+  try {
+    const form = new FormData()
+    form.append('files', raw, raw.name)
+    // 优先用父组件传入的会话 id；新对话尚未建 session 时用 pending 目录
+    form.append('session_id', props.sessionId || 'pending')
+    const res = await fetch(`${BACKEND_URL}/upload`, {
+
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    const meta = (data.uploaded && data.uploaded[0]) || {}
+    if (meta.status === 'ok') {
+      attachments.value[idx] = {
+        ...attachments.value[idx],
+        path: meta.path,
+        name: meta.filename || raw.name,
+        mime: meta.mime || raw.type,
+        size: meta.size ?? raw.size,
+        kind: meta.kind,
+        preview: meta.preview,
+        status: 'ok',
+        file: undefined,
+      }
+    } else {
+      attachments.value[idx] = {
+        ...attachments.value[idx],
+        status: 'error',
+        error: meta.message || '上传失败',
+      }
+      messageUi.error(`上传失败: ${raw.name}`)
+    }
+    onFinish?.()
+  } catch (e: any) {
+    attachments.value[idx] = {
+      ...attachments.value[idx],
+      status: 'error',
+      error: e?.message || String(e),
+    }
+    messageUi.error(`上传失败: ${raw.name}`)
+    onError?.(e)
+  }
 }
 
 function removeAttachment(idx: number) {
@@ -251,8 +327,10 @@ function handleInputKeydown(e: KeyboardEvent) {
   color: #818cf8;
   flex-shrink: 0;
 }
+.file-chip-status { margin-left: 4px; font-size: 10px; color: #a5b4fc; }
+.file-chip-status.err { color: #f87171; }
 .file-chip-name {
-  max-width: 120px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
