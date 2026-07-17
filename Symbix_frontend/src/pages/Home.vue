@@ -145,62 +145,108 @@ function showBubble(text: string, duration = 3000) {
 }
 
 // ---- 打开窗口 ----
-async function openChatWindow() {
-  console.log('openChatWindow called')
+/**
+ * 显示已有窗口；若窗口已最小化/隐藏则还原并聚焦。
+ * 失败（例如窗口已销毁但仍有 label 缓存）则返回 false，调用方重建。
+ *
+ * Windows 上最小化后仅 setFocus 不够，必须 unminimize + show。
+ * 状态查询 API 若因权限失败，仍强制执行恢复动作。
+ */
+async function revealWindow(win: WebviewWindow): Promise<boolean> {
   try {
-    const chatWindow = await WebviewWindow.getByLabel('chat')
-    if (chatWindow) {
-      console.log('Window exists, focusing...')
-      await chatWindow.setFocus()
-    } else {
-      console.log('Creating new window...')
-      new WebviewWindow('chat', {
-        url: '/chat_window',
-        title: 'Symbix - 对话',
-        width: 900,
-        height: 700,
+    // 强制还原（不依赖 isMinimized 查询结果，避免权限/状态误判）
+    try { await win.unminimize() } catch (e) {
+      console.warn('unminimize failed:', e)
+    }
+    try { await win.show() } catch (e) {
+      console.warn('show failed:', e)
+    }
+    try { await win.setFocus() } catch (e) {
+      console.warn('setFocus failed:', e)
+    }
+    // 任务栏闪烁提示（即使前台抢焦点被系统拦截也能看见）
+    try {
+      const { UserAttentionType } = await import('@tauri-apps/api/window')
+      await win.requestUserAttention(UserAttentionType.Informational)
+    } catch {}
+    return true
+  } catch (e) {
+    console.warn('revealWindow failed, will recreate:', e)
+    return false
+  }
+}
+
+
+async function openOrCreateWindow(
+  label: string,
+  options: {
+    url: string
+    title: string
+    width: number
+    height: number
+  },
+) {
+  try {
+    const existing = await WebviewWindow.getByLabel(label)
+    if (existing) {
+      const ok = await revealWindow(existing)
+      if (ok) return
+      // 旧窗口已失效，尝试关闭后重建
+      try { await existing.close() } catch {}
+    }
+    new WebviewWindow(label, {
+      url: options.url,
+      title: options.title,
+      width: options.width,
+      height: options.height,
+      resizable: true,
+      decorations: false,
+      transparent: true,
+    })
+  } catch (e) {
+    console.error(`Error opening window '${label}':`, e)
+    // 最后兜底：直接新建
+    try {
+      new WebviewWindow(label, {
+        url: options.url,
+        title: options.title,
+        width: options.width,
+        height: options.height,
         resizable: true,
         decorations: false,
         transparent: true,
       })
+    } catch (e2) {
+      console.error(`Failed to create window '${label}':`, e2)
     }
-  } catch (e) {
-    console.error('Error opening chat window:', e)
   }
+}
+
+async function openChatWindow() {
+  await openOrCreateWindow('chat', {
+    url: '/chat_window',
+    title: 'Symbix - 对话',
+    width: 900,
+    height: 700,
+  })
 }
 
 async function openSkinWindow() {
-  const skinWindow = await WebviewWindow.getByLabel('skin')
-  if (skinWindow) {
-    await skinWindow.setFocus()
-  } else {
-    new WebviewWindow('skin', {
-      url: '/skin',
-      title: 'Symbix - 换肤',
-      width: 400,
-      height: 500,
-      resizable: true,
-      decorations: false,
-      transparent: true,
-    })
-  }
+  await openOrCreateWindow('skin', {
+    url: '/skin',
+    title: 'Symbix - 换肤',
+    width: 400,
+    height: 500,
+  })
 }
 
 async function openSettingWindow() {
-  const settingWindow = await WebviewWindow.getByLabel('setting')
-  if (settingWindow) {
-    await settingWindow.setFocus()
-  } else {
-    new WebviewWindow('setting', {
-      url: '/setting',
-      title: 'Symbix - 设置',
-      width: 600,
-      height: 650,
-      resizable: true,
-      decorations: false,
-      transparent: true,
-    })
-  }
+  await openOrCreateWindow('setting', {
+    url: '/setting',
+    title: 'Symbix - 设置',
+    width: 600,
+    height: 650,
+  })
 }
 
 // ---- 生命周期 ----
@@ -264,16 +310,17 @@ onUnmounted(() => {
   bottom: calc(FRAME_H * 1.2px + 16px);
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(30, 30, 40, 0.92);
-  color: #e0e0ff;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
   font-size: 13px;
   padding: 8px 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg, 12px);
   white-space: nowrap;
   max-width: 240px;
   white-space: normal;
   z-index: 10;
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  border: 1px solid var(--accent-border);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
 .speech-bubble::after {
   content: '';
@@ -283,7 +330,7 @@ onUnmounted(() => {
   transform: translateX(-50%);
   width: 10px;
   height: 6px;
-  background: rgba(30, 30, 40, 0.92);
+  background: var(--bg-elevated);
   clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
@@ -300,27 +347,27 @@ onUnmounted(() => {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(20, 20, 30, 0.85);
-  color: #a0a0b8;
+  border: 1px solid var(--border);
+  background: var(--activity-bar-bg);
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
   pointer-events: auto;
   position: relative;
   z-index: 10;
 }
 .icon-btn:hover {
-  background: rgba(40, 40, 60, 0.95);
-  color: #e0e0ff;
-  border-color: rgba(99, 102, 241, 0.5);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-border);
 }
 .icon-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(211, 85, 90, 0.15);
+  color: var(--error, #D3555A);
+  border-color: rgba(211, 85, 90, 0.4);
 }
 
 /* 气泡过渡动画 */

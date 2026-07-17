@@ -2,6 +2,64 @@
   <div class="setting-page">
     <TitleBar />
     <div class="setting-container">
+      <!-- 外观设置卡片 -->
+      <n-card title="外观" class="setting-card">
+        <n-form label-placement="top">
+          <n-form-item label="主题模式">
+            <div class="theme-options">
+              <button
+                type="button"
+                class="theme-option"
+                :class="{ active: mode === 'light' }"
+                @click="setMode('light')"
+              >
+                <div class="theme-preview light-preview">
+                  <div class="preview-bar"></div>
+                  <div class="preview-body">
+                    <div class="preview-sidebar"></div>
+                    <div class="preview-main">
+                      <div class="preview-line short"></div>
+                      <div class="preview-line"></div>
+                      <div class="preview-line mid"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="theme-option-meta">
+                  <span class="theme-option-label">浅色</span>
+                  <span class="theme-option-desc">温暖明亮，默认推荐</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                class="theme-option"
+                :class="{ active: mode === 'dark' }"
+                @click="setMode('dark')"
+              >
+                <div class="theme-preview dark-preview">
+                  <div class="preview-bar"></div>
+                  <div class="preview-body">
+                    <div class="preview-sidebar"></div>
+                    <div class="preview-main">
+                      <div class="preview-line short"></div>
+                      <div class="preview-line"></div>
+                      <div class="preview-line mid"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="theme-option-meta">
+                  <span class="theme-option-label">深色</span>
+                  <span class="theme-option-desc">暖炭色调，贴近品牌色</span>
+                </div>
+              </button>
+            </div>
+          </n-form-item>
+          <n-text depth="3" style="font-size: 12px;">
+            主题会立即生效，并同步到对话窗口与桌宠界面。
+          </n-text>
+        </n-form>
+      </n-card>
+
       <!-- STT 设置卡片 -->
       <n-card title="语音识别 (STT)" class="setting-card">
         <n-form :model="sttForm" label-placement="top">
@@ -95,8 +153,10 @@
 import { ref, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
+import { useTheme } from '@/composables/useTheme'
 
 const message = useMessage()
+const { mode, setMode } = useTheme()
 
 interface SttSettings {
   provider: string
@@ -204,9 +264,9 @@ function resetTts() {
 <style scoped>
 .setting-page {
   height: 100vh;
-  background-color: rgba(16, 16, 20, 0.95);
+  background: var(--bg-app);
   padding-top: 32px;
-  color: white;
+  color: var(--text-primary);
   overflow-y: auto;
 }
 
@@ -216,12 +276,151 @@ function resetTts() {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 0 16px;
+  padding: 0 16px 40px;
 }
 
 .setting-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+}
+
+/* ---- Theme options ---- */
+.theme-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+.theme-option {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md, 8px);
+  border: 1.5px solid var(--border);
+  background: var(--bg-app);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
+  color: inherit;
+  font: inherit;
+}
+
+.theme-option:hover {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
+}
+
+.theme-option.active {
+  border-color: var(--accent-500, #EF6B6E);
+  box-shadow: 0 0 0 1px var(--accent-500, #EF6B6E), var(--shadow-sm);
+  background: var(--accent-soft);
+}
+
+.theme-preview {
+  height: 72px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+}
+
+.light-preview {
+  background: #FBFAF9;
+}
+.light-preview .preview-bar {
+  background: #FFFFFF;
+  border-bottom: 1px solid #DCD7D2;
+}
+.light-preview .preview-sidebar {
+  background: #FFFFFF;
+  border-right: 1px solid #DCD7D2;
+}
+.light-preview .preview-main {
+  background: #FBFAF9;
+}
+.light-preview .preview-line {
+  background: #DCD7D2;
+}
+.light-preview .preview-line.short {
+  background: #EF6B6E;
+}
+
+.dark-preview {
+  background: #161210;
+}
+.dark-preview .preview-bar {
+  background: rgba(30, 25, 22, 0.97);
+  border-bottom: 1px solid #3D322C;
+}
+.dark-preview .preview-sidebar {
+  background: rgba(22, 18, 16, 0.92);
+  border-right: 1px solid #3D322C;
+}
+.dark-preview .preview-main {
+  background: #161210;
+}
+.dark-preview .preview-line {
+  background: #3D322C;
+}
+.dark-preview .preview-line.short {
+  background: #EF6B6E;
+}
+
+.preview-bar {
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.preview-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.preview-sidebar {
+  width: 22%;
+  flex-shrink: 0;
+}
+
+.preview-main {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+}
+
+.preview-line {
+  height: 6px;
+  border-radius: 3px;
+  width: 100%;
+}
+.preview-line.short {
+  width: 42%;
+}
+.preview-line.mid {
+  width: 70%;
+}
+
+.theme-option-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.theme-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.theme-option-desc {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 </style>

@@ -42,13 +42,13 @@ async function closeWindow() {
 <style scoped>
 .titlebar {
   height: 32px;
-  background: rgba(12, 12, 16, 0.95);
+  background: var(--panel-bg);
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0 12px;
   user-select: none;
-  border-bottom: 1px solid rgba(42, 42, 47, 0.8);
+  border-bottom: 1px solid var(--border);
   position: fixed;
   top: 0;
   left: 0;
@@ -57,14 +57,16 @@ async function closeWindow() {
 }
 
 .titlebar-title {
-  color: #d4d4d8;
+  color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
+  letter-spacing: 0.2px;
 }
 
 .titlebar-buttons {
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  align-items: center;
 }
 
 .titlebar-button {
@@ -72,22 +74,22 @@ async function closeWindow() {
   height: 32px;
   border: none;
   background: transparent;
-  color: #85859b;
+  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s ease;
-  border-radius: 4px;
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
+  border-radius: var(--radius-sm, 6px);
 }
 
 .titlebar-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #d4d4d8;
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .titlebar-button.close:hover {
-  background: #e81123;
+  background: var(--error, #D3555A);
   color: white;
 }
 </style>

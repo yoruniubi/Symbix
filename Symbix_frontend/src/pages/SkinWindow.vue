@@ -155,8 +155,8 @@ onMounted(() => {
 .skin-window {
   width: 100vw;
   height: 100vh;
-  background: rgba(16, 16, 24, 0.95);
-  color: white;
+  background: var(--bg-app);
+  color: var(--text-primary);
   padding-top: 32px;
   display: flex;
   flex-direction: column;
@@ -178,7 +178,7 @@ onMounted(() => {
 .title {
   font-size: 24px;
   font-weight: 600;
-  color: #e0e0ff;
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -194,21 +194,21 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg, 12px);
   border: 2px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
 }
 
 .skin-item:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(99, 102, 241, 0.3);
+  background: var(--surface-active);
+  border-color: var(--accent-border);
 }
 
 .skin-item.active {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.15);
+  border-color: var(--accent-500, #EF6B6E);
+  background: var(--accent-soft);
 }
 
 .skin-item img {
@@ -217,17 +217,17 @@ onMounted(() => {
   image-rendering: pixelated;
   object-fit: cover;
   object-position: 0 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
 }
 
 .skin-item span {
   font-size: 14px;
-  color: #a0a0b8;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .skin-item.active span {
-  color: #818cf8;
+  color: var(--accent-300, #F7A85B);
 }
 
 .skin-content::-webkit-scrollbar {
@@ -235,7 +235,7 @@ onMounted(() => {
 }
 
 .skin-content::-webkit-scrollbar-thumb {
-  background: #3a3a42;
+  background: var(--border);
   border-radius: 3px;
 }
 </style>

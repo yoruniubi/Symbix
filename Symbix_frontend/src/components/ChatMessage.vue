@@ -324,37 +324,38 @@ const renderedContent = computed(() => {
   margin-bottom: 2px;
 }
 .avatar-bot {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(167, 139, 250, 0.1));
-  color: #818cf8;
+  background: var(--accent-soft);
+  color: var(--accent-500, #EF6B6E);
 }
 .avatar-user {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(79, 70, 229, 0.15));
-  color: #c7d2fe;
+  background: rgba(247, 168, 91, 0.15);
+  color: var(--accent-300, #F7A85B);
 }
 
 /* ---- Bubble ---- */
 .message-bubble {
   max-width: min(72%, 760px);
   padding: 12px 18px;
-  border-radius: 18px;
-  color: #e5e7eb;
+  border-radius: var(--radius-md, 8px);
+  color: var(--text-primary);
   word-break: break-word;
   overflow-wrap: anywhere;
   line-height: 1.65;
-  font-size: 13px;
+  font-size: 14px;
   position: relative;
 }
 .message-bubble.user {
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
-  border-bottom-right-radius: 6px;
-  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.2);
+  background: var(--accent-500, #EF6B6E);
+  color: #FFFFFF;
+  border-bottom-right-radius: 4px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.12));
 }
 .message-bubble.assistant {
-  background: rgba(38, 40, 50, 0.7);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-bottom-left-radius: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
 }
+
 
 /* ---- Message Text ---- */
 .msg-text {
@@ -363,29 +364,30 @@ const renderedContent = computed(() => {
 
 /* ---- Inline Code ---- */
 .msg-text :deep(.inline-code) {
-  background: rgba(99, 102, 241, 0.15);
-  color: #c7d2fe;
+  background: var(--accent-soft);
+  color: var(--accent-300, #F7A85B);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 6px);
   font-size: 0.9em;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 
 /* ---- Code Block ---- */
 .msg-text :deep(.code-block) {
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
-  padding: 14px 16px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 12px 14px;
   margin: 8px 0;
   overflow-x: auto;
   font-size: 13px;
   line-height: 1.55;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 .msg-text :deep(.code-block code) {
-  color: #c7d2fe;
+  color: var(--text-primary);
 }
+
 
 /* ---- Actions ---- */
 .msg-actions {
@@ -400,14 +402,15 @@ const renderedContent = computed(() => {
   opacity: 1;
 }
 .action-btn {
-  color: #6b6b80 !important;
+  color: var(--text-muted) !important;
   padding: 3px 6px !important;
-  border-radius: 6px !important;
+  border-radius: var(--radius-sm, 6px) !important;
 }
 .action-btn:hover {
-  color: #a0a0b8 !important;
-  background: rgba(255, 255, 255, 0.04) !important;
+  color: var(--text-secondary) !important;
+  background: var(--surface-hover) !important;
 }
+
 
 /* ---- User Actions (right-aligned) ---- */
 .user-actions {
@@ -423,25 +426,26 @@ const renderedContent = computed(() => {
   gap: 6px;
 }
 .edit-input {
-  background: rgba(30, 30, 40, 0.9);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  border-radius: 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md, 8px);
   padding: 4px;
 }
 .edit-input :deep(.n-input__textarea-el) {
-  color: #e4e4e7 !important;
+  color: var(--text-primary) !important;
   padding: 10px 14px !important;
   font-size: 14px;
   line-height: 1.55;
-  caret-color: #6366f1;
+  caret-color: var(--accent-500, #EF6B6E);
 }
 .edit-input :deep(.n-input__border),
 .edit-input :deep(.n-input__state-border) {
-  border-color: rgba(99, 102, 241, 0.3) !important;
+  border-color: var(--accent-border) !important;
 }
 .edit-input :deep(.n-input__placeholder) {
-  color: #55556b !important;
+  color: var(--text-muted) !important;
 }
+
 .edit-actions {
   display: flex;
   gap: 8px;
@@ -449,11 +453,11 @@ const renderedContent = computed(() => {
   justify-content: flex-end;
 }
 .cancel-btn {
-  color: #6b6b80 !important;
+  color: var(--text-muted) !important;
   font-size: 12px !important;
 }
 .cancel-btn:hover {
-  color: #a0a0b8 !important;
+  color: var(--text-secondary) !important;
 }
 
 /* ---- Reasoning Block ---- */
@@ -467,13 +471,14 @@ const renderedContent = computed(() => {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  color: #818cf8;
+  color: var(--accent-500, #EF6B6E);
   font-size: 12px;
   padding: 4px 0;
   user-select: none;
-  opacity: 0.8;
-  transition: opacity 0.2s;
+  opacity: 0.85;
+  transition: opacity var(--duration-fast, 120ms);
 }
+
 
 .reasoning-header:hover {
   opacity: 1;
@@ -492,12 +497,12 @@ const renderedContent = computed(() => {
   word-break: break-word;
   line-height: 1.5;
   font-size: 12px;
-  color: #8b8ba0;
+  color: var(--text-secondary);
   padding: 8px 12px;
   margin-top: 4px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  border-left: 2px solid rgba(99, 102, 241, 0.3);
+  background: var(--bg-app);
+  border-radius: var(--radius-sm, 6px);
+  border-left: 2px solid var(--accent-border);
 }
 
 /* ---- Steps Block ---- */
@@ -510,34 +515,34 @@ const renderedContent = computed(() => {
 }
 
 .step-card {
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(20, 22, 30, 0.7);
-  backdrop-filter: blur(6px);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
   overflow: hidden;
-  transition: border-color 0.2s ease;
+  transition: border-color var(--duration-base, 180ms) ease;
 }
 .step-card.done {
-  border-color: rgba(34, 197, 94, 0.25);
-  background: rgba(34, 197, 94, 0.05);
+  border-color: rgba(78, 154, 110, 0.35);
+  background: rgba(78, 154, 110, 0.08);
 }
 .step-card.pending, .step-card.running {
-  border-color: rgba(99, 102, 241, 0.3);
-  background: rgba(99, 102, 241, 0.06);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }
 .step-card.awaiting_approval {
-  border-color: rgba(234, 179, 8, 0.3);
-  background: rgba(234, 179, 8, 0.06);
+  border-color: rgba(216, 155, 60, 0.4);
+  background: rgba(216, 155, 60, 0.08);
   animation: pulse-approval 2s infinite;
 }
 .step-card.rejected {
-  border-color: rgba(239, 68, 68, 0.25);
-  background: rgba(239, 68, 68, 0.05);
+  border-color: rgba(211, 85, 90, 0.35);
+  background: rgba(211, 85, 90, 0.08);
 }
 @keyframes pulse-approval {
-  0%, 100% { border-color: rgba(234, 179, 8, 0.3); }
-  50% { border-color: rgba(234, 179, 8, 0.6); }
+  0%, 100% { border-color: rgba(216, 155, 60, 0.35); }
+  50% { border-color: rgba(216, 155, 60, 0.65); }
 }
+
 
 .step-header {
   display: flex;
@@ -559,10 +564,11 @@ const renderedContent = computed(() => {
   width: 20px;
   height: 20px;
 }
-.step-card.done .step-icon { color: #22c55e; }
-.step-card.pending .step-icon, .step-card.running .step-icon { color: #818cf8; }
-.step-card.awaiting_approval .step-icon { color: #facc15; }
-.step-card.rejected .step-icon { color: #ef4444; }
+.step-card.done .step-icon { color: var(--success, #4E9A6E); }
+.step-card.pending .step-icon, .step-card.running .step-icon { color: var(--accent-500, #EF6B6E); }
+.step-card.awaiting_approval .step-icon { color: var(--warning, #D89B3C); }
+.step-card.rejected .step-icon { color: var(--error, #D3555A); }
+
 
 .spin {
   animation: spin 1.2s linear infinite;
@@ -574,7 +580,7 @@ const renderedContent = computed(() => {
 .step-name {
   font-size: 13px;
   font-weight: 500;
-  color: #d0d0da;
+  color: var(--text-primary);
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -585,22 +591,23 @@ const renderedContent = computed(() => {
 .step-badge {
   font-size: 11px;
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-full, 999px);
   line-height: 20px;
   flex-shrink: 0;
-  color: #8b8ba0;
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  background: var(--surface-hover);
 }
-.step-badge.done { color: #22c55e; background: rgba(34, 197, 94, 0.1); }
-.step-badge.pending, .step-badge.running { color: #818cf8; background: rgba(99, 102, 241, 0.12); }
-.step-badge.awaiting_approval { color: #facc15; background: rgba(234, 179, 8, 0.1); }
-.step-badge.rejected { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+.step-badge.done { color: var(--success, #4E9A6E); background: rgba(78, 154, 110, 0.12); }
+.step-badge.pending, .step-badge.running { color: var(--accent-500, #EF6B6E); background: var(--accent-soft); }
+.step-badge.awaiting_approval { color: var(--warning, #D89B3C); background: rgba(216, 155, 60, 0.12); }
+.step-badge.rejected { color: var(--error, #D3555A); background: rgba(211, 85, 90, 0.12); }
 
 .step-expand-arrow {
-  color: #6b6b80;
+  color: var(--text-muted);
   flex-shrink: 0;
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-base, 180ms) ease;
 }
+
 .step-expand-arrow.expanded {
   transform: rotate(180deg);
 }
@@ -622,25 +629,27 @@ const renderedContent = computed(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #6b6b80;
+  color: var(--text-muted);
   margin-bottom: 4px;
 }
 
 .detail-pre {
   margin: 0;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 11px;
   line-height: 1.5;
-  color: #b0b0c0;
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-all;
   overflow-x: auto;
   max-height: 240px;
   overflow-y: auto;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
   padding: 8px 10px;
 }
+
 
 /* ---- Scrollbar for code blocks ---- */
 .msg-text :deep(.code-block::-webkit-scrollbar) {

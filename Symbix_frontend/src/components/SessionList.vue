@@ -1,5 +1,5 @@
 <template>
-  <div class="left-panel">
+  <div class="left-panel" :style="{ width: panelWidth + 'px' }">
     <div class="left-panel-header">
       <n-text strong style="font-size: 16px;">对话历史</n-text>
       <n-button size="small" quaternary circle @click="emit('new-chat')" title="新建对话">
@@ -30,8 +30,8 @@
           @keydown.escape.prevent="cancelRename"
           @blur="commitRename(session.id)"
         />
-        <!-- 展示模式 -->
-        <n-ellipsis v-else style="max-width: 120px; flex: 1; min-width: 0;" :title="session.title">
+        <!-- 展示模式：宽度随面板自适应 -->
+        <n-ellipsis v-else class="session-title" :title="session.title">
           {{ session.title }}
         </n-ellipsis>
 
@@ -68,11 +68,18 @@
       </div>
       <n-empty v-if="sessions.length === 0" description="暂无对话" size="small" style="margin-top: 40px;" />
     </div>
+
+    <!-- VSCode 风格拖拽缩放条 -->
+    <div
+      class="resize-handle"
+      :class="{ dragging: isResizing }"
+      @mousedown.prevent="startResize"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
 
 interface Session {
   id: string
@@ -92,9 +99,68 @@ const emit = defineEmits<{
   'rename-session': [id: string, newTitle: string]
 }>()
 
+const STORAGE_KEY = 'symbix-session-list-width'
+const MIN_WIDTH = 140
+const MAX_WIDTH = 420
+const DEFAULT_WIDTH = 180
+
+const panelWidth = ref(DEFAULT_WIDTH)
+const isResizing = ref(false)
 const editingId = ref<string | null>(null)
 const editTitle = ref('')
 const editInputRef = ref<HTMLInputElement | null>(null)
+
+let startX = 0
+let startWidth = 0
+
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      const w = parseInt(saved, 10)
+      if (!Number.isNaN(w)) {
+        panelWidth.value = clamp(w, MIN_WIDTH, MAX_WIDTH)
+      }
+    }
+  } catch { /* ignore */ }
+})
+
+function clamp(v: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, v))
+}
+
+function startResize(e: MouseEvent) {
+  isResizing.value = true
+  startX = e.clientX
+  startWidth = panelWidth.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', onResize)
+  window.addEventListener('mouseup', stopResize)
+}
+
+function onResize(e: MouseEvent) {
+  if (!isResizing.value) return
+  const delta = e.clientX - startX
+  panelWidth.value = clamp(startWidth + delta, MIN_WIDTH, MAX_WIDTH)
+}
+
+function stopResize() {
+  if (!isResizing.value) return
+  isResizing.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('mousemove', onResize)
+  window.removeEventListener('mouseup', stopResize)
+  try {
+    localStorage.setItem(STORAGE_KEY, String(panelWidth.value))
+  } catch { /* ignore */ }
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('mousemove', onResize)
+  window.removeEventListener('mouseup', stopResize)
+})
 
 function onItemClick(id: string) {
   if (editingId.value) return
@@ -133,39 +199,62 @@ function cancelRename() {
   z-index: 1;
   width: 180px;
   min-width: 140px;
+  max-width: 420px;
   height: 100%;
-  background: #18181c;
-  border-right: 1px solid #2a2a2f;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 12px 8px;
   overflow: hidden;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 .left-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 13px;
+  color: var(--text-primary);
 }
 .history-list {
   flex: 1;
   overflow-y: auto;
   margin-top: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.history-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 .history-item {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm, 6px);
   cursor: pointer;
   font-size: 12px;
-  color: #999;
-  transition: background 0.15s;
+  color: var(--text-secondary);
+  transition: background var(--duration-fast, 120ms) var(--ease-standard, ease),
+              color var(--duration-fast, 120ms) var(--ease-standard, ease);
   margin-bottom: 1px;
 }
-.history-item:hover { background: #232328; color: #ddd; }
-.history-item.active { background: #2e2e38; color: #fff; }
+.history-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.history-item.active {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.session-title {
+  flex: 1;
+  min-width: 0;
+}
 
 .item-actions {
   display: flex;
@@ -173,32 +262,48 @@ function cancelRename() {
   gap: 0;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-fast, 120ms) ease;
 }
 .history-item:hover .item-actions {
   opacity: 1;
 }
 .action-btn {
-  color: #666 !important;
+  color: var(--text-muted) !important;
   padding: 2px !important;
 }
 .action-btn:hover {
-  color: #a0a0b8 !important;
+  color: var(--text-secondary) !important;
 }
 .delete-btn:hover {
-  color: #f87171 !important;
+  color: var(--error, #D3555A) !important;
 }
 
 .title-input {
   flex: 1;
   min-width: 0;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(99, 102, 241, 0.5);
-  border-radius: 4px;
-  color: #e5e7eb;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-primary);
   font-size: 12px;
   padding: 2px 6px;
   outline: none;
   width: 100%;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 30;
+  background: transparent;
+  transition: background var(--duration-fast, 120ms) ease;
+}
+.resize-handle:hover,
+.resize-handle.dragging {
+  background: var(--accent-border);
 }
 </style>

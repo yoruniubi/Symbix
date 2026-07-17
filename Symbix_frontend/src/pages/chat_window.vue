@@ -63,19 +63,34 @@
         <div class="side-panel" v-if="activePanel === 'skill'">
           <div class="side-panel-header">
             <span class="side-panel-title">Skill 面板</span>
-            <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-            </n-button>
+            <div class="side-panel-actions">
+              <n-button size="tiny" type="primary" class="add-entry-btn" @click="openAddChooser('skill')">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                </template>
+                添加
+              </n-button>
+              <n-button text size="tiny" @click="activePanel = null" class="close-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </n-button>
+            </div>
+
           </div>
           <div class="side-panel-body">
             <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill（{{ skillToolList.length }} 个工具）</n-text>
-            <div v-for="skill in skillList" :key="skill.name" style="margin-top:8px; padding:8px; border-radius:8px; background:rgba(255,255,255,0.04)">
-              <div style="font-size:13px; color:#c7d2fe">{{ skill.display_name }}</div>
-              <div style="font-size:11px; color:#6b6b80; margin-top:2px">{{ skill.description }}</div>
-              <div v-if="getSkillTool(skill.name)" style="margin-top:4px; font-size:10px; color:#818cf8; padding-left:8px;">
+            <div v-for="skill in skillList" :key="skill.name" class="skill-card">
+              <div class="skill-card-head">
+                <div style="font-size:13px; color:var(--text-primary)">{{ skill.display_name || skill.name }}</div>
+                <n-button text size="tiny" type="error" @click="removeSkill(skill.name)" title="删除">×</n-button>
+              </div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px">{{ skill.description }}</div>
+              <div v-if="getSkillTool(skill.name)" style="margin-top:4px; font-size:10px; color:var(--accent-300); padding-left:2px;">
                 🔧 工具: skill__{{ skill.name }}
               </div>
             </div>
+
             <n-empty v-if="skillList.length === 0" description="暂无 Skill" size="small" style="margin-top:20px;" />
           </div>
           <div class="side-panel-footer">
@@ -83,6 +98,7 @@
           </div>
         </div>
       </transition>
+
 
       <!-- Native Tools Panel -->
       <transition name="panel-slide">
@@ -102,7 +118,7 @@
                 </svg>
                 {{ tool.function.name }}
               </div>
-              <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
             </div>
             <n-empty v-if="nativeToolList.length === 0" description="暂无内置工具" size="small" style="margin-top:20px;" />
           </div>
@@ -114,26 +130,46 @@
         <div class="side-panel" v-if="activePanel === 'mcp'">
           <div class="side-panel-header">
             <span class="side-panel-title">MCP 面板</span>
-            <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-            </n-button>
+            <div class="side-panel-actions">
+              <n-button size="tiny" type="primary" class="add-entry-btn" @click="openAddChooser('mcp')">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                </template>
+                添加
+              </n-button>
+              <n-button text size="tiny" @click="activePanel = null" class="close-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </n-button>
+            </div>
+
           </div>
+
           <div class="side-panel-body">
-            <div style="font-size:12px; color:#6b6b80; margin-bottom:10px;">
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
               {{ mcpServerGroups.length }} 个 Server · {{ mcpToolList.length }} 个工具
             </div>
             <!-- 每组一个可折叠 Server -->
             <div v-for="group in mcpServerGroups" :key="group.server_id" style="margin-bottom:8px;">
-              <div class="mcp-server-group-header" @click="toggleMcpServer(group.server_id)">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
-                  :style="{ transform: expandedMcpServers.has(group.server_id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }">
-                  <polygon points="9,5 18,12 9,19"/>
-                </svg>
-                <span style="font-weight:600; margin-left:4px;">{{ group.server_id }}</span>
-                <span style="font-size:10px; color:#818cf8; margin-left:auto;">{{ group.tool_count }} 工具</span>
+              <div class="mcp-server-group-header">
+                <div class="mcp-server-title" @click="toggleMcpServer(group.server_id)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
+                    :style="{ transform: expandedMcpServers.has(group.server_id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }">
+                    <polygon points="9,5 18,12 9,19"/>
+                  </svg>
+                  <span style="font-weight:600; margin-left:4px;">{{ group.server_id }}</span>
+                  <span class="mcp-status-dot" :class="mcpStatusClass(group.server_id)" :title="mcpStatusLabel(group.server_id)"></span>
+                  <span style="font-size:10px; color:var(--accent-300); margin-left:auto;">{{ group.tool_count }} 工具</span>
+                </div>
+                <div class="mcp-server-ops" @click.stop>
+                  <n-button text size="tiny" @click="reconnectMcp(group.server_id)" title="重连">↻</n-button>
+                  <n-button text size="tiny" type="error" @click="removeMcp(group.server_id)" title="删除">×</n-button>
+                </div>
               </div>
+
               <div v-if="expandedMcpServers.has(group.server_id)" style="padding-left:12px; margin-top:4px;">
-                <div v-if="group.error" style="font-size:11px; color:#ef4444; padding:6px 8px;">⚠ {{ group.error }}</div>
+                <div v-if="group.error" style="font-size:11px; color:var(--error); padding:6px 8px;">⚠ {{ group.error }}</div>
                 <div v-else v-for="tool in group.tools" :key="tool.function.name" class="mcp-tool-item">
                   <div class="mcp-tool-name">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
@@ -141,7 +177,7 @@
                     </svg>
                     {{ tool.function.name }}
                   </div>
-                  <div style="font-size:11px; color:#6b6b80; margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+                  <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
                 </div>
               </div>
             </div>
@@ -232,8 +268,121 @@
         @stop="handleStopGeneration"
       />
     </div>
+
+    <!-- 添加 Skill 弹窗：GitHub 安装 / 自定义创建 -->
+    <n-modal
+      v-model:show="showAddSkillModal"
+      preset="card"
+      title="添加 Skill"
+      style="width: 480px; max-width: 94vw;"
+      :bordered="false"
+      class="add-modal"
+    >
+      <n-tabs v-model:value="skillAddMode" type="segment" size="small" style="margin-bottom: 12px;">
+        <n-tab-pane name="github" tab="从 GitHub 安装" />
+        <n-tab-pane name="custom" tab="自定义创建" />
+      </n-tabs>
+      <n-form label-placement="top" size="small">
+        <template v-if="skillAddMode === 'github'">
+          <n-form-item label="GitHub 仓库" required>
+            <n-input v-model:value="skillForm.repo_url" placeholder="owner/repo 或 https://github.com/owner/repo" />
+          </n-form-item>
+          <n-form-item label="Skill 名称（可选，仓库有多个时指定）">
+            <n-input v-model:value="skillForm.skill_name" placeholder="例如 my-helper" />
+          </n-form-item>
+          <n-form-item label="分支（可选）">
+            <n-input v-model:value="skillForm.branch" placeholder="默认 main/master" />
+          </n-form-item>
+          <n-form-item label="覆盖已存在">
+            <n-switch v-model:value="skillForm.overwrite" />
+          </n-form-item>
+        </template>
+        <template v-else>
+          <n-form-item label="Skill 名称（小写-连字符）" required>
+            <n-input v-model:value="skillForm.skill_name" placeholder="例如 my-helper" />
+          </n-form-item>
+          <n-form-item label="显示名称">
+            <n-input v-model:value="skillForm.display_name" placeholder="例如 我的助手" />
+          </n-form-item>
+          <n-form-item label="描述">
+            <n-input v-model:value="skillForm.description" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="简要说明用途" />
+          </n-form-item>
+          <n-form-item label="用途（可选）">
+            <n-input v-model:value="skillForm.purpose" type="textarea" :autosize="{ minRows: 2, maxRows: 3 }" />
+          </n-form-item>
+          <n-form-item label="指令（可选）">
+            <n-input v-model:value="skillForm.instructions" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+          </n-form-item>
+        </template>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showAddSkillModal = false">取消</n-button>
+          <n-button type="primary" :loading="creatingSkill" @click="submitCreateSkill">
+            {{ skillAddMode === 'github' ? '安装' : '创建' }}
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
+    <!-- 添加 MCP 弹窗：远程 URL / 本地 npm -->
+    <n-modal
+      v-model:show="showAddMcpModal"
+      preset="card"
+      title="添加 MCP Server"
+      style="width: 480px; max-width: 94vw;"
+      :bordered="false"
+      class="add-modal"
+    >
+      <n-tabs v-model:value="mcpAddMode" type="segment" size="small" style="margin-bottom: 12px;">
+        <n-tab-pane name="remote" tab="远程 URL" />
+        <n-tab-pane name="npm" tab="本地 npm" />
+      </n-tabs>
+      <n-form label-placement="top" size="small">
+        <n-form-item label="Server ID" required>
+          <n-input v-model:value="mcpForm.server_id" placeholder="例如 context7 / playwright" />
+        </n-form-item>
+        <template v-if="mcpAddMode === 'remote'">
+          <n-form-item label="远程 URL" required>
+            <n-input v-model:value="mcpForm.url" placeholder="https://.../sse 或 /mcp" />
+          </n-form-item>
+          <n-form-item label="Transport">
+            <n-select
+              v-model:value="mcpForm.transport"
+              :options="[{ label: 'SSE', value: 'sse' }, { label: 'Streamable HTTP', value: 'streamable_http' }]"
+            />
+          </n-form-item>
+          <n-form-item label="Headers JSON（可选）">
+            <n-input
+              v-model:value="mcpForm.headersText"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              placeholder='{"Authorization":"Bearer xxx"}'
+            />
+          </n-form-item>
+        </template>
+        <template v-else>
+          <n-form-item label="npm 包名" required>
+            <n-input v-model:value="mcpForm.package_name" placeholder="例如 @playwright/mcp@latest" />
+          </n-form-item>
+          <n-form-item label="额外参数（空格分隔，可选）">
+            <n-input v-model:value="mcpForm.argsText" placeholder="例如 --headless" />
+          </n-form-item>
+        </template>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showAddMcpModal = false">取消</n-button>
+          <n-button type="primary" :loading="installingMcp" @click="submitInstallMcp">
+            {{ mcpAddMode === 'remote' ? '连接' : '安装' }}
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
   </div>
 </template>
+
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
@@ -279,6 +428,106 @@ const expandedMcpServers = ref<Set<string>>(new Set())
 const nativeToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
 const hasApiKey = computed(() => !!settings.value.apiKey)
 
+// 添加 Skill / MCP 弹窗
+const showAddSkillModal = ref(false)
+const showAddMcpModal = ref(false)
+const creatingSkill = ref(false)
+const installingMcp = ref(false)
+const skillAddMode = ref<'github' | 'custom'>('github')
+const mcpAddMode = ref<'remote' | 'npm'>('remote')
+const mcpStatusMap = ref<Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>>({})
+const skillForm = ref({
+  skill_name: '',
+  display_name: '',
+  description: '',
+  purpose: '',
+  instructions: '',
+  repo_url: '',
+  branch: '',
+  overwrite: false,
+})
+const mcpForm = ref({
+  server_id: '',
+  package_name: '',
+  argsText: '',
+  url: '',
+  transport: 'sse',
+  headersText: '',
+})
+
+function openAddChooser(kind: 'skill' | 'mcp') {
+  if (kind === 'skill') {
+    skillAddMode.value = 'github'
+    showAddSkillModal.value = true
+  } else {
+    mcpAddMode.value = 'remote'
+    showAddMcpModal.value = true
+  }
+}
+
+function mcpStatusClass(serverId: string) {
+  const st = mcpStatusMap.value[serverId]?.status
+  if (st === 'connected') return 'ok'
+  if (st === 'error') return 'err'
+  return 'off'
+}
+
+function mcpStatusLabel(serverId: string) {
+  const info = mcpStatusMap.value[serverId]
+  if (!info) return '未知'
+  if (info.status === 'connected') return `已连接 · ${info.tools_count ?? 0} 工具`
+  if (info.status === 'error') return info.error || '错误'
+  return info.status || '未连接'
+}
+
+async function refreshMcpStatus() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/mcp/test`)
+    if (!res.ok) return
+    const data = await res.json()
+    mcpStatusMap.value = data.servers || {}
+  } catch {}
+}
+
+async function reconnectMcp(serverId: string) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/mcp/servers/${encodeURIComponent(serverId)}/reconnect`, { method: 'POST' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+    if (data.connected) messageUi.success(data.message || '重连成功')
+    else messageUi.warning(data.message || '已尝试重连，当前仍未连通')
+    await refreshMcpPanel()
+  } catch (e: any) {
+    messageUi.error(`重连失败：${e.message || e}`)
+  }
+}
+
+async function removeMcp(serverId: string) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/mcp/servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+    messageUi.success(data.message || `已删除 ${serverId}`)
+    await refreshMcpPanel()
+  } catch (e: any) {
+    messageUi.error(`删除失败：${e.message || e}`)
+  }
+}
+
+async function removeSkill(skillName: string) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/skills/${encodeURIComponent(skillName)}`, { method: 'DELETE' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+    messageUi.success(data.message || `已删除 ${skillName}`)
+    await refreshSkillList()
+  } catch (e: any) {
+    messageUi.error(`删除 Skill 失败：${e.message || e}`)
+  }
+}
+
+
+
 // 监听 settings 变化，同步 currentModel
 watch(() => settings.value.model, (newModel) => {
   if (newModel) currentModel.value = newModel
@@ -311,10 +560,15 @@ async function testMcpConnection() {
     })
     if (res.ok) {
       const data = await res.json()
-      if (data.status === 'connected') {
-        messageUi.success('MCP 服务连接成功！')
+      mcpStatusMap.value = data.servers || {}
+      const entries = Object.entries(mcpStatusMap.value)
+      const connected = entries.filter(([, v]: any) => v?.status === 'connected').length
+      if (connected > 0) {
+        messageUi.success(`MCP 连接正常：${connected}/${entries.length} 个 Server 在线`)
+      } else if (entries.length === 0) {
+        messageUi.warning('尚未配置任何 MCP Server')
       } else {
-        messageUi.warning('MCP 服务返回异常状态')
+        messageUi.warning('MCP 已配置但当前均未连通')
       }
     } else {
       messageUi.error('无法连接到 MCP 服务 (HTTP ' + res.status + ')')
@@ -324,6 +578,7 @@ async function testMcpConnection() {
     messageUi.error('无法连接到 MCP 服务: ' + (err.message || err))
   }
 }
+
 
 function getSkillTool(skillName: string): any {
   return skillToolList.value.find((t: any) => t._skill_name === skillName)
@@ -400,21 +655,11 @@ async function togglePanel(panel: 'skill' | 'mcp' | 'native_tools') {
     } catch (err) {
       console.log("获取MCP工具列表失败:", err)
     }
-    // 按 server 分组获取
-    try {
-      const res = await fetch('http://127.0.0.1:8000/mcp/tools/by_server')
-      const data = await res.json()
-      mcpServerGroups.value = data.servers || []
-      // 默认展开第一个 server
-      expandedMcpServers.value.clear()
-      if (mcpServerGroups.value.length > 0) {
-        expandedMcpServers.value.add(mcpServerGroups.value[0].server_id)
-      }
-    } catch (err) {
-      console.log("获取MCP分组信息失败:", err)
-    }
+    // 按 server 分组获取 + 状态
+    await refreshMcpPanel()
   }
 }
+
 
 function toggleMcpServer(serverId: string) {
   const s = new Set(expandedMcpServers.value)
@@ -829,16 +1074,201 @@ async function tryGenerateTitle(sessionId: string) {
     console.error('生成标题失败:', err)
   }
 }
-async function installMcpServer(packageName: string, serverId: string) {
+async function installMcpServer(packageName: string, serverId: string, args: string[] = []) {
   const res = await fetch('http://127.0.0.1:8000/mcp/install/npm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ package_name: packageName, server_id: serverId })
+    body: JSON.stringify({ package_name: packageName, server_id: serverId, args })
   })
-  if (res.ok) {
-    messageUi.success('MCP Server 安装成功')
+  if (!res.ok) {
+    const errText = await res.text()
+    throw new Error(errText || `HTTP ${res.status}`)
+  }
+  const data = await res.json()
+  if (data.status && data.status !== 'ok') {
+    throw new Error(data.message || data.detail || '安装失败')
+  }
+  return data
+}
+
+async function refreshMcpPanel() {
+  try {
+    const res = await fetch('http://127.0.0.1:8000/mcp/config')
+    if (res.ok) mcpConfigData.value = await res.json()
+  } catch {}
+  try {
+    const res = await fetch('http://127.0.0.1:8000/mcp/tools')
+    if (res.ok) {
+      const data = await res.json()
+      mcpToolList.value = data.tools || []
+    }
+  } catch {}
+  try {
+    const res = await fetch('http://127.0.0.1:8000/mcp/tools/by_server')
+    if (res.ok) {
+      const data = await res.json()
+      mcpServerGroups.value = data.servers || []
+      // 合并配置中尚未连接的 server
+      const cfgServers = mcpConfigData.value?.mcpServers || {}
+      for (const id of Object.keys(cfgServers)) {
+        if (!mcpServerGroups.value.find(g => g.server_id === id)) {
+          mcpServerGroups.value.push({ server_id: id, tool_count: 0, tools: [], error: '未连接' })
+        }
+      }
+      expandedMcpServers.value.clear()
+      if (mcpServerGroups.value.length > 0) {
+        expandedMcpServers.value.add(mcpServerGroups.value[0].server_id)
+      }
+    }
+  } catch {}
+  await refreshMcpStatus()
+}
+
+async function submitCreateSkill() {
+  creatingSkill.value = true
+  try {
+    if (skillAddMode.value === 'github') {
+      const repo = skillForm.value.repo_url.trim()
+      if (!repo) {
+        messageUi.warning('请填写 GitHub 仓库地址')
+        return
+      }
+      const res = await fetch(`${BACKEND_URL}/skills/install/github`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo_url: repo,
+          skill_name: skillForm.value.skill_name.trim(),
+          branch: skillForm.value.branch.trim(),
+          overwrite: !!skillForm.value.overwrite,
+        }),
+      })
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const err = await res.json()
+          detail = err.detail || err.message || detail
+        } catch {
+          detail = await res.text() || detail
+        }
+        throw new Error(detail)
+      }
+      const data = await res.json()
+      messageUi.success(data.message || 'Skill 安装成功')
+    } else {
+      const name = skillForm.value.skill_name.trim()
+      if (!name) {
+        messageUi.warning('请填写 Skill 名称')
+        return
+      }
+      const res = await fetch(`${BACKEND_URL}/skills/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          skill_name: name,
+          display_name: skillForm.value.display_name.trim(),
+          description: skillForm.value.description.trim(),
+          purpose: skillForm.value.purpose.trim(),
+          instructions: skillForm.value.instructions.trim(),
+          overwrite: !!skillForm.value.overwrite,
+        }),
+      })
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const err = await res.json()
+          detail = err.detail || err.message || detail
+        } catch {
+          detail = await res.text() || detail
+        }
+        throw new Error(detail)
+      }
+      const data = await res.json()
+      messageUi.success(data.message || `Skill '${name}' 已创建`)
+    }
+    showAddSkillModal.value = false
+    skillForm.value = {
+      skill_name: '', display_name: '', description: '', purpose: '', instructions: '',
+      repo_url: '', branch: '', overwrite: false,
+    }
+    await refreshSkillList()
+  } catch (e: any) {
+    messageUi.error(`安装/创建失败：${e.message || e}`)
+  } finally {
+    creatingSkill.value = false
   }
 }
+
+async function submitInstallMcp() {
+  const serverId = mcpForm.value.server_id.trim()
+  if (!serverId) {
+    messageUi.warning('请填写 Server ID')
+    return
+  }
+  installingMcp.value = true
+  try {
+    if (mcpAddMode.value === 'remote') {
+      const url = mcpForm.value.url.trim()
+      if (!url) {
+        messageUi.warning('请填写远程 MCP URL')
+        return
+      }
+      let headers: Record<string, string> = {}
+      const ht = mcpForm.value.headersText.trim()
+      if (ht) {
+        try {
+          headers = JSON.parse(ht)
+        } catch {
+          messageUi.warning('Headers 需为合法 JSON，例如 {"Authorization":"Bearer xxx"}')
+          return
+        }
+      }
+      const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server_id: serverId,
+          url,
+          transport: mcpForm.value.transport || 'sse',
+          headers,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+      if (data.connected) messageUi.success(data.message || '远程 MCP 已连接')
+      else messageUi.warning(data.message || '配置已保存，但当前未连通（可能需要鉴权后重连）')
+    } else {
+      const packageName = mcpForm.value.package_name.trim()
+      if (!packageName) {
+        messageUi.warning('请填写 npm 包名')
+        return
+      }
+      const args = mcpForm.value.argsText.trim().split(/\s+/).filter(Boolean)
+      const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server_id: serverId,
+          package_name: packageName,
+          args,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+      if (data.connected) messageUi.success(data.message || `MCP '${serverId}' 已添加`)
+      else messageUi.warning(data.message || '已添加但启动失败')
+    }
+    showAddMcpModal.value = false
+    mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'sse', headersText: '' }
+    await refreshMcpPanel()
+  } catch (e: any) {
+    messageUi.error(`添加失败：${e.message || e}`)
+  } finally {
+    installingMcp.value = false
+  }
+}
+
+
 // 工具审批：用户在 ChatMessage 卡片点击 同意/拒绝 后回调
 async function approveTool(msgIdx: number, approved: boolean) {
   const msg: any = messages.value[msgIdx]
@@ -895,8 +1325,8 @@ function scrollToBottom() {
 .layout {
   display: flex;
   height: 100vh;
-  background: linear-gradient(160deg, #0c0c14 0%, #111118 40%, #0f0f18 100%);
-  color: white;
+  background: var(--bg-app);
+  color: var(--text-primary);
   padding-top: 32px;
   overflow: hidden;
 }
@@ -909,9 +1339,9 @@ function scrollToBottom() {
   align-items: center;
   justify-content: space-between;
   padding: 12px 0;
-  background: rgba(12, 12, 16, 0.7);
+  background: var(--activity-bar-bg);
   backdrop-filter: blur(12px);
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  border-right: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 10;
 }
@@ -935,20 +1365,20 @@ function scrollToBottom() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  color: #85859b;
+  border-radius: var(--radius-md, 8px);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
   position: relative;
-  transform: translateY(-15px)
+  transform: translateY(-15px);
 }
 .activity-btn:hover {
-  color: #d4d4d8;
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 .activity-btn.active {
-  color: #c7d2fe;
-  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent-500, #EF6B6E);
+  background: var(--accent-soft);
 }
 .activity-btn.active::before {
   content: '';
@@ -957,7 +1387,7 @@ function scrollToBottom() {
   top: 10px;
   bottom: 10px;
   width: 2px;
-  background: linear-gradient(180deg, #6366f1, #a78bfa);
+  background: var(--symbix-gradient-soft, linear-gradient(135deg, #F7A85B 0%, #E85C93 100%));
   border-radius: 0 2px 2px 0;
 }
 
@@ -974,21 +1404,21 @@ function scrollToBottom() {
   top: 0;
   bottom: 0;
   width: 260px;
-  background: rgba(20, 20, 28, 0.95);
+  background: var(--panel-bg);
   backdrop-filter: blur(16px);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   z-index: 20;
-  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
 
 /* Panel slide transition */
 .panel-slide-enter-active {
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
 }
 .panel-slide-leave-active {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 .panel-slide-enter-from {
   opacity: 0;
@@ -1003,59 +1433,132 @@ function scrollToBottom() {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border);
 }
 .side-panel-title {
   font-size: 13px;
   font-weight: 600;
-  color: #c0c0d0;
+  color: var(--text-primary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.close-btn {
-  color: #6b6b80 !important;
+.side-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.close-btn:hover {
-  color: #a0a0b8 !important;
+.add-entry-btn {
+  font-weight: 600 !important;
 }
-.side-panel-body {
-  flex: 1;
-  padding: 16px;
-  overflow-y: auto;
-}
-.mcp-tool-item {
+.skill-card {
   margin-top: 8px;
   padding: 8px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
 }
-.mcp-tool-name {
-  font-size: 13px;
-  color: #c7d2fe;
+.skill-card-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .mcp-server-group-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(99, 102, 241, 0.08);
-  cursor: pointer;
-  color: #c0c0d0;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
   font-size: 12px;
-  transition: background 0.15s;
   user-select: none;
 }
-.mcp-server-group-header:hover {
-  background: rgba(99, 102, 241, 0.14);
+.mcp-server-title {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
 }
+.mcp-server-ops {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+.mcp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 6px;
+  background: #888;
+  flex-shrink: 0;
+}
+.mcp-status-dot.ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.55); }
+.mcp-status-dot.err { background: #ef4444; }
+.mcp-status-dot.off { background: #9ca3af; }
+.close-btn {
+  color: var(--text-muted) !important;
+}
+.close-btn:hover {
+  color: var(--text-secondary) !important;
+}
+
+
+.side-panel-body {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.side-panel-body:hover {
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.side-panel-body::-webkit-scrollbar {
+  width: 4px;
+}
+.side-panel-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.side-panel-body::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+.side-panel-body:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+}
+.side-panel-body::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+.mcp-tool-item {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  border: 1px solid transparent;
+}
+.mcp-tool-name {
+  font-size: 13px;
+  color: var(--accent-300, #F7A85B);
+  display: flex;
+  align-items: center;
+}
+.mcp-server-group-header {
+  transition: background var(--duration-fast) ease;
+}
+.mcp-server-group-header:hover {
+  background: var(--accent-soft-hover);
+}
+
+
 
 /* ---- Side Panel Footer (固定底部按钮区) ---- */
 .side-panel-footer {
   flex-shrink: 0;
   padding: 12px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--border);
 }
 
 /* ---- Chat Area ---- */
@@ -1076,7 +1579,7 @@ function scrollToBottom() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  animation: fadeUp 0.5s ease;
+  animation: fadeUp 0.5s var(--ease-standard, ease);
 }
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(16px); }
@@ -1086,17 +1589,17 @@ function scrollToBottom() {
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(167, 139, 250, 0.08));
+  background: var(--accent-soft);
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 20px;
-  color: #818cf8;
+  color: var(--accent-500, #EF6B6E);
 }
 .greeting-title {
-  font-size: 28px;
-  font-weight: 700;
-  background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 50%, #a78bfa 100%);
+  font-size: 24px;
+  font-weight: 600;
+  background: var(--symbix-gradient, linear-gradient(135deg, #F7A85B 0%, #F2657A 55%, #E85C93 100%));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1104,7 +1607,7 @@ function scrollToBottom() {
 }
 .greeting-sub {
   font-size: 14px;
-  color: #6b6b80;
+  color: var(--text-secondary);
   margin: 0 0 32px;
 }
 .quick-actions {
@@ -1118,16 +1621,16 @@ function scrollToBottom() {
   align-items: center;
   gap: 6px;
   padding: 8px 16px !important;
-  border-radius: 20px !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  color: #a0a0b8 !important;
+  border-radius: var(--radius-full) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-secondary) !important;
   font-size: 13px !important;
-  transition: all 0.2s ease;
+  transition: all var(--duration-base) var(--ease-standard);
 }
 .quick-action:hover {
-  border-color: rgba(99, 102, 241, 0.3) !important;
-  color: #c7d2fe !important;
-  background: rgba(99, 102, 241, 0.06) !important;
+  border-color: var(--accent-border) !important;
+  color: var(--text-primary) !important;
+  background: var(--accent-soft) !important;
   transform: translateY(-1px);
 }
 
@@ -1149,11 +1652,11 @@ function scrollToBottom() {
   background: transparent;
 }
 .message-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--scrollbar);
   border-radius: 3px;
 }
 .message-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--scrollbar-hover);
 }
 
 /* ---- Loading ---- */
@@ -1167,15 +1670,16 @@ function scrollToBottom() {
   align-items: center;
   gap: 4px;
   padding: 12px 18px;
-  border-radius: 16px;
+  border-radius: var(--radius-md, 8px);
   border-bottom-left-radius: 4px;
-  background: rgba(42, 45, 53, 0.6);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
 }
 .loading-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #6366f1;
+  background: var(--accent-500, #EF6B6E);
   animation: bounce 1.4s ease-in-out infinite;
 }
 .loading-dot:nth-child(1) { animation-delay: 0s; }

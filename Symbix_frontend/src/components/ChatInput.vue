@@ -293,17 +293,19 @@ function handleInputKeydown(e: KeyboardEvent) {
 <style scoped>
 .input-container {
   flex-shrink: 0;
-  background: rgba(22, 22, 28, 0.8);
+  background: var(--bg-elevated);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
   padding: 8px 12px 4px;
-  transition: border-color 0.3s ease;
+  transition: border-color var(--duration-base, 180ms) var(--ease-standard, ease),
+              box-shadow var(--duration-base, 180ms) var(--ease-standard, ease);
 }
 .input-container:focus-within {
-  border-color: rgba(99, 102, 241, 0.4);
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.06);
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px rgba(239, 107, 110, 0.12);
 }
+
 
 /* 附件预览 */
 .attachment-preview {
@@ -316,19 +318,20 @@ function handleInputKeydown(e: KeyboardEvent) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm, 6px);
   padding: 4px 6px 4px 10px;
   font-size: 12px;
-  color: #c7d2fe;
+  color: var(--text-primary);
 }
 .file-chip-icon {
-  color: #818cf8;
+  color: var(--accent-500, #EF6B6E);
   flex-shrink: 0;
 }
-.file-chip-status { margin-left: 4px; font-size: 10px; color: #a5b4fc; }
-.file-chip-status.err { color: #f87171; }
+.file-chip-status { margin-left: 4px; font-size: 10px; color: var(--accent-300, #F7A85B); }
+.file-chip-status.err { color: var(--error, #D3555A); }
+
 .file-chip-name {
   max-width: 160px;
   overflow: hidden;
@@ -356,20 +359,20 @@ function handleInputKeydown(e: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   border-radius: 50% !important;
-  color: #85859b;
+  color: var(--text-secondary);
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
 }
 .tool-btn:hover {
-  color: #c7d2fe !important;
-  background: rgba(99, 102, 241, 0.1) !important;
+  color: var(--accent-500, #EF6B6E) !important;
+  background: var(--accent-soft) !important;
 }
 .tool-btn:active {
   transform: scale(0.92);
 }
 .voice-btn.recording {
-  color: #ef4444 !important;
-  background: rgba(239, 68, 68, 0.15) !important;
+  color: var(--error, #D3555A) !important;
+  background: rgba(211, 85, 90, 0.15) !important;
   animation: pulse-rec 1.5s ease-in-out infinite;
 }
 .recording-dot {
@@ -379,13 +382,14 @@ function handleInputKeydown(e: KeyboardEvent) {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 6px #ef4444;
+  background: var(--error, #D3555A);
+  box-shadow: 0 0 6px var(--error, #D3555A);
 }
 @keyframes pulse-rec {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(211, 85, 90, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(211, 85, 90, 0); }
 }
+
 
 /* 文本输入 */
 .chat-input {
@@ -403,8 +407,8 @@ function handleInputKeydown(e: KeyboardEvent) {
   border: none !important;
   border-radius: 0 !important;
   padding: 8px 4px 6px 4px;
-  caret-color: #6366f1;
-  color: #e4e4e7;
+  caret-color: var(--accent-500, #EF6B6E);
+  color: var(--text-primary);
   font-size: 14px;
   line-height: 1.55;
 }
@@ -414,14 +418,15 @@ function handleInputKeydown(e: KeyboardEvent) {
 .chat-input :deep(.n-input__textarea-el:-webkit-autofill),
 .chat-input :deep(.n-input__textarea-el:-webkit-autofill:hover),
 .chat-input :deep(.n-input__textarea-el:-webkit-autofill:focus) {
-  -webkit-box-shadow: 0 0 0 1000px rgba(22, 22, 28, 0.8) inset !important;
-  -webkit-text-fill-color: #e4e4e7 !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-elevated) inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
   transition: background-color 5000s ease-in-out 0s;
 }
 .chat-input :deep(.n-input__placeholder) {
   padding: 8px 4px !important;
-  color: #55556b;
+  color: var(--text-muted);
 }
+
 .chat-input :deep(.n-input__border),
 .chat-input :deep(.n-input__state-border) {
   display: none !important;
@@ -452,22 +457,23 @@ function handleInputKeydown(e: KeyboardEvent) {
   border: none !important;
 }
 .send-btn :deep(.n-button__content) {
-  background: #2a2a35 !important;
+  background: var(--bg-surface) !important;
   border-radius: 50%;
 }
 .send-btn.has-content {
   opacity: 1;
 }
 .send-btn.has-content :deep(.n-button__content) {
-  background: linear-gradient(135deg, #6366f1, #4f46e5) !important;
+  background: var(--accent-500, #EF6B6E) !important;
 }
 .send-btn.has-content:not(:disabled):hover {
   transform: scale(1.08);
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  box-shadow: var(--shadow-glow, 0 0 24px rgba(242, 101, 122, 0.25));
 }
 .send-btn.has-content:not(:disabled):hover :deep(.n-button__content) {
-  background: linear-gradient(135deg, #818cf8, #6366f1) !important;
+  background: var(--accent-600, #E2515F) !important;
 }
+
 .send-btn:disabled {
   opacity: 0.35;
 }
@@ -484,16 +490,16 @@ function handleInputKeydown(e: KeyboardEvent) {
   border: none !important;
 }
 .stop-btn :deep(.n-button__content) {
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(211, 85, 90, 0.15);
   border-radius: 50%;
-  color: #ef4444;
+  color: var(--error, #D3555A);
 }
 .stop-btn:hover {
   transform: scale(1.08);
-  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+  box-shadow: 0 4px 14px rgba(211, 85, 90, 0.3);
 }
 .stop-btn:hover :deep(.n-button__content) {
-  background: rgba(239, 68, 68, 0.25);
+  background: rgba(211, 85, 90, 0.25);
 }
 
 /* 底部栏 */
@@ -503,29 +509,30 @@ function handleInputKeydown(e: KeyboardEvent) {
   justify-content: flex-start;
   gap: 4px;
   padding: 2px 6px 2px;
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  border-top: 1px solid var(--border);
   margin-top: 2px;
 }
 .footer-btn {
   font-size: 11px;
-  color: #6b6b80 !important;
+  color: var(--text-muted) !important;
   padding: 2px 8px !important;
-  border-radius: 8px !important;
-  transition: all 0.2s ease;
+  border-radius: var(--radius-sm, 6px) !important;
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
 }
 .footer-btn:hover {
-  color: #a5b4fc !important;
-  background: rgba(99, 102, 241, 0.08) !important;
+  color: var(--accent-500, #EF6B6E) !important;
+  background: var(--accent-soft) !important;
 }
 .footer-hint {
   font-size: 10px;
-  color: #4a4a5a;
+  color: var(--text-muted);
   margin-left: auto;
 }
 .recording-hint {
-  color: #ef4444;
+  color: var(--error, #D3555A);
   animation: blink-text 1s ease-in-out infinite;
 }
+
 @keyframes blink-text {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -562,21 +569,22 @@ function handleInputKeydown(e: KeyboardEvent) {
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   cursor: pointer;
   font-size: 12px;
-  color: #a0a0b8;
-  transition: all 0.15s ease;
+  color: var(--text-secondary);
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
   white-space: nowrap;
 }
 .model-item:hover {
-  background: rgba(99, 102, 241, 0.1);
-  color: #c7d2fe;
+  background: var(--accent-soft);
+  color: var(--text-primary);
 }
 .model-item.active {
-  color: #818cf8;
-  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent-500, #EF6B6E);
+  background: var(--accent-soft);
 }
+
 .model-item-label {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -3,11 +3,16 @@ import json
 import threading
 import queue
 import uuid
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
+
+import httpx
+
 
 class McpServerClient:
     """通过 stdio 与 MCP server 通信的客户端"""
-    
+
+    transport = "stdio"
+
     def __init__(self, server_id: str, command: str, args: List[str]):
         self.server_id = server_id
         self.command = command
@@ -18,7 +23,8 @@ class McpServerClient:
         self._stop_event = threading.Event()
         self._reader_thread: Optional[threading.Thread] = None
         self._tools_cache: Optional[List[dict]] = None
-        
+        self.last_error: Optional[str] = None
+
     def start(self):
         """启动 MCP server 进程"""
         import sys
@@ -42,14 +48,14 @@ class McpServerClient:
                 self.process = subprocess.Popen(
                     [self.command] + self.args, **popen_kwargs
                 )
-            
+
             # 启动读取线程
             self._reader_thread = threading.Thread(
                 target=self._read_output,
                 daemon=True
             )
             self._reader_thread.start()
-            
+
             # 发送初始化请求
             self._send_request({
                 "jsonrpc": "2.0",
@@ -67,11 +73,12 @@ class McpServerClient:
                     }
                 }
             })
-            
+
             print(f"[MCP] Server '{self.server_id}' started successfully")
             return True
-            
+
         except Exception as e:
+            self.last_error = str(e)
             print(f"[MCP] Failed to start server '{self.server_id}': {e}")
             return False
     
@@ -193,29 +200,346 @@ class McpServerClient:
                 print(f"[MCP] Error stopping server: {e}")
                 try:
                     self.process.kill()
-                except:
+                except Exception:
                     pass
 
 
-class McpServerManager:
-    """管理多个 MCP server 客户端"""
-    
-    def __init__(self):
-        self.servers: Dict[str, McpServerClient] = {}
-        self._initialized = False
-    
-    def add_server(self, server_id: str, command: str, args: List[str]) -> bool:
-        """添加并启动 MCP server"""
-        if server_id in self.servers:
-            print(f"[MCP] Server '{server_id}' already exists")
+class McpRemoteClient:
+    """通过 HTTP / SSE URL 与远程 MCP server 通信的客户端。
+
+    兼容两类远程服务：
+    1. 直接 JSON-RPC HTTP POST（url 接收 initialize / tools/*）
+    2. SSE 传输：先 GET 建立 SSE，从 event: endpoint 拿到 POST 地址
+    """
+
+    transport = "remote"
+
+    def __init__(
+        self,
+        server_id: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        transport: str = "sse",
+    ):
+        self.server_id = server_id
+        self.url = (url or "").rstrip("/")
+        self.headers = dict(headers or {})
+        self.transport_hint = (transport or "sse").lower()
+        self._tools_cache: Optional[List[dict]] = None
+        self._message_url: Optional[str] = None
+        self._session_id: Optional[str] = None
+        self._stop_event = threading.Event()
+        self._sse_thread: Optional[threading.Thread] = None
+        self._client: Optional[httpx.Client] = None
+        self.last_error: Optional[str] = None
+
+    def start(self) -> bool:
+        if not self.url:
+            self.last_error = "远程 MCP URL 为空"
             return False
-            
+        try:
+            self._client = httpx.Client(timeout=30.0, follow_redirects=True)
+            if self.transport_hint in ("http", "streamable-http", "jsonrpc"):
+                ok = self._initialize_http()
+            else:
+                ok = self._initialize_sse() or self._initialize_http()
+            if ok:
+                print(f"[MCP] Remote server '{self.server_id}' connected: {self.url}")
+            return ok
+        except Exception as e:
+            self.last_error = str(e)
+            print(f"[MCP] Failed to connect remote server '{self.server_id}': {e}")
+            self.stop()
+            return False
+
+    def _build_headers(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        headers.update(self.headers)
+        if extra:
+            headers.update(extra)
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        return headers
+
+    def _initialize_payload(self) -> dict:
+        return {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}, "resources": {}},
+                "clientInfo": {"name": "symbix-client", "version": "1.0.0"},
+            },
+        }
+
+    def _initialize_http(self) -> bool:
+        """直接向 URL POST JSON-RPC。"""
+        assert self._client is not None
+        self._message_url = self.url
+        resp = self._client.post(
+            self._message_url,
+            headers=self._build_headers(),
+            json=self._initialize_payload(),
+        )
+        if resp.status_code >= 400:
+            self.last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            return False
+        self._session_id = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+        # 某些服务可能返回 SSE 风格正文，这里尽量解析
+        try:
+            data = resp.json()
+            if isinstance(data, dict) and data.get("error"):
+                self.last_error = str(data["error"])
+                return False
+        except Exception:
+            pass
+        # 通知已初始化（可忽略失败）
+        try:
+            self._client.post(
+                self._message_url,
+                headers=self._build_headers(),
+                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            )
+        except Exception:
+            pass
+        return True
+
+    def _initialize_sse(self) -> bool:
+        """尝试 SSE 握手：GET url，读取 endpoint 事件。"""
+        assert self._client is not None
+        try:
+            with self._client.stream(
+                "GET",
+                self.url,
+                headers=self._build_headers({"Accept": "text/event-stream"}),
+                timeout=20.0,
+            ) as resp:
+                if resp.status_code >= 400:
+                    self.last_error = f"SSE HTTP {resp.status_code}"
+                    return False
+                event_name = "message"
+                data_lines: List[str] = []
+                for raw in resp.iter_lines():
+                    if raw is None:
+                        continue
+                    line = raw.strip("\r")
+                    if line.startswith(":"):
+                        continue
+                    if not line:
+                        if data_lines:
+                            payload = "\n".join(data_lines)
+                            data_lines = []
+                            if event_name == "endpoint" or payload.startswith("/"):
+                                endpoint = payload.strip()
+                                if endpoint.startswith("http"):
+                                    self._message_url = endpoint
+                                else:
+                                    # 相对路径
+                                    base = self.url
+                                    if endpoint.startswith("/"):
+                                        # 取 origin
+                                        from urllib.parse import urlparse
+                                        p = urlparse(self.url)
+                                        self._message_url = f"{p.scheme}://{p.netloc}{endpoint}"
+                                    else:
+                                        self._message_url = f"{base.rstrip('/')}/{endpoint}"
+                                break
+                            if event_name == "message":
+                                try:
+                                    msg = json.loads(payload)
+                                    if msg.get("result") is not None or msg.get("error"):
+                                        # 某些实现会直接推送
+                                        pass
+                                except Exception:
+                                    pass
+                        event_name = "message"
+                        continue
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line[5:].lstrip())
+                    # 限时：拿到 endpoint 就结束读取循环
+                    if self._message_url:
+                        break
+        except Exception as e:
+            self.last_error = f"SSE connect failed: {e}"
+            return False
+
+        if not self._message_url:
+            # 没有 endpoint 事件时，退回直接 POST 原 URL
+            self._message_url = self.url
+
+        # 初始化
+        try:
+            resp = self._client.post(
+                self._message_url,
+                headers=self._build_headers(),
+                json=self._initialize_payload(),
+            )
+            if resp.status_code >= 400:
+                self.last_error = f"Init HTTP {resp.status_code}: {resp.text[:300]}"
+                return False
+            self._session_id = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+            try:
+                self._client.post(
+                    self._message_url,
+                    headers=self._build_headers(),
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                )
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            self.last_error = str(e)
+            return False
+
+    def _send_request(self, request: dict) -> dict:
+        if not self._client or not self._message_url:
+            return {"error": {"code": -32603, "message": "Remote client not connected"}}
+        try:
+            resp = self._client.post(
+                self._message_url,
+                headers=self._build_headers(),
+                json=request,
+                timeout=60.0,
+            )
+            if resp.status_code >= 400:
+                return {
+                    "error": {
+                        "code": -32603,
+                        "message": f"HTTP {resp.status_code}: {resp.text[:300]}",
+                    }
+                }
+            # 可能是纯 JSON 或 SSE 包裹
+            text = resp.text.strip()
+            if text.startswith("event:") or "\ndata:" in text:
+                for block in text.split("\n\n"):
+                    for line in block.splitlines():
+                        if line.startswith("data:"):
+                            payload = line[5:].strip()
+                            if payload:
+                                try:
+                                    return json.loads(payload)
+                                except Exception:
+                                    continue
+            return resp.json()
+        except Exception as e:
+            return {"error": {"code": -32603, "message": str(e)}}
+
+    def list_tools(self) -> List[dict]:
+        if self._tools_cache is not None:
+            return self._tools_cache
+        try:
+            response = self._send_request({
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/list",
+            })
+            if "error" in response:
+                print(f"[MCP] Remote list tools error: {response['error']}")
+                self.last_error = str(response["error"])
+                return []
+            tools = response.get("result", {}).get("tools", [])
+            self._tools_cache = tools
+            return tools
+        except Exception as e:
+            self.last_error = str(e)
+            print(f"[MCP] Remote list tools exception: {e}")
+            return []
+
+    def call_tool(self, tool_name: str, arguments: dict) -> str:
+        try:
+            response = self._send_request({
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": arguments or {}},
+            })
+            if "error" in response:
+                return f"[Error] {response['error'].get('message', response['error'])}"
+            result = response.get("result", {})
+            content = result.get("content", [])
+            output_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    if "text" in item:
+                        output_parts.append(item["text"])
+                    elif item.get("type") == "image":
+                        output_parts.append(f"[Image: {str(item.get('data', ''))[:50]}...]")
+                    else:
+                        output_parts.append(json.dumps(item, ensure_ascii=False))
+                else:
+                    output_parts.append(str(item))
+            return "\n".join(output_parts) if output_parts else json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return f"[Error] Exception calling remote tool: {e}"
+
+    def stop(self):
+        self._stop_event.set()
+        if self._client:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+        self._client = None
+
+
+class McpServerManager:
+    """管理多个 MCP server 客户端（stdio + remote）"""
+
+    def __init__(self):
+        self.servers: Dict[str, Any] = {}
+        self._initialized = False
+
+    def add_server(self, server_id: str, command: str, args: List[str]) -> bool:
+        """添加并启动本地 stdio MCP server"""
+        if server_id in self.servers:
+            print(f"[MCP] Server '{server_id}' already exists, replacing")
+            self.remove_server(server_id)
+
         client = McpServerClient(server_id, command, args)
         if client.start():
             self.servers[server_id] = client
             return True
         return False
-    
+
+    def add_remote_server(
+        self,
+        server_id: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        transport: str = "sse",
+    ) -> bool:
+        """添加并连接远程 MCP server"""
+        if server_id in self.servers:
+            print(f"[MCP] Server '{server_id}' already exists, replacing")
+            self.remove_server(server_id)
+
+        client = McpRemoteClient(server_id, url, headers=headers, transport=transport)
+        if client.start():
+            self.servers[server_id] = client
+            return True
+        return False
+
+    def add_from_config(self, server_id: str, config: dict) -> bool:
+        """根据配置自动选择 stdio / remote"""
+        if not isinstance(config, dict):
+            return False
+        url = config.get("url") or config.get("serverUrl")
+        if url:
+            headers = config.get("headers") or {}
+            transport = config.get("transport") or config.get("type") or "sse"
+            return self.add_remote_server(server_id, url, headers=headers, transport=str(transport))
+        command = config.get("command")
+        args = config.get("args") or []
+        if command:
+            return self.add_server(server_id, command, args)
+        return False
+
     def remove_server(self, server_id: str):
         """移除 MCP server"""
         if server_id in self.servers:

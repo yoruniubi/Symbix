@@ -66,19 +66,19 @@ class InstallNpmRequest(BaseModel):
 # MCP Server 管理器
 mcp_manager = McpServerManager()
 
-# 初始化 MCP servers（从配置文件启动）
+# 初始化 MCP servers（从配置文件启动，兼容本地 stdio 与远程 URL）
 def initialize_mcp_servers():
     """从配置文件启动所有 MCP servers"""
     servers = mcp_config.get_servers()
     for server_id, config in servers.items():
-        command = config.get("command")
-        args = config.get("args", [])
-        if command:
-            success = mcp_manager.add_server(server_id, command, args)
+        try:
+            success = mcp_manager.add_from_config(server_id, config or {})
             if success:
                 print(f"[MCP] Started server: {server_id}")
             else:
                 print(f"[MCP] Failed to start server: {server_id}")
+        except Exception as e:
+            print(f"[MCP] Failed to start server '{server_id}': {e}")
 
 # 启动时初始化 MCP servers
 initialize_mcp_servers()
@@ -995,6 +995,21 @@ async def activate_provider(name: str):
 
 
 # ============ MCP 管理 ============
+
+class AddMcpServerRequest(BaseModel):
+    """统一添加 MCP：本地 npm/command 或远程 URL。"""
+    server_id: str
+    # 远程
+    url: str = ""
+    transport: str = "sse"
+    headers: dict = {}
+    # 本地 npm
+    package_name: str = ""
+    args: list[str] = []
+    # 本地 command
+    command: str = ""
+
+
 @app.post("/mcp/install/npm")
 async def install_npm_mcp(req: InstallNpmRequest):
     try:
@@ -1003,11 +1018,118 @@ async def install_npm_mcp(req: InstallNpmRequest):
         if result.get("status") == "ok":
             server_config = mcp_config.get_server(req.server_id)
             if server_config:
-                mcp_manager.add_server(req.server_id, server_config["command"], server_config["args"])
+                mcp_manager.add_from_config(req.server_id, server_config)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
+
+@app.post("/mcp/servers")
+async def add_mcp_server(req: AddMcpServerRequest):
+    """添加 MCP server（远程 URL 或本地 npm/command）。"""
+    server_id = (req.server_id or "").strip()
+    if not server_id:
+        raise HTTPException(status_code=400, detail="server_id 不能为空")
+
+    url = (req.url or "").strip()
+    package_name = (req.package_name or "").strip()
+    command = (req.command or "").strip()
+
+    try:
+        if url:
+            config = {
+                "url": url,
+                "transport": (req.transport or "sse").strip() or "sse",
+            }
+            if req.headers:
+                config["headers"] = req.headers
+            mcp_config.add_server(server_id, config)
+            ok = mcp_manager.add_from_config(server_id, config)
+            if not ok:
+                err = getattr(mcp_manager.servers.get(server_id), "last_error", None)
+                # 即使连接失败也保留配置，方便用户鉴权后重连
+                return {
+                    "status": "saved",
+                    "server_id": server_id,
+                    "type": "remote",
+                    "connected": False,
+                    "message": err or "配置已保存，但当前连接失败（可能需要浏览器登录鉴权后重连）",
+                    "config": config,
+                }
+            return {
+                "status": "ok",
+                "server_id": server_id,
+                "type": "remote",
+                "connected": True,
+                "message": f"远程 MCP '{server_id}' 已连接",
+                "config": config,
+            }
+
+        if package_name:
+            result = mcp_installer.install_npm_server(package_name, server_id, req.args or [])
+            if result.get("status") != "ok":
+                raise HTTPException(status_code=400, detail=result.get("message") or "安装失败")
+            server_config = mcp_config.get_server(server_id) or {}
+            ok = mcp_manager.add_from_config(server_id, server_config)
+            return {
+                "status": "ok" if ok else "saved",
+                "server_id": server_id,
+                "type": "npm",
+                "connected": bool(ok),
+                "message": f"MCP '{server_id}' 已添加" + ("" if ok else "（启动失败，请检查日志）"),
+                "config": server_config,
+            }
+
+        if command:
+            config = {"command": command, "args": req.args or []}
+            mcp_config.add_server(server_id, config)
+            ok = mcp_manager.add_from_config(server_id, config)
+            return {
+                "status": "ok" if ok else "saved",
+                "server_id": server_id,
+                "type": "command",
+                "connected": bool(ok),
+                "message": f"MCP '{server_id}' 已添加" + ("" if ok else "（启动失败，请检查日志）"),
+                "config": config,
+            }
+
+        raise HTTPException(status_code=400, detail="请提供 url、package_name 或 command 之一")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/mcp/servers/{server_id}")
+async def delete_mcp_server(server_id: str):
+    """删除 MCP server 配置并停止进程/连接。"""
+    server_id = (server_id or "").strip()
+    if not server_id:
+        raise HTTPException(status_code=400, detail="server_id 不能为空")
+    mcp_manager.remove_server(server_id)
+    mcp_config.remove_server(server_id)
+    return {"status": "ok", "server_id": server_id, "message": f"MCP '{server_id}' 已删除"}
+
+
+@app.post("/mcp/servers/{server_id}/reconnect")
+async def reconnect_mcp_server(server_id: str):
+    """按配置重连指定 MCP server。"""
+    server_id = (server_id or "").strip()
+    config = mcp_config.get_server(server_id)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"MCP '{server_id}' 不存在")
+    mcp_manager.remove_server(server_id)
+    ok = mcp_manager.add_from_config(server_id, config)
+    client = mcp_manager.servers.get(server_id)
+    err = getattr(client, "last_error", None) if client else "connect failed"
+    return {
+        "status": "ok" if ok else "error",
+        "server_id": server_id,
+        "connected": bool(ok),
+        "message": "重连成功" if ok else (err or "重连失败"),
+    }
+
+
 @app.get("/mcp/config")
 async def get_mcp_config():
     return mcp_config.data
@@ -1029,17 +1151,27 @@ async def update_mcp_config(mcpServers: dict = None):
 async def test_mcp_connection():
     """测试 MCP 连接状态"""
     servers_status = {}
+    # 已连接的
     for server_id, client in mcp_manager.servers.items():
         try:
             tools = client.list_tools()
             servers_status[server_id] = {
                 "status": "connected",
-                "tools_count": len(tools)
+                "tools_count": len(tools),
+                "transport": getattr(client, "transport", "unknown"),
             }
         except Exception as e:
             servers_status[server_id] = {
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
+                "transport": getattr(client, "transport", "unknown"),
+            }
+    # 配置里有但未连接的
+    for server_id, cfg in mcp_config.get_servers().items():
+        if server_id not in servers_status:
+            servers_status[server_id] = {
+                "status": "disconnected",
+                "config": cfg,
             }
     return {"servers": servers_status}
 
@@ -1105,6 +1237,24 @@ async def list_mcp_tools_by_server():
 
 # ============ Skill 管理 ============
 
+class CreateSkillRequest(BaseModel):
+    skill_name: str
+    display_name: str = ""
+    description: str = ""
+    purpose: str = ""
+    instructions: str = ""
+    overwrite: bool = False
+
+
+class InstallSkillGithubRequest(BaseModel):
+    """对标: npx skills add <repo> --skill <name>"""
+    repo_url: str
+    skill_name: str = ""
+    branch: str = ""
+    overwrite: bool = False
+
+
+
 @app.get("/skills")
 async def get_skills():
     """获取所有已安装的 skill 列表"""
@@ -1122,6 +1272,104 @@ async def get_skills():
     }
 
 
+@app.post("/skills/install/github")
+async def install_skill_github(req: InstallSkillGithubRequest):
+    """从 GitHub 安装 skill（对标 npx skills add <repo> --skill <name>）"""
+    from Symbix_sdk.skill.installer import install_skill_from_github
+
+    if not (req.repo_url or "").strip():
+        raise HTTPException(status_code=400, detail="repo_url 不能为空")
+    result = install_skill_from_github(
+        repo_url=req.repo_url,
+        skill_name=req.skill_name,
+        target_dir=skill_registry.skills_dir,
+        branch=req.branch or "",
+        overwrite=req.overwrite,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "安装 skill 失败")
+
+    skill_registry.scan()
+    tool_registry.refresh_skills()
+    return {
+        "status": "ok",
+        "skill_name": result.get("skill_name"),
+        "path": result.get("path"),
+        "source": result.get("source"),
+        "message": result.get("message"),
+        "count": len(skill_registry.list()),
+    }
+
+
+@app.delete("/skills/{skill_name}")
+async def delete_skill(skill_name: str):
+    """删除已安装 skill 并热刷新。"""
+    from Symbix_sdk.skill.installer import uninstall_skill
+
+    result = uninstall_skill(skill_name, skill_registry.skills_dir)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "删除失败")
+    skill_registry.scan()
+    tool_registry.refresh_skills()
+    return {
+        "status": "ok",
+        "skill_name": result.get("skill_name"),
+        "message": result.get("message"),
+        "count": len(skill_registry.list()),
+    }
+
+
+@app.post("/skills/create")
+async def create_skill(req: CreateSkillRequest):
+    """创建 skill 骨架目录（调用 skill-creator/scripts/init_skill.py）"""
+
+    try:
+        # 延迟导入，避免启动时依赖路径问题
+        from Symbix_sdk.skill.installed_skill.skill_creator_scripts import create_skill_skeleton  # type: ignore
+    except Exception:
+        # 直接从脚本路径加载
+        import importlib.util
+        init_path = os.path.join(
+            BASE_DIR,
+            "Symbix_sdk",
+            "skill",
+            "installed_skill",
+            "skill-creator",
+            "scripts",
+            "init_skill.py",
+        )
+        if not os.path.exists(init_path):
+            raise HTTPException(status_code=500, detail=f"init_skill.py 不存在: {init_path}")
+        spec = importlib.util.spec_from_file_location("init_skill", init_path)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(mod)
+        create_skill_skeleton = mod.create_skill_skeleton
+
+    result = create_skill_skeleton(
+        skill_name=req.skill_name,
+        description=req.description,
+        display_name=req.display_name,
+        purpose=req.purpose,
+        instructions=req.instructions,
+        target_dir=skill_registry.skills_dir,
+        overwrite=req.overwrite,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "创建 skill 失败")
+
+    # 创建后立即重新扫描注册
+    skill_registry.scan()
+    tool_registry.refresh_skills()
+    return {
+        "status": "ok",
+        "skill_name": result.get("skill_name"),
+        "path": result.get("path"),
+        "message": result.get("message"),
+        "count": len(skill_registry.list()),
+    }
+
+
 @app.post("/skills/reload")
 async def reload_skills():
     """重新扫描并加载 skills，并刷新已注册的 skill 工具"""
@@ -1129,6 +1377,7 @@ async def reload_skills():
     # 让 tool_registry 重新注册 skill 为可调用工具
     tool_registry.refresh_skills()
     return {"status": "ok", "count": len(skill_registry.list())}
+
 
 
 @app.get("/skills/match")
