@@ -82,20 +82,45 @@
             <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill（{{ skillToolList.length }} 个工具）</n-text>
             <div v-for="skill in skillList" :key="skill.name" class="skill-card">
               <div class="skill-card-head">
-                <div style="font-size:13px; color:var(--text-primary)">{{ skill.display_name || skill.name }}</div>
-                <n-button text size="tiny" type="error" @click="removeSkill(skill.name)" title="删除">×</n-button>
-              </div>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:2px">{{ skill.description }}</div>
-              <div v-if="getSkillTool(skill.name)" style="margin-top:4px; font-size:10px; color:var(--accent-300); padding-left:2px;">
-                🔧 工具: skill__{{ skill.name }}
+                <div class="skill-card-info">
+                  <div class="skill-card-name">{{ skill.display_name || skill.name }}</div>
+                  <div class="skill-card-desc">{{ skill.description }}</div>
+                  <div v-if="getSkillTool(skill.name)" class="skill-card-tool">
+                    🔧 工具: skill__{{ skill.name }}
+                  </div>
+                </div>
+                <n-button
+                  size="small"
+                  quaternary
+                  type="error"
+                  class="panel-icon-btn"
+                  title="删除 Skill"
+                  @click="removeSkill(skill.name)"
+                >
+                  <template #icon>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                    </svg>
+                  </template>
+                </n-button>
               </div>
             </div>
 
             <n-empty v-if="skillList.length === 0" description="暂无 Skill" size="small" style="margin-top:20px;" />
           </div>
           <div class="side-panel-footer">
-            <n-button size="small" secondary block @click="refreshSkillList">刷新列表</n-button>
+            <n-button size="medium" secondary block class="panel-footer-btn" @click="refreshSkillList">
+              <template #icon>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+              </template>
+              刷新列表
+            </n-button>
           </div>
+
         </div>
       </transition>
 
@@ -151,25 +176,58 @@
               {{ mcpServerGroups.length }} 个 Server · {{ mcpToolList.length }} 个工具
             </div>
             <!-- 每组一个可折叠 Server -->
-            <div v-for="group in mcpServerGroups" :key="group.server_id" style="margin-bottom:8px;">
+            <div v-for="group in mcpServerGroups" :key="group.server_id" class="mcp-server-card">
               <div class="mcp-server-group-header">
                 <div class="mcp-server-title" @click="toggleMcpServer(group.server_id)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
-                    :style="{ transform: expandedMcpServers.has(group.server_id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    class="mcp-expand-icon"
+                    :style="{ transform: expandedMcpServers.has(group.server_id) ? 'rotate(90deg)' : 'rotate(0deg)' }"
+                  >
                     <polygon points="9,5 18,12 9,19"/>
                   </svg>
-                  <span style="font-weight:600; margin-left:4px;">{{ group.server_id }}</span>
+                  <span class="mcp-server-name">{{ group.server_id }}</span>
                   <span class="mcp-status-dot" :class="mcpStatusClass(group.server_id)" :title="mcpStatusLabel(group.server_id)"></span>
-                  <span style="font-size:10px; color:var(--accent-300); margin-left:auto;">{{ group.tool_count }} 工具</span>
+                  <span class="mcp-tool-count">{{ group.tool_count }} 工具</span>
                 </div>
                 <div class="mcp-server-ops" @click.stop>
-                  <n-button text size="tiny" @click="reconnectMcp(group.server_id)" title="重连">↻</n-button>
-                  <n-button text size="tiny" type="error" @click="removeMcp(group.server_id)" title="删除">×</n-button>
+                  <n-button
+                    size="small"
+                    quaternary
+                    class="panel-icon-btn"
+                    title="重连"
+                    @click="reconnectMcp(group.server_id)"
+                  >
+                    <template #icon>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                      </svg>
+                    </template>
+                  </n-button>
+                  <n-button
+                    size="small"
+                    quaternary
+                    type="error"
+                    class="panel-icon-btn"
+                    title="删除"
+                    @click="removeMcp(group.server_id)"
+                  >
+                    <template #icon>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                      </svg>
+                    </template>
+                  </n-button>
                 </div>
               </div>
 
-              <div v-if="expandedMcpServers.has(group.server_id)" style="padding-left:12px; margin-top:4px;">
-                <div v-if="group.error" style="font-size:11px; color:var(--error); padding:6px 8px;">⚠ {{ group.error }}</div>
+              <div v-if="expandedMcpServers.has(group.server_id)" class="mcp-server-tools">
+                <div v-if="group.error" class="mcp-server-error">⚠ {{ group.error }}</div>
                 <div v-else v-for="tool in group.tools" :key="tool.function.name" class="mcp-tool-item">
                   <div class="mcp-tool-name">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
@@ -177,15 +235,24 @@
                     </svg>
                     {{ tool.function.name }}
                   </div>
-                  <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+                  <div class="mcp-tool-desc">{{ tool.function.description }}</div>
                 </div>
               </div>
             </div>
             <n-empty v-if="mcpServerGroups.length === 0" description="未连接任何 MCP Server" size="small" style="margin-top:20px;" />
           </div>
           <div class="side-panel-footer">
-            <n-button size="small" secondary block @click="testMcpConnection">测试连接</n-button>
+            <n-button size="medium" secondary block class="panel-footer-btn" @click="testMcpConnection">
+              <template #icon>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+              </template>
+              测试连接
+            </n-button>
           </div>
+
         </div>
       </transition>
 
@@ -404,7 +471,9 @@ const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
+import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
+
 const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
@@ -896,11 +965,20 @@ async function sendMessage(text: string, files: any[]) {
     const active = sessions.value.find(s => s.id === currentSessionId)
     if (active) active.messages = [...messages.value]
     await saveSessionToLocalMarkdown()
+    // 流式结束且不在等待审批时，触发任务完成提醒
+    if (!assistantMsg.approval_id) {
+      const preview = (assistantMsg.content || '').slice(0, 80).replace(/\s+/g, ' ')
+      void notifyTaskComplete({
+        title: 'Symbix · 任务完成',
+        body: preview || 'Agent 已完成回复',
+      })
+    }
 
   } catch (e: any) {
     loading.value = false
     abortController.value = null
     if (e.name === 'AbortError') {
+
       console.log('=== 流被用户中断 ===')
       if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
         messages.value.splice(assistantMsgIndex, 1)
@@ -1307,12 +1385,18 @@ async function approveTool(msgIdx: number, approved: boolean) {
     msg.approval_id = undefined
     loading.value = false
     await saveSessionToLocalMarkdown()
+    const preview = (msg.content || '').slice(0, 80).replace(/\s+/g, ' ')
+    void notifyTaskComplete({
+      title: 'Symbix · 任务完成',
+      body: preview || '审批后任务已完成',
+    })
   } catch (e: any) {
     loading.value = false
     console.error('审批失败:', e)
     messageUi.error(`审批失败：${e.message}`)
   }
 }
+
 
 function scrollToBottom() {
   if (messageListRef.value) {
@@ -1325,11 +1409,21 @@ function scrollToBottom() {
 .layout {
   display: flex;
   height: 100vh;
+  box-sizing: border-box; /* include titlebar padding so bottom isn't clipped */
   background: var(--bg-app);
   color: var(--text-primary);
   padding-top: 32px;
   overflow: hidden;
+  min-height: 0;
 }
+.layout > .activity-bar,
+.layout > .sidebar-container,
+.layout > .chat-area {
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+}
+
 
 /* ---- Activity Bar (VSCode-style) ---- */
 .activity-bar {
@@ -1395,7 +1489,11 @@ function scrollToBottom() {
 .sidebar-container {
   position: relative;
   flex-shrink: 0;
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
 }
+
 
 /* ---- Side Panel (Skill / MCP) ---- */
 .side-panel {
@@ -1403,15 +1501,20 @@ function scrollToBottom() {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 260px;
+  width: 280px;
+  max-width: min(280px, 42vw);
+  height: 100%;
+  min-height: 0;
   background: var(--panel-bg);
   backdrop-filter: blur(16px);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   z-index: 20;
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
+
 
 /* Panel slide transition */
 .panel-slide-enter-active {
@@ -1434,7 +1537,9 @@ function scrollToBottom() {
   justify-content: space-between;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
+
 .side-panel-title {
   font-size: 13px;
   font-weight: 600;
@@ -1451,23 +1556,76 @@ function scrollToBottom() {
   font-weight: 600 !important;
 }
 .skill-card {
-  margin-top: 8px;
-  padding: 8px;
-  border-radius: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
   background: var(--surface-hover);
+  border: 1px solid transparent;
+  transition: border-color var(--duration-fast, 120ms) ease, background var(--duration-fast, 120ms) ease;
+}
+.skill-card:hover {
+  border-color: var(--border);
+  background: var(--bg-elevated, var(--surface-hover));
 }
 .skill-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+}
+.skill-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.skill-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.skill-card-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.skill-card-tool {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent-300);
+  padding-left: 2px;
+}
+.panel-icon-btn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+  flex-shrink: 0;
+}
+.panel-icon-btn :deep(.n-button__icon) {
+  margin: 0 !important;
+}
+.panel-footer-btn {
+  height: 36px !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+}
+.panel-footer-btn :deep(.n-button__content) {
+  white-space: nowrap;
+}
+
+.mcp-server-card {
+  margin-bottom: 10px;
 }
 .mcp-server-group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 10px 10px 10px 12px;
   border-radius: var(--radius-md, 8px);
   background: var(--accent-soft);
   color: var(--text-secondary);
@@ -1480,18 +1638,57 @@ function scrollToBottom() {
   flex: 1;
   min-width: 0;
   cursor: pointer;
+  gap: 4px;
+}
+.mcp-expand-icon {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  opacity: 0.75;
+}
+.mcp-server-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+.mcp-tool-count {
+  font-size: 11px;
+  color: var(--accent-300);
+  margin-left: auto;
+  flex-shrink: 0;
+  padding-right: 2px;
 }
 .mcp-server-ops {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 2px;
   flex-shrink: 0;
 }
+.mcp-server-tools {
+  padding: 6px 4px 2px 14px;
+}
+.mcp-server-error {
+  font-size: 12px;
+  color: var(--error, #ef4444);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+}
+.mcp-tool-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  padding-left: 20px;
+  line-height: 1.4;
+}
 .mcp-status-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  margin-left: 6px;
+  margin-left: 4px;
   background: #888;
   flex-shrink: 0;
 }
@@ -1506,13 +1703,18 @@ function scrollToBottom() {
 }
 
 
+
 .side-panel-body {
-  flex: 1;
-  padding: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px 16px 20px;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
+
 .side-panel-body:hover {
   scrollbar-color: var(--scrollbar) transparent;
 }
@@ -1543,8 +1745,18 @@ function scrollToBottom() {
   font-size: 13px;
   color: var(--accent-300, #F7A85B);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
+.mcp-tool-item > div:last-child {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
 .mcp-server-group-header {
   transition: background var(--duration-fast) ease;
 }
@@ -1556,31 +1768,59 @@ function scrollToBottom() {
 
 /* ---- Side Panel Footer (固定底部按钮区) ---- */
 .side-panel-footer {
+  flex: 0 0 auto;
   flex-shrink: 0;
-  padding: 12px 16px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
+  background: var(--panel-bg);
+  z-index: 1;
 }
+.panel-footer-btn {
+  height: 36px !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+}
+.panel-footer-btn :deep(.n-button__content) {
+  white-space: nowrap;
+}
+
+
 
 /* ---- Chat Area ---- */
 .chat-area {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 18px 24px 28px;
+  padding: 18px 24px 16px;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
 }
+/* Keep ChatInput fully visible at the bottom */
+.chat-area > :deep(.input-container) {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
+}
+
 
 /* ---- Welcome / Greeting ---- */
 .greeting {
   text-align: center;
   margin: auto;
-  padding-bottom: 60px;
+  padding-bottom: 24px;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  overflow: auto;
   animation: fadeUp 0.5s var(--ease-standard, ease);
 }
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1636,7 +1876,8 @@ function scrollToBottom() {
 
 /* ---- Message List ---- */
 .message-list {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0; /* critical: shrink so input is not pushed off-screen */
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1645,6 +1886,7 @@ function scrollToBottom() {
   padding-bottom: 16px;
   scroll-behavior: smooth;
 }
+
 .message-list::-webkit-scrollbar {
   width: 5px;
 }

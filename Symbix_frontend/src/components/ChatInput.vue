@@ -292,15 +292,20 @@ function handleInputKeydown(e: KeyboardEvent) {
 
 <style scoped>
 .input-container {
+  flex: 0 0 auto;
   flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
   background: var(--bg-elevated);
   backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
-  padding: 8px 12px 4px;
+  padding: 8px 12px 6px;
+  margin-bottom: env(safe-area-inset-bottom, 0px);
   transition: border-color var(--duration-base, 180ms) var(--ease-standard, ease),
               box-shadow var(--duration-base, 180ms) var(--ease-standard, ease);
 }
+
 .input-container:focus-within {
   border-color: var(--accent-border);
   box-shadow: 0 0 0 2px rgba(239, 107, 110, 0.12);

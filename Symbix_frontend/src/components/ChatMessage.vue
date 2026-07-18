@@ -37,8 +37,8 @@
         </div>
       </template>
       <template v-else>
-        <!-- Reasoning (思维过程) -->
-        <div v-if="msg.reasoning" class="reasoning-block">
+        <!-- Reasoning (思维过程) — 仅非空内容时展示 -->
+        <div v-if="hasReasoning" class="reasoning-block">
           <div class="reasoning-header" @click="toggleReasoning">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
@@ -46,12 +46,13 @@
             <span>思维过程</span>
             <svg class="reasoning-arrow" :class="{ expanded: showReasoning }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
-          <div v-show="showReasoning" class="reasoning-text">{{ msg.reasoning }}</div>
+          <div v-show="showReasoning" class="reasoning-text">{{ String(msg.reasoning).trim() }}</div>
         </div>
 
-        <!-- Steps / 工具卡片 -->
-        <div v-if="msg.steps && msg.steps.length" class="steps-block">
-          <div v-for="(step, i) in msg.steps" :key="i" class="step-card" :class="step.status">
+        <!-- Steps / 工具卡片 — 过滤无效空 step -->
+        <div v-if="visibleSteps.length" class="steps-block">
+          <div v-for="(step, i) in visibleSteps" :key="step.id || i" class="step-card" :class="step.status">
+
             <div class="step-header" @click="toggleStep(Number(i))">
               <span class="step-icon">
                 <svg v-if="step.status === 'done'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
@@ -86,10 +87,11 @@
           </div>
         </div>
 
-        <div v-if="msg.content" class="message-bubble" :class="msg.role">
+        <div v-if="hasContent" class="message-bubble" :class="msg.role">
           <!-- 渲染消息内容：支持简单 Markdown -->
           <div class="msg-text" v-html="renderedContent"></div>
         </div>
+
       </template>
 
       <!-- 操作按钮 (仅 assistant: 复制 & 重试) -->
@@ -256,14 +258,40 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+/** 非空白 reasoning 才展示，避免上方空白条 */
+const hasReasoning = computed(() => {
+  const r = props.msg?.reasoning
+  return typeof r === 'string' ? r.trim().length > 0 : !!r
+})
+
+/** 过滤掉无 name 的空 step（流式过程中可能短暂出现） */
+const visibleSteps = computed(() => {
+  const steps = props.msg?.steps
+  if (!Array.isArray(steps) || steps.length === 0) return []
+  return steps.filter((s: any) => {
+    if (!s) return false
+    const name = (s.name || '').trim()
+    return !!(name || s.arguments || s.result || s.status === 'awaiting_approval')
+  })
+})
+
+const hasContent = computed(() => {
+  const c = props.msg?.content
+  return typeof c === 'string' ? c.trim().length > 0 : !!c
+})
+
 // Simple markdown-like rendering
 const renderedContent = computed(() => {
-  let text = props.msg.content
-  // Escape HTML
+  let text = String(props.msg?.content ?? '')
+  // 去掉正文首尾多余空行，避免气泡顶部/底部大块空白
+  text = text.replace(/^\s*\n+/, '').replace(/\n+\s*$/, '')
+
+  // Escape HTML（必须先转义 &，再转义 < >，防止注入）
   text = text
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
+    .replace(/&/g, '&' + 'amp;')
+    .replace(/</g, '&' + 'lt;')
+    .replace(/>/g, '&' + 'gt;')
+
 
   // Inline code: `code`
   text = text.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
@@ -277,11 +305,15 @@ const renderedContent = computed(() => {
   // Code blocks: ```code```
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
 
-  // Line breaks
+  // 连续空行最多保留一个
+  text = text.replace(/\n{3,}/g, '\n\n')
+
+  // 用 <br> 换行；CSS 不用 pre-wrap，避免双重间距
   text = text.replace(/\n/g, '<br>')
 
   return text
 })
+
 </script>
 
 <style scoped>
@@ -359,8 +391,14 @@ const renderedContent = computed(() => {
 
 /* ---- Message Text ---- */
 .msg-text {
-  white-space: pre-wrap;
+  /* 换行已由 <br> 处理；不用 pre-wrap，避免顶部/行间额外空白 */
+  white-space: normal;
+  word-break: break-word;
 }
+.msg-text :deep(br:first-child) {
+  display: none; /* 兜底：若仍残留开头 br 则隐藏 */
+}
+
 
 /* ---- Inline Code ---- */
 .msg-text :deep(.inline-code) {

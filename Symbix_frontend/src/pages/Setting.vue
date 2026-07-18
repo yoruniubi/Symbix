@@ -60,6 +60,70 @@
         </n-form>
       </n-card>
 
+      <!-- 任务完成提醒 -->
+      <n-card title="任务完成提醒" class="setting-card">
+        <n-form label-placement="top">
+          <n-form-item label="启用提醒">
+            <div class="inline-row">
+              <n-switch v-model:value="notifyForm.enabled" />
+              <n-text depth="3" style="font-size: 12px;">
+                Agent 回复 / 工具任务完成后提醒
+              </n-text>
+            </div>
+          </n-form-item>
+          <n-form-item label="播放音效">
+            <n-switch
+              v-model:value="notifyForm.soundEnabled"
+              :disabled="!notifyForm.enabled"
+            />
+          </n-form-item>
+          <n-form-item label="音效">
+            <div class="inline-row">
+              <n-select
+                v-model:value="notifyForm.soundId"
+                :options="soundOptions"
+                :disabled="!notifyForm.enabled || !notifyForm.soundEnabled"
+                style="max-width: 240px;"
+              />
+              <n-button
+                size="small"
+                secondary
+                :disabled="!notifyForm.enabled || !notifyForm.soundEnabled || notifyForm.soundId === 'none'"
+                @click="previewSound"
+              >
+                试听
+              </n-button>
+            </div>
+          </n-form-item>
+          <n-form-item label="音量">
+            <n-slider
+              v-model:value="notifyVolumePercent"
+              :min="0"
+              :max="100"
+              :step="5"
+              :disabled="!notifyForm.enabled || !notifyForm.soundEnabled"
+              :format-tooltip="(v: number) => `${v}%`"
+              style="max-width: 320px;"
+            />
+          </n-form-item>
+          <n-form-item label="系统桌面通知">
+            <div class="inline-row">
+              <n-switch
+                v-model:value="notifyForm.desktopNotify"
+                :disabled="!notifyForm.enabled"
+              />
+              <n-text depth="3" style="font-size: 12px;">
+                窗口在后台时弹出系统通知（需授权）
+              </n-text>
+            </div>
+          </n-form-item>
+          <n-space justify="end">
+            <n-button @click="resetNotify">重置</n-button>
+            <n-button type="primary" @click="saveNotify">保存提醒设置</n-button>
+          </n-space>
+        </n-form>
+      </n-card>
+
       <!-- STT 设置卡片 -->
       <n-card title="语音识别 (STT)" class="setting-card">
         <n-form :model="sttForm" label-placement="top">
@@ -150,13 +214,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
 import { useTheme } from '@/composables/useTheme'
+import {
+  useNotify,
+  playNotifySound,
+  type NotifySettings,
+  type NotifySoundId,
+} from '@/composables/useNotify'
 
 const message = useMessage()
 const { mode, setMode } = useTheme()
+const {
+  notifySettings,
+  loadNotifySettings,
+  saveNotifySettings,
+  resetNotifySettings,
+  defaultSettings,
+} = useNotify()
 
 interface SttSettings {
   provider: string
@@ -206,6 +283,14 @@ const voiceOptions = [
   { label: 'Shimmer', value: 'shimmer' },
 ]
 
+const soundOptions: { label: string; value: NotifySoundId }[] = [
+  { label: '清脆和弦 (Chime)', value: 'chime' },
+  { label: '叮咚 (Ding)', value: 'ding' },
+  { label: '柔和 (Soft)', value: 'soft' },
+  { label: '轻点 (Pop)', value: 'pop' },
+  { label: '无音效', value: 'none' },
+]
+
 const defaultStt: SttSettings = {
   provider: 'openai',
   apiKey: '',
@@ -223,11 +308,23 @@ const defaultTts: TtsSettings = {
 
 const sttForm = ref<SttSettings>({ ...defaultStt })
 const ttsForm = ref<TtsSettings>({ ...defaultTts })
+const notifyForm = ref<NotifySettings>({ ...defaultSettings })
+
+/** 滑块用 0–100，内部存 0–1 */
+const notifyVolumePercent = computed({
+  get: () => Math.round((notifyForm.value.volume ?? 0.55) * 100),
+  set: (v: number) => {
+    notifyForm.value.volume = Math.min(1, Math.max(0, v / 100))
+  },
+})
 
 const STT_KEY = 'symbix_stt_settings'
 const TTS_KEY = 'symbix_tts_settings'
 
 onMounted(() => {
+  loadNotifySettings()
+  notifyForm.value = { ...notifySettings.value }
+
   try {
     const savedStt = localStorage.getItem(STT_KEY)
     if (savedStt) sttForm.value = JSON.parse(savedStt)
@@ -237,6 +334,21 @@ onMounted(() => {
     if (savedTts) ttsForm.value = JSON.parse(savedTts)
   } catch {}
 })
+
+function saveNotify() {
+  saveNotifySettings({ ...notifyForm.value })
+  message.success('提醒设置已保存')
+}
+
+function resetNotify() {
+  resetNotifySettings()
+  notifyForm.value = { ...defaultSettings }
+  message.info('提醒设置已重置')
+}
+
+function previewSound() {
+  playNotifySound(notifyForm.value.soundId, notifyForm.value.volume)
+}
 
 function saveStt() {
   localStorage.setItem(STT_KEY, JSON.stringify(sttForm.value))
@@ -283,6 +395,13 @@ function resetTts() {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
+}
+
+.inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 /* ---- Theme options ---- */
