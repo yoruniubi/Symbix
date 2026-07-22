@@ -1,0 +1,10 @@
+{
+    "active": "default",
+    "providers": {
+        "default": {
+            "model": "gemini-3-flash-preview",
+            "api_key": "YOUR_API_KEY_HERE",
+            "api_base": "https://api.example.com"
+        }
+    }
+}

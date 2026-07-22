@@ -1,0 +1,50 @@
+# ── Secrets & local runtime data (never commit) ──
+.env
+.env.*
+!.env.example
+
+# AI provider credentials
+backend/Symbix_sdk/config/providers.json
+
+# Conversation memory / SQLite
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+
+# Chat exports & uploads
+backend/Symbix_sdk/config/history_list/
+backend/uploads/
+uploads/
+
+# MCP local install cache / node modules under backend if any
+backend/**/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs / temp
+*.log
+*.tmp
+.cache/
+
+# detect-secrets / pre-commit local
+# (baseline IS tracked)

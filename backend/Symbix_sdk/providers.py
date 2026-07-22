@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Optional
 import os
 import json
+import shutil
+
 
 @dataclass
 class ProviderConfig:
@@ -9,6 +11,7 @@ class ProviderConfig:
     model: str          # litellm 格式，如 "anthropic/claude-sonnet-4-6" 或 "ollama/qwen2.5"
     api_key: Optional[str] = None
     api_base: Optional[str] = None
+
 
 class ProviderRegistry:
     """管理多个 provider 配置，支持切换和持久化"""
@@ -20,6 +23,12 @@ class ProviderRegistry:
         self._load()
 
     def _load(self):
+        # 首次启动：如果真实配置文件不存在，从 .example 模板复制
+        if not os.path.exists(self.config_path):
+            example_path = self.config_path + ".example"
+            if os.path.exists(example_path):
+                shutil.copy2(example_path, self.config_path)
+
         if os.path.exists(self.config_path):
             with open(self.config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
