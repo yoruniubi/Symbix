@@ -1,4 +1,9 @@
 import { ref, readonly } from 'vue'
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from '@tauri-apps/plugin-notification'
 
 export type NotifySoundId = 'chime' | 'ding' | 'soft' | 'pop' | 'none'
 
@@ -168,19 +173,41 @@ export async function notifyTaskComplete(options?: {
   if (options?.preview) return
 
   if (cfg.desktopNotify && typeof document !== 'undefined') {
+    const title = options?.title || 'Symbix'
+    const body = options?.body || '任务已完成'
+
     // 仅在页面不可见时弹系统通知，避免打扰
     if (document.hidden || !document.hasFocus()) {
-      const ok = await ensureDesktopPermission()
-      if (ok) {
+      // Tauri 环境：使用原生通知插件
+      if (typeof window !== 'undefined' && (window as any).__TAURI__) {
         try {
-          new Notification(options?.title || 'Symbix', {
-            body: options?.body || '任务已完成',
-            silent: true, // 系统通知静音，只用我们自己的音效
-          })
+          let granted = await isPermissionGranted()
+          if (!granted) {
+            const permission = await requestPermission()
+            granted = permission === 'granted'
+          }
+          if (granted) {
+            sendNotification({ title, body })
+          }
         } catch {
-          /* ignore */
+          // 回退到 Web Notification
+          await fallbackWebNotify(title, body)
         }
+      } else {
+        // 浏览器环境：使用 Web Notification
+        await fallbackWebNotify(title, body)
       }
+    }
+  }
+}
+
+async function fallbackWebNotify(title: string, body: string) {
+  const ok = await ensureDesktopPermission()
+  if (ok) {
+    try {
+      new Notification(title, { body, silent: true })
+    } catch {
+      /* ignore */
     }
   }
 }

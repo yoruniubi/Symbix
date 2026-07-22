@@ -1,0 +1,1 @@
+"""Symbix FastAPI application package."""

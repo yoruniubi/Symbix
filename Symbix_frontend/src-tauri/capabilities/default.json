@@ -25,7 +25,7 @@
     "core:window:allow-set-always-on-top",
     "core:window:allow-get-all-windows",
     "core:webview:allow-get-all-webviews",
-
+    "notification:default",
     "core:webview:default",
     "core:webview:allow-create-webview",
     "core:webview:allow-create-webview-window",

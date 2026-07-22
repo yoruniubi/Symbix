@@ -133,6 +133,35 @@ export const tokens = {
   },
 } as const
 
+/**
+ * ─────────────────────────────────────────
+ * 5. Global shared style: panel-icon-btn
+ *
+ * Inject into <head> so the single-source
+ * rule is available everywhere.
+ * ─────────────────────────────────────────
+ */
+export function injectPanelIconBtnStyle() {
+  const id = 'symbix-panel-icon-btn'
+  if (document.getElementById(id)) return
+  const el = document.createElement('style')
+  el.id = id
+  el.textContent = `
+.panel-icon-btn {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  padding: 0 !important;
+  border-radius: 6px !important;
+  flex-shrink: 0;
+}
+.panel-icon-btn .n-button__icon {
+  margin: 0 !important;
+}
+`
+  document.head.appendChild(el)
+}
+
 export type ThemeMode = 'light' | 'dark'
 
 /** App default — light feels warmer with the coral/amber accent */

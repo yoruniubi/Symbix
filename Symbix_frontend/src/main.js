@@ -1,7 +1,7 @@
 import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router/index.js";
-import { injectCssVariables, DEFAULT_THEME_MODE } from "./theme";
+import { injectCssVariables, injectPanelIconBtnStyle, DEFAULT_THEME_MODE } from "./theme";
 
 // Restore persisted theme before first paint (avoid flash)
 function getInitialThemeMode() {
@@ -13,5 +13,6 @@ function getInitialThemeMode() {
 }
 
 injectCssVariables(getInitialThemeMode());
+injectPanelIconBtnStyle();
 
 createApp(App).use(router).mount("#app");
