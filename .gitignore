@@ -5,7 +5,6 @@
 
 # AI provider credentials
 backend/Symbix_sdk/config/providers.json
-
 # Conversation memory / SQLite
 **/*.db
 **/*.db-journal
