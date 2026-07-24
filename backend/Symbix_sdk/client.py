@@ -198,6 +198,28 @@ class SymbixClient:
         return messages
 
     # ── 非流式（保留 litellm，用于非流式场景）────────────────
+    def _prepare_litellm_endpoint(
+        self,
+        raw_model: str,
+        raw_base: Optional[str],
+    ) -> tuple[str, Optional[str], Optional[str]]:
+        """为 litellm 准备 (model, api_base, custom_llm_provider)。
+
+        注意：不能直接解包 _resolve_endpoint——它返回的是
+        (url, provider_type, headers, model_name)，字段语义不同。
+        """
+        if raw_base:
+            api_base_val = raw_base.rstrip("/")
+            # 自定义/中转走 OpenAI 兼容协议
+            if raw_model.startswith("openai/"):
+                model = raw_model[len("openai/"):]
+            else:
+                model = raw_model
+            return model, api_base_val, "openai"
+
+        # 无自定义 base：交给 litellm 按 model 前缀路由
+        return raw_model, None, None
+
     async def chat(
         self,
         user_input: str,
@@ -213,17 +235,9 @@ class SymbixClient:
         provider = self.registry.get_active()
         raw_model = override_model or provider.model
         raw_base = override_api_base or provider.api_base
-        model, custom_provider, api_base, _ = self._resolve_endpoint(raw_model, raw_base, "")
-        # resolve_endpoint 返回 (url, type, headers, model_name)，这里重新用旧逻辑适配 litellm
-        if api_base:
-            api_base_val = api_base.rstrip('/')
-            if raw_model.startswith('openai/'):
-                model = raw_model[len('openai/'):]
-            custom_provider = 'openai'
-        else:
-            api_base_val = None
-            custom_provider = None
-            model = raw_model
+        model, api_base_val, custom_provider = self._prepare_litellm_endpoint(
+            raw_model, raw_base
+        )
 
         api_key_val = override_api_key or provider.api_key
         messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
@@ -264,15 +278,9 @@ class SymbixClient:
         provider = self.registry.get_active()
         raw_model = override_model or provider.model
         raw_base = override_api_base or provider.api_base
-        if raw_base:
-            api_base_val = raw_base.rstrip('/')
-            if raw_model.startswith('openai/'):
-                model = raw_model[len('openai/'):]
-            custom_provider = 'openai'
-        else:
-            api_base_val = None
-            custom_provider = None
-            model = raw_model
+        model, api_base_val, custom_provider = self._prepare_litellm_endpoint(
+            raw_model, raw_base
+        )
 
         api_key_val = override_api_key or provider.api_key
         messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)

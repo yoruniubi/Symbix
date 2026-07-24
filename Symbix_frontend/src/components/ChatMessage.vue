@@ -87,10 +87,25 @@
           </div>
         </div>
 
-        <div v-if="hasContent" class="message-bubble" :class="msg.role">
-          <!-- 渲染消息内容：支持简单 Markdown -->
-          <div class="msg-text" v-html="renderedContent"></div>
+        <div v-if="hasContent" class="message-bubble" :class="msg.role" ref="bubbleRef">
+          <!-- assistant：流式 Markdown；user：纯文本 -->
+          <MarkdownRender
+            v-if="msg.role === 'assistant'"
+            class="msg-markdown"
+            mode="chat"
+            :content="markdownContent"
+            :final="isFinal"
+            :max-live-nodes="0"
+            :batch-rendering="true"
+            :render-batch-size="16"
+            :render-batch-delay="8"
+            :typewriter="true"
+            :fade="false"
+            :is-dark="isDark"
+          />
+          <div v-else class="msg-text">{{ plainContent }}</div>
         </div>
+
 
       </template>
 
@@ -141,11 +156,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import MarkdownRender from 'markstream-vue'
+import { useTheme } from '@/composables/useTheme'
 
 const props = defineProps<{
   msg: any
+  /** 流式是否结束；历史消息默认 true */
+  final?: boolean
 }>()
+
+const { isDark } = useTheme()
+
 
 const emit = defineEmits<{
   edit: [newText: string]
@@ -159,6 +181,52 @@ const editText = ref('')
 const editInputRef = ref<any>(null)
 const showReasoning = ref(false)
 const expandedSteps = ref<Record<number, boolean>>({})
+const bubbleRef = ref<HTMLElement | null>(null)
+
+/** 为 Markdown 渲染后的代码块注入"复制"按钮 */
+function injectCopyButtons() {
+  if (!bubbleRef.value) return
+  // 仅处理尚未注入的 pre（用 dataset 属性标记）
+  const pres = bubbleRef.value.querySelectorAll('pre:not([data-copy-injected])')
+  pres.forEach(el => {
+    const pre = el as HTMLElement
+    pre.setAttribute('data-copy-injected', '')
+    // 给 pre 设置相对定位，作为按钮的定位锚点
+    if (!pre.style.position || pre.style.position === 'static') {
+      pre.style.position = 'relative'
+    }
+
+    const btn = document.createElement('button')
+    btn.className = 'code-copy-btn'
+    btn.setAttribute('data-copy-state', 'idle')
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+    btn.title = '复制代码'
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      const code = pre.querySelector('code')?.textContent || pre.textContent || ''
+      try {
+        await navigator.clipboard.writeText(code)
+      } catch {
+        // fallback
+        const ta = document.createElement('textarea')
+        ta.value = code
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      btn.setAttribute('data-copy-state', 'done')
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+      setTimeout(() => {
+        btn.setAttribute('data-copy-state', 'idle')
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+      }, 2000)
+    })
+    pre.appendChild(btn)
+  })
+}
 
 function toggleReasoning() {
   showReasoning.value = !showReasoning.value
@@ -280,38 +348,33 @@ const hasContent = computed(() => {
   return typeof c === 'string' ? c.trim().length > 0 : !!c
 })
 
-// Simple markdown-like rendering
-const renderedContent = computed(() => {
-  let text = String(props.msg?.content ?? '')
-  // 去掉正文首尾多余空行，避免气泡顶部/底部大块空白
-  text = text.replace(/^\s*\n+/, '').replace(/\n+\s*$/, '')
+/** 流结束标记：显式传入优先；历史消息默认已完成 */
+const isFinal = computed(() => {
+  if (typeof props.final === 'boolean') return props.final
+  // 消息自身可带 streaming 标记
+  if (props.msg?.streaming === true) return false
+  return true
+})
 
-  // Escape HTML（必须先转义 &，再转义 < >，防止注入）
-  text = text
-    .replace(/&/g, '&' + 'amp;')
-    .replace(/</g, '&' + 'lt;')
-    .replace(/>/g, '&' + 'gt;')
+const markdownContent = computed(() => {
+  const text = String(props.msg?.content ?? '')
+  return text.replace(/^\s*\n+/, '').replace(/\n+\s*$/, '')
+})
 
+const plainContent = computed(() => String(props.msg?.content ?? ''))
 
-  // Inline code: `code`
-  text = text.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+/** Markdown 内容变化后，延迟注入代码块复制按钮 */
+watch(markdownContent, () => {
+  nextTick(() => {
+    // markstream-vue 的 batch 渲染有延迟，多等一帧确保 DOM 就绪
+    setTimeout(() => injectCopyButtons(), 50)
+  })
+})
 
-  // Bold: **text**
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-
-  // Italic: *text*
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>')
-
-  // Code blocks: ```code```
-  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
-
-  // 连续空行最多保留一个
-  text = text.replace(/\n{3,}/g, '\n\n')
-
-  // 用 <br> 换行；CSS 不用 pre-wrap，避免双重间距
-  text = text.replace(/\n/g, '<br>')
-
-  return text
+onMounted(() => {
+  nextTick(() => {
+    setTimeout(() => injectCopyButtons(), 50)
+  })
 })
 
 </script>
@@ -389,29 +452,83 @@ const renderedContent = computed(() => {
 }
 
 
-/* ---- Message Text ---- */
+/* ---- Message Text (user plain) ---- */
 .msg-text {
-  /* 换行已由 <br> 处理；不用 pre-wrap，避免顶部/行间额外空白 */
-  white-space: normal;
+  white-space: pre-wrap;
   word-break: break-word;
 }
-.msg-text :deep(br:first-child) {
-  display: none; /* 兜底：若仍残留开头 br 则隐藏 */
+
+/* ---- Markdown (assistant via markstream-vue) ---- */
+.msg-markdown {
+  width: 100%;
+  min-width: 0;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
-
-
-/* ---- Inline Code ---- */
-.msg-text :deep(.inline-code) {
+.msg-markdown :deep(.markstream-vue) {
+  color: inherit;
+}
+.msg-markdown :deep(p) {
+  margin: 0.4em 0;
+}
+.msg-markdown :deep(p:first-child) {
+  margin-top: 0;
+}
+.msg-markdown :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.msg-markdown :deep(h1),
+.msg-markdown :deep(h2),
+.msg-markdown :deep(h3),
+.msg-markdown :deep(h4) {
+  margin: 0.75em 0 0.4em;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.msg-markdown :deep(h1) { font-size: 1.25em; }
+.msg-markdown :deep(h2) { font-size: 1.15em; }
+.msg-markdown :deep(h3) { font-size: 1.05em; }
+.msg-markdown :deep(ul),
+.msg-markdown :deep(ol) {
+  margin: 0.4em 0;
+  padding-left: 1.35em;
+}
+.msg-markdown :deep(li) {
+  margin: 0.15em 0;
+}
+.msg-markdown :deep(blockquote) {
+  margin: 0.5em 0;
+  padding: 0.35em 0.85em;
+  border-left: 3px solid var(--accent-border);
+  color: var(--text-secondary);
+  background: var(--bg-app);
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+}
+.msg-markdown :deep(a) {
+  color: var(--accent-500, #EF6B6E);
+  text-decoration: none;
+}
+.msg-markdown :deep(a:hover) {
+  text-decoration: underline;
+}
+.msg-markdown :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.8em 0;
+}
+.msg-markdown :deep(code) {
   background: var(--accent-soft);
   color: var(--accent-300, #F7A85B);
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: var(--radius-sm, 6px);
   font-size: 0.9em;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
-
-/* ---- Code Block ---- */
-.msg-text :deep(.code-block) {
+.msg-markdown :deep(pre) {
   background: var(--bg-app);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
@@ -422,9 +539,30 @@ const renderedContent = computed(() => {
   line-height: 1.55;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
-.msg-text :deep(.code-block code) {
+.msg-markdown :deep(pre code) {
+  background: transparent;
   color: var(--text-primary);
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
 }
+.msg-markdown :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6em 0;
+  font-size: 13px;
+}
+.msg-markdown :deep(th),
+.msg-markdown :deep(td) {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.msg-markdown :deep(th) {
+  background: var(--surface-hover);
+  font-weight: 600;
+}
+
 
 
 /* ---- Actions ---- */
@@ -688,13 +826,70 @@ const renderedContent = computed(() => {
   padding: 8px 10px;
 }
 
+/* ---- Approval Block ---- */
+.approval-block {
+  max-width: min(72%, 760px);
+  margin-bottom: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid rgba(216, 155, 60, 0.4);
+  background: rgba(216, 155, 60, 0.08);
+}
+
+.approval-hint {
+  font-size: 13px;
+  color: var(--warning, #D89B3C);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 
 /* ---- Scrollbar for code blocks ---- */
-.msg-text :deep(.code-block::-webkit-scrollbar) {
+.msg-markdown :deep(pre::-webkit-scrollbar) {
   height: 4px;
 }
-.msg-text :deep(.code-block::-webkit-scrollbar-thumb) {
-  background: rgba(255, 255, 255, 0.08);
+.msg-markdown :deep(pre::-webkit-scrollbar-thumb) {
+  background: var(--scrollbar);
   border-radius: 2px;
+}
+
+/* ---- Code Block Copy Button (injected via JS) ---- */
+/* 由于按钮通过 document.createElement 注入，需要用 :global() 作用到 */
+:global(.code-copy-btn) {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  z-index: 5;
+}
+:global(pre:hover .code-copy-btn),
+:global(pre:focus-within .code-copy-btn) {
+  opacity: 1;
+}
+:global(.code-copy-btn:hover) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+:global(.code-copy-btn[data-copy-state="done"]) {
+  color: var(--success, #4E9A6E);
+  opacity: 1;
 }
 </style>

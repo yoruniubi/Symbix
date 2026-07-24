@@ -83,7 +83,7 @@
                 v-model:value="notifyForm.soundId"
                 :options="soundOptions"
                 :disabled="!notifyForm.enabled || !notifyForm.soundEnabled"
-                style="max-width: 240px;"
+                style="max-width: 260px;"
               />
               <n-button
                 size="small"
@@ -93,8 +93,12 @@
               >
                 试听
               </n-button>
+              <n-text depth="3" style="font-size: 12px; margin-top: 6px; display: block;">
+              默认「随机柔和，会从 14 种轻柔音效中轮换
+            </n-text>
             </div>
           </n-form-item>
+
           <n-form-item label="音量">
             <n-slider
               v-model:value="notifyVolumePercent"
@@ -113,16 +117,35 @@
                 :disabled="!notifyForm.enabled"
               />
               <n-text depth="3" style="font-size: 12px;">
-                窗口在后台时弹出系统通知（需授权）
+                任务完成时弹出系统通知（需授权）
+              </n-text>
+            </div>
+          </n-form-item>
+          <n-form-item label="仅后台通知">
+            <div class="inline-row">
+              <n-switch
+                v-model:value="notifyForm.onlyWhenBackground"
+                :disabled="!notifyForm.enabled || !notifyForm.desktopNotify"
+              />
+              <n-text depth="3" style="font-size: 12px;">
+                开启后仅在窗口失焦/最小化时弹系统通知
               </n-text>
             </div>
           </n-form-item>
           <n-space justify="end">
+            <n-button
+              secondary
+              :disabled="!notifyForm.enabled"
+              @click="testNotify"
+            >
+              测试提醒
+            </n-button>
             <n-button @click="resetNotify">重置</n-button>
             <n-button type="primary" @click="saveNotify">保存提醒设置</n-button>
           </n-space>
         </n-form>
       </n-card>
+
 
       <!-- STT 设置卡片 -->
       <n-card title="语音识别 (STT)" class="setting-card">
@@ -221,6 +244,8 @@ import { useTheme } from '@/composables/useTheme'
 import {
   useNotify,
   playNotifySound,
+  notifyTaskComplete,
+  requestDesktopNotifyPermission,
   type NotifySettings,
   type NotifySoundId,
 } from '@/composables/useNotify'
@@ -234,6 +259,7 @@ const {
   resetNotifySettings,
   defaultSettings,
 } = useNotify()
+
 
 interface SttSettings {
   provider: string
@@ -284,12 +310,25 @@ const voiceOptions = [
 ]
 
 const soundOptions: { label: string; value: NotifySoundId }[] = [
-  { label: '清脆和弦 (Chime)', value: 'chime' },
-  { label: '叮咚 (Ding)', value: 'ding' },
-  { label: '柔和 (Soft)', value: 'soft' },
-  { label: '轻点 (Pop)', value: 'pop' },
+  { label: '随机柔和 · 推荐', value: 'random' },
+  { label: '轻风 Breeze', value: 'breeze' },
+  { label: '晨露 Dew', value: 'dew' },
+  { label: '摇篮 Lullaby', value: 'lullaby' },
+  { label: '花瓣 Petal', value: 'petal' },
+  { label: '暖意 Warmth', value: 'warmth' },
+  { label: '涟漪 Ripple', value: 'ripple' },
+  { label: '薄雾 Mist', value: 'mist' },
+  { label: '余烬 Ember', value: 'ember' },
+  { label: '云朵 Cloud', value: 'cloud' },
+  { label: '轻语 Hush', value: 'hush' },
+  { label: '破晓 Dawn', value: 'dawn' },
+  { label: '丝绸 Silk', value: 'silk' },
+  { label: '月色 Moon', value: 'moon' },
+  { label: '细雨 Rain', value: 'rain' },
   { label: '无音效', value: 'none' },
 ]
+
+
 
 const defaultStt: SttSettings = {
   provider: 'openai',
@@ -312,7 +351,8 @@ const notifyForm = ref<NotifySettings>({ ...defaultSettings })
 
 /** 滑块用 0–100，内部存 0–1 */
 const notifyVolumePercent = computed({
-  get: () => Math.round((notifyForm.value.volume ?? 0.55) * 100),
+  get: () => Math.round((notifyForm.value.volume ?? 0.38) * 100),
+
   set: (v: number) => {
     notifyForm.value.volume = Math.min(1, Math.max(0, v / 100))
   },
@@ -334,10 +374,21 @@ onMounted(() => {
     if (savedTts) ttsForm.value = JSON.parse(savedTts)
   } catch {}
 })
+async function saveNotify() {
 
-function saveNotify() {
   saveNotifySettings({ ...notifyForm.value })
-  message.success('提醒设置已保存')
+  if (notifyForm.value.desktopNotify) {
+    const perm = await requestDesktopNotifyPermission()
+    if (perm === 'denied') {
+      message.warning('系统通知权限被拒绝，请在系统设置中允许 Symbix 通知')
+    } else if (perm === 'granted') {
+      message.success('提醒设置已保存，系统通知已授权')
+    } else {
+      message.success('提醒设置已保存')
+    }
+  } else {
+    message.success('提醒设置已保存')
+  }
 }
 
 function resetNotify() {
@@ -349,6 +400,21 @@ function resetNotify() {
 function previewSound() {
   playNotifySound(notifyForm.value.soundId, notifyForm.value.volume)
 }
+
+async function testNotify() {
+  // 先写入当前表单，便于立即按表单试听
+  saveNotifySettings({ ...notifyForm.value })
+  if (notifyForm.value.desktopNotify) {
+    await requestDesktopNotifyPermission()
+  }
+  await notifyTaskComplete({
+    title: 'Symbix · 测试提醒',
+    body: '这是一条测试通知，我会一直陪着你～',
+    forceDesktop: true,
+  })
+  message.info('已触发测试提醒（音效 + 系统通知）')
+}
+
 
 function saveStt() {
   localStorage.setItem(STT_KEY, JSON.stringify(sttForm.value))

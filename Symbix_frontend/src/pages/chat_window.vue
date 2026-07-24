@@ -303,6 +303,7 @@
           v-for="(msg, idx) in messages"
           :key="idx"
           :msg="msg"
+          :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
           v-show="!(msg.role === 'assistant' && msg.content === '' && loading)"
           @edit="handleEditMessage(idx, $event)"
           @approve="approveTool(idx, $event)"
@@ -466,7 +467,6 @@ const router = useRouter()
 const messageUi = useMessage()
 const { settings, loadSettings, saveSettings } = useSettings()
 const { fetchModels, chatCompletion } = useApiClient()
-
 const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙吗？', '有什么想聊的吗？', '又见面了！']
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 
@@ -970,8 +970,9 @@ async function sendMessage(text: string, files: any[]) {
       const preview = (assistantMsg.content || '').slice(0, 80).replace(/\s+/g, ' ')
       void notifyTaskComplete({
         title: 'Symbix · 任务完成',
-        body: preview || 'Agent 已完成回复',
+        body: preview || '我在这里，任务已经完成啦～',
       })
+
     }
 
   } catch (e: any) {
@@ -1358,7 +1359,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         approval_id: msg.approval_id,
-        approved,
+        approve: approved, // 后端 ApproveRequest 字段名为 approve
         session_id: activeSessionId.value || 'default',
         system_prompt: settings.value.systemPrompt || '',
         api_key: settings.value.apiKey || '',
@@ -1388,8 +1389,9 @@ async function approveTool(msgIdx: number, approved: boolean) {
     const preview = (msg.content || '').slice(0, 80).replace(/\s+/g, ' ')
     void notifyTaskComplete({
       title: 'Symbix · 任务完成',
-      body: preview || '审批后任务已完成',
+      body: preview || '审批已通过，任务完成啦～',
     })
+
   } catch (e: any) {
     loading.value = false
     console.error('审批失败:', e)

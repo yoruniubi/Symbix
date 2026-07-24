@@ -17,13 +17,12 @@ from application.state import (
 )
 from application.memory_ops import (
     maybe_compress_session,
-    maybe_extract_profile,
+    maybe_extract_memories,
     format_sse,
+    build_system_prompt,
 )
 
 router = APIRouter(tags=["chat"])
-
-
 def _prepare_user_message(request: ChatRequest) -> tuple[str, list[dict], list[dict]]:
     """解析 attachments 并注入用户消息；返回 (enriched_text, parsed_list, image_parts)。"""
     from Symbix_sdk.tools.file_pipeline import inject_attachments_into_message
@@ -104,7 +103,16 @@ async def chat(request: ChatRequest):
             )
         memory.add(request.session_id, "user", mem_msg)
         history = memory.get_compressed_history(request.session_id, recent_limit=20)
-        symbix_client.system_prompt = request.system_prompt
+
+        # 注入 RAG 记忆到 system prompt
+        use_mem = getattr(request, "use_memory", True)
+        enriched_prompt = build_system_prompt(
+            base=request.system_prompt,
+            use_memory=use_mem,
+            user_query=mem_msg,
+            session_id=request.session_id,
+        )
+        symbix_client.system_prompt = enriched_prompt
 
         mcp_tools = None
         if request.use_mcp:
@@ -213,8 +221,8 @@ async def chat(request: ChatRequest):
 
         asyncio.create_task(maybe_compress_session(
             request.session_id, api_key, api_base, model))
-        asyncio.create_task(maybe_extract_profile(
-            request.session_id, mem_msg, assistant_content, api_key, api_base, model))
+        asyncio.create_task(maybe_extract_memories(
+            request.session_id, api_key, api_base, model))
 
         return ChatResponse(
             content=assistant_content,
@@ -387,12 +395,11 @@ async def chat_approve(req: ApproveRequest):
     memory.add(ctx["session_id"], "assistant", assistant_content)
 
     sid = ctx["session_id"]
-    user_msg = ctx["user_input"]
     key = ctx.get("api_key", "")
     base = ctx.get("api_base", "")
     mdl = ctx.get("model", "")
     asyncio.create_task(maybe_compress_session(sid, key, base, mdl))
-    asyncio.create_task(maybe_extract_profile(sid, user_msg, assistant_content, key, base, mdl))
+    asyncio.create_task(maybe_extract_memories(sid, key, base, mdl))
 
     return {
         "status": "ok",
@@ -425,7 +432,16 @@ async def chat_stream(request: ChatRequest):
                 )
             memory.add(request.session_id, "user", mem_msg)
             history = memory.get_compressed_history(request.session_id, recent_limit=20)
-            symbix_client.system_prompt = request.system_prompt
+
+            # 注入 RAG 记忆到 system prompt
+            use_mem = getattr(request, "use_memory", True)
+            enriched_prompt = build_system_prompt(
+                base=request.system_prompt,
+                use_memory=use_mem,
+                user_query=mem_msg,
+                session_id=request.session_id,
+            )
+            symbix_client.system_prompt = enriched_prompt
 
             mcp_tools = None
             if request.use_mcp:
@@ -506,8 +522,18 @@ async def chat_stream(request: ChatRequest):
                             "last_reasoning": last_reasoning,
                             "round_count": round_count,
                             "full_text": full_text,
-                            "tool_calls_remaining": [
-                                r for r in tool_calls_raw if r["id"] != tc_id
+                            "pending_tc": {
+                                "id": tc_id,
+                                "name": tc_name,
+                                "arguments": tc_args,
+                            },
+                            "remaining_tcs": [
+                                {
+                                    "id": r["id"],
+                                    "name": r["name"],
+                                    "arguments": r.get("arguments", "{}"),
+                                }
+                                for r in tool_calls_raw
                             ],
                         }
 
@@ -631,9 +657,8 @@ async def chat_stream(request: ChatRequest):
 
             asyncio.create_task(maybe_compress_session(
                 request.session_id, api_key or "", api_base or "", model or ""))
-            asyncio.create_task(maybe_extract_profile(
-                request.session_id, mem_msg, full_text,
-                api_key or "", api_base or "", model or ""))
+            asyncio.create_task(maybe_extract_memories(
+                request.session_id, api_key or "", api_base or "", model or ""))
 
         except Exception as e:
             import traceback

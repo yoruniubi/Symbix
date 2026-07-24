@@ -23,6 +23,7 @@ class ChatRequest(BaseModel):
     api_base: str = ""
     model: str = ""
     use_mcp: bool = False
+    use_memory: bool = True
     attachments: list[AttachmentMeta] = []
 
 
@@ -41,6 +42,7 @@ class ApproveRequest(BaseModel):
     api_key: str = ""
     api_base: str = ""
     model: str = ""
+    use_memory: bool = True
 
 
 class ProviderAddRequest(BaseModel):

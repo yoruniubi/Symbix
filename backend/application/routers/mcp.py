@@ -12,7 +12,6 @@ from Symbix_sdk.mcp.connector import McpServerManager
 
 router = APIRouter(tags=["mcp"])
 
-
 @router.post("/mcp/install/npm")
 async def install_npm_mcp(req: InstallNpmRequest):
     try:

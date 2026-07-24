@@ -7,6 +7,7 @@ import os
 from Symbix_sdk.client import SymbixClient
 from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
+from Symbix_sdk.memory.memory_store import MemoryStore
 from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import McpServerManager
 from Symbix_sdk.tools.registry import ToolRegistry
@@ -21,12 +22,20 @@ os.makedirs(SDK_CONFIG_DIR, exist_ok=True)
 SESSION_INDEX_PATH = os.path.join(SDK_CONFIG_DIR, "sessions_index.json")
 
 # ============ 核心组件 ============
-memory = ConversationMemory(
-    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db")
-)
 provider_registry = ProviderRegistry(
     config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "providers.json")
 )
+symbix_client = SymbixClient(registry=provider_registry)
+memory = ConversationMemory(
+    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db")
+)
+
+memory_store = MemoryStore(
+    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
+    llm_client=symbix_client,    # 指向下方已初始化的 symbix_client
+    extraction_model="gpt-4o-mini",
+)
+
 skill_registry = SkillRegistry(
     skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skill", "installed_skill")
 )
@@ -36,7 +45,6 @@ try:
 except RuntimeError:
     provider_registry.add("default", "gpt-4o-mini")
 
-symbix_client = SymbixClient(registry=provider_registry)
 
 # ============ MCP ============
 mcp_config = McpConfig(
