@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from application.state import mcp_manager
-from application.routers import chat, providers, mcp, skills, sessions
+from application.routers import chat, providers, mcp, skills, sessions, pet
+
 
 # ============ FastAPI App ============
 app = FastAPI(title="Symbix API", version="0.1.0")
@@ -28,6 +29,8 @@ app.include_router(providers.router)
 app.include_router(mcp.router)
 app.include_router(skills.router)
 app.include_router(sessions.router)
+app.include_router(pet.router)
+
 
 
 @app.get("/")

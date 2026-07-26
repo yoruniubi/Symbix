@@ -6,6 +6,7 @@
         class="pet-canvas"
         @click="handlePetClick"
         @mousedown="onCanvasMousedown"
+        @mouseenter="onPetMouseEnter"
       />
       <div class="btn-col">
         <n-tooltip placement="right" trigger="hover">
@@ -82,24 +83,243 @@ const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 const canvasRef = ref<HTMLCanvasElement>()
 const FRAME_W = 192
 const FRAME_H = 208
-const FPS = 8
+// 整体略慢于原先 8fps；按动作分级，避免统一降速后“单帧停留太久”的卡顿感
+const TICKER_FPS = 60
+const STATE_FPS = {
+  idle: 6,           // 呼吸感更柔和
+  waving: 6.5,
+  jumping: 7,
+  failed: 6.5,
+  waiting: 6,
+  review: 6,
+  running: 8,        // 奔跑保持更密的换帧，避免拖动时发涩
+  runningRight: 8.5,
+  runningLeft: 8.5,
+} as const
+
+// 标准 Petdex 8x9 spritesheet 行定义
 const ROWS = {
-  idle:     { row: 0, frames: 6 },
-  waving:   { row: 3, frames: 4 },
-  jumping:  { row: 4, frames: 5 },
-  failed:   { row: 5, frames: 8 },
+  idle:         { row: 0, frames: 6 },
+  runningRight: { row: 1, frames: 8 },
+  runningLeft:  { row: 2, frames: 8 },
+  waving:       { row: 3, frames: 4 },
+  jumping:      { row: 4, frames: 5 },
+  failed:       { row: 5, frames: 8 },
+  waiting:      { row: 6, frames: 6 }, // 被抱起时循环（备用）
+  running:      { row: 7, frames: 6 },
+  review:       { row: 8, frames: 6 },
+} as const
+
+type PetState = keyof typeof ROWS
+const LOOP_STATES: ReadonlySet<PetState> = new Set(['idle', 'waiting', 'running', 'runningRight', 'runningLeft'])
+
+function animationSpeedFor(state: PetState) {
+  return STATE_FPS[state] / TICKER_FPS
 }
+
 
 let app: Application | null = null
 let sprite: AnimatedSprite | null = null
 let baseSource: TextureSource | null = null
-let currentState = 'idle'
+let currentState: PetState = 'idle'
 let randomTimer: ReturnType<typeof setTimeout> | null = null
+let lastRandomAction: PetState | '' = ''
 
-function onCanvasMousedown(e: MouseEvent) {
-  if (e.button !== 0) return
-  appWindow.startDragging()
+/**
+ * 拖拽奔跑（Windows / Tauri 要点）：
+ * 1. startDragging() 的 Promise 会立刻 resolve，不能当“拖拽结束”
+ * 2. 进入原生拖拽后 webview 常立刻收到 pointerup，也不能靠它结束
+ * 3. 正确做法：真正发生窗口位移才进入 running；位移停顿一段时间再回 idle
+ */
+let dragSession = false
+let dragMoved = false
+let suppressNextClick = false
+let lastDragX: number | null = null
+let dragDir: 'left' | 'right' | null = null
+let unlistenMoved: (() => void) | null = null
+let dragWatchTimer: ReturnType<typeof setInterval> | null = null
+let lastMoveAt = 0
+let sessionStartAt = 0
+
+const DRAG_DIR_THRESHOLD = 3 // 逻辑像素：超过才算“在拖”
+const DRAG_STOP_MS = 120 // 停顿 → 先停奔跑动画（会话保持，便于继续拖再跑）
+const DRAG_STALE_MS = 1800 // 很久无位移 → 兜底结束会话（Windows 常丢真实 pointerup）
+const CLICK_IDLE_MS = 400 // 按下后几乎没动 → 当点击，结束会话
+const EARLY_POINTER_UP_MS = 300 // startDragging 后这段内的 pointerup 一律忽略
+
+function clearDragWatch() {
+  if (dragWatchTimer != null) {
+    clearInterval(dragWatchTimer)
+    dragWatchTimer = null
+  }
 }
+
+function detachPointerEndListeners() {
+  window.removeEventListener('pointerup', onGlobalPointerEnd, true)
+  window.removeEventListener('mouseup', onGlobalPointerEnd, true)
+  window.removeEventListener('pointercancel', onGlobalPointerEnd, true)
+  window.removeEventListener('blur', onGlobalPointerEnd, true)
+}
+
+function attachPointerEndListeners() {
+  detachPointerEndListeners()
+  // capture：尽量在被吞掉前收到松手；真实松手用于立刻停跑
+  window.addEventListener('pointerup', onGlobalPointerEnd, true)
+  window.addEventListener('mouseup', onGlobalPointerEnd, true)
+  window.addEventListener('pointercancel', onGlobalPointerEnd, true)
+  window.addEventListener('blur', onGlobalPointerEnd, true)
+}
+
+function isRunningState(state: PetState = currentState) {
+  return state === 'runningRight' || state === 'runningLeft' || state === 'running'
+}
+
+function endDragSession(opts: { backToIdle: boolean; swallowClick: boolean }) {
+  if (!dragSession && !dragWatchTimer) return
+  dragSession = false
+  clearDragWatch()
+  detachPointerEndListeners()
+  lastDragX = null
+  dragDir = null
+  if (opts.swallowClick || dragMoved) suppressNextClick = true
+  const wasRunning = isRunningState()
+  dragMoved = false
+  // onMoved 监听保持常驻，不在每次会话结束时拆掉
+  if (opts.backToIdle && wasRunning) playState('idle', false)
+}
+
+function onGlobalPointerEnd() {
+  if (!dragSession) return
+  // Windows：startDragging 后立刻 pointerup，绝不能结束会话（否则轮询/位移检测全废）
+  const sinceStart = performance.now() - sessionStartAt
+  if (sinceStart < EARLY_POINTER_UP_MS) return
+  // 已真正拖动过：松手 → idle；纯点击：交给 click / 超时
+  if (!dragMoved) return
+  endDragSession({ backToIdle: true, swallowClick: true })
+}
+
+function onDragPosition(xLogical: number) {
+  if (!dragSession) return
+  const x = Math.round(xLogical)
+
+  if (lastDragX == null) {
+    lastDragX = x
+    return
+  }
+
+  const dx = x - lastDragX
+  const adx = Math.abs(dx)
+
+  // 小抖动：吸收进基准，避免假位移
+  if (adx < DRAG_DIR_THRESHOLD) {
+    if (adx > 0) lastDragX = x
+    return
+  }
+
+  lastDragX = x
+  lastMoveAt = performance.now()
+  dragMoved = true
+  suppressNextClick = true
+
+  const nextDir: 'left' | 'right' = dx > 0 ? 'right' : 'left'
+  if (nextDir !== dragDir || !isRunningState()) {
+    dragDir = nextDir
+    playState(nextDir === 'right' ? 'runningRight' : 'runningLeft', false)
+  }
+}
+
+function startDragWatch() {
+  clearDragWatch()
+  lastMoveAt = performance.now()
+  let polling = false
+
+  // 50ms 轮询 outerPosition：onMoved 在部分 Windows 场景会漏事件
+  dragWatchTimer = setInterval(() => {
+    if (!dragSession) {
+      clearDragWatch()
+      return
+    }
+    if (polling) {
+      checkDragIdle()
+      return
+    }
+    polling = true
+    void (async () => {
+      try {
+        const pos = await appWindow.outerPosition()
+        const factor = await appWindow.scaleFactor().catch(() => window.devicePixelRatio || 1)
+        if (dragSession) onDragPosition(pos.x / factor)
+      } catch {
+        // ignore
+      } finally {
+        polling = false
+        if (dragSession) checkDragIdle()
+      }
+    })()
+  }, 50)
+}
+
+function checkDragIdle() {
+  if (!dragSession) return
+  const idleFor = performance.now() - lastMoveAt
+  if (dragMoved) {
+    // 只停动画，不结束会话：按住鼠标停一下再拖，应能继续跑
+    if (idleFor >= DRAG_STOP_MS && isRunningState()) {
+      playState('idle', false)
+      dragDir = null
+    }
+    // 兜底：很久无位移且收不到 pointerup 时结束
+    if (idleFor >= DRAG_STALE_MS) {
+      endDragSession({ backToIdle: true, swallowClick: true })
+    }
+  } else if (idleFor >= CLICK_IDLE_MS) {
+    // 按下后几乎没移动：结束会话，保留 click
+    endDragSession({ backToIdle: false, swallowClick: false })
+  }
+}
+
+async function ensureDragMovedListener() {
+  if (unlistenMoved) return
+  try {
+    unlistenMoved = await appWindow.onMoved(({ payload }) => {
+      if (!dragSession) return
+      void appWindow.scaleFactor()
+        .then((factor) => onDragPosition(payload.x / factor))
+        .catch(() => onDragPosition(payload.x / (window.devicePixelRatio || 1)))
+    })
+  } catch (e) {
+    console.warn('onMoved listen failed:', e)
+  }
+}
+
+async function onCanvasMousedown(e: MouseEvent) {
+  if (e.button !== 0) return
+
+  // 新会话：不立刻播奔跑，等窗口真的位移
+  endDragSession({ backToIdle: false, swallowClick: false })
+  dragSession = true
+  dragMoved = false
+  suppressNextClick = false
+  dragDir = null
+  lastDragX = null
+  sessionStartAt = performance.now()
+  lastMoveAt = sessionStartAt
+
+  await ensureDragMovedListener()
+  attachPointerEndListeners()
+  startDragWatch()
+
+  try {
+    // 不要 await 当结束信号：Windows 上几乎立刻 resolve
+    void appWindow.startDragging()
+  } catch (err) {
+    console.warn('startDragging failed:', err)
+    endDragSession({ backToIdle: true, swallowClick: false })
+  }
+}
+
+
+
 
 function getFrames(source: TextureSource, row: number, frameCount: number) {
   return Array.from({ length: frameCount }, (_, i) =>
@@ -110,39 +330,221 @@ function getFrames(source: TextureSource, row: number, frameCount: number) {
   )
 }
 
-function playState(state: keyof typeof ROWS, returnToIdle = true) {
+function playState(state: PetState, returnToIdle = true) {
   if (!sprite || !baseSource) return
+  // 同一循环动作不要重开，否则拖拽中反复 set textures 会看起来只闪一帧
+  if (state === currentState && LOOP_STATES.has(state) && sprite.playing) {
+    return
+  }
   currentState = state
   const def = ROWS[state]
   sprite.textures = getFrames(baseSource as TextureSource, def.row, def.frames)
-  sprite.loop = state === 'idle'
+  sprite.animationSpeed = animationSpeedFor(state)
+  sprite.loop = LOOP_STATES.has(state)
+
+  sprite.onComplete = undefined
   sprite.gotoAndPlay(0)
   if (returnToIdle && !sprite.loop) {
-    sprite.onComplete = () => playState('idle', false)
-  } else {
-    sprite.onComplete = undefined
+    const playing = state
+    sprite.onComplete = () => {
+      // 仅当仍是本次动作时回 idle，避免被后续状态覆盖后误切
+      if (currentState === playing) playState('idle', false)
+    }
   }
 }
 
-function scheduleRandom() {
+function pickRandomAction(actions: readonly PetState[], exclude?: string): PetState {
+  const candidates = exclude ? actions.filter((a) => a !== exclude) : [...actions]
+  if (candidates.length === 0) return actions[0]
+  return candidates[Math.floor(Math.random() * candidates.length)]
+}
+
+function scheduleRandom(delayMs?: number) {
   randomTimer = setTimeout(() => {
-    if (currentState === 'idle') {
-      const actions = ['waving', 'jumping'] as const
-      playState(actions[Math.floor(Math.random() * actions.length)])
+    // 奔跑只绑定拖拽；空闲只播原地动作
+    if (currentState === 'idle' && !dragSession) {
+      const pool = ['waving', 'jumping', 'failed', 'review'] as const
+      const act = pickRandomAction(pool, lastRandomAction)
+      lastRandomAction = act
+      playState(act)
     }
     scheduleRandom()
-  }, 5000 + Math.random() * 10000)
+  }, delayMs ?? (5000 + Math.random() * 10000))
 }
 
 function handlePetClick() {
-  playState('jumping')
+  // 拖拽结束后紧随的 click 不触发，避免拖完立刻 jump
+  if (suppressNextClick || dragMoved) {
+    suppressNextClick = false
+    return
+  }
+  // 若仍在会话但未真正拖动：当作点击
+  if (dragSession && !dragMoved) {
+    endDragSession({ backToIdle: false, swallowClick: false })
+  }
+  const clickPool = ['waving', 'jumping', 'failed'] as const
+  playState(clickPool[Math.floor(Math.random() * clickPool.length)])
   showBubble(greeting)
 }
 
-function showBubble(text: string, duration = 3000) {
-  bubbleText.value = text
-  setTimeout(() => { bubbleText.value = '' }, duration)
+function onPetMouseEnter() {
+  if (currentState === 'idle' && !dragSession) {
+    playState('waving')
+  }
 }
+
+function showBubble(text: string, duration = 3000) {
+  if (!text) return
+  bubbleText.value = text
+  if (bubbleClearTimer) clearTimeout(bubbleClearTimer)
+  bubbleClearTimer = setTimeout(() => {
+    bubbleText.value = ''
+    bubbleClearTimer = null
+  }, duration)
+}
+
+// ---- 后端桌宠事件（emit_pet_action → /pet/events SSE）----
+const BACKEND_URL = 'http://127.0.0.1:8000'
+const ACTION_ALIASES: Record<string, PetState> = {
+  happy: 'jumping',
+  celebrate: 'jumping',
+  jump: 'jumping',
+  wave: 'waving',
+  thinking: 'review',
+  sad: 'failed',
+  error: 'failed',
+}
+
+let petEventAbort: AbortController | null = null
+let petEventReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let bubbleClearTimer: ReturnType<typeof setTimeout> | null = null
+let lastRemoteActionId = ''
+
+function resolvePetState(action: string | undefined | null): PetState | null {
+  if (!action) return null
+  const raw = String(action).trim()
+  if (!raw) return null
+  if (raw in ROWS) return raw as PetState
+  const key = raw.replace(/[-_]/g, '').toLowerCase()
+  const mapped = ACTION_ALIASES[key] || ACTION_ALIASES[raw]
+  if (mapped) return mapped
+  // runningRight / runningLeft 大小写容错
+  if (key === 'runningright') return 'runningRight'
+  if (key === 'runningleft') return 'runningLeft'
+  if (key === 'running') return 'running'
+  return null
+}
+
+function applyRemotePetAction(payload: {
+  id?: string
+  action?: string
+  bubble?: string
+  loop?: boolean
+}) {
+  if (payload.id && payload.id === lastRemoteActionId) return
+  if (payload.id) lastRemoteActionId = payload.id
+
+  // 拖拽奔跑优先，避免远程 idle 打断
+  if (dragSession && dragMoved) return
+
+  const state = resolvePetState(payload.action)
+  if (!state) {
+    console.warn('[pet] unknown action:', payload.action)
+    return
+  }
+  // 远程循环动作（waiting/running）不要强制回 idle；一次性动作播完回 idle
+  const returnToIdle = !LOOP_STATES.has(state)
+  playState(state, returnToIdle)
+  if (payload.bubble) showBubble(payload.bubble, 3200)
+}
+
+function parseSseChunk(buffer: string): { events: Array<{ event: string; data: string }>; rest: string } {
+  const events: Array<{ event: string; data: string }> = []
+  const parts = buffer.split('\n\n')
+  const rest = parts.pop() ?? ''
+  for (const block of parts) {
+    if (!block.trim()) continue
+    let event = 'message'
+    const dataLines: string[] = []
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+      // 忽略 id: / :comment
+    }
+    if (dataLines.length) events.push({ event, data: dataLines.join('\n') })
+  }
+  return { events, rest }
+}
+
+async function connectPetEvents() {
+  // 已有连接则先断
+  stopPetEvents()
+  petEventAbort = new AbortController()
+  const signal = petEventAbort.signal
+
+  const run = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pet/events?replay=0`, {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream' },
+        signal,
+      })
+      if (!res.ok || !res.body) {
+        throw new Error(`pet events HTTP ${res.status}`)
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const { events, rest } = parseSseChunk(buf)
+        buf = rest
+        for (const ev of events) {
+          let payload: any = null
+          try {
+            payload = JSON.parse(ev.data)
+          } catch {
+            continue
+          }
+          const type = payload?.type || ev.event
+          if (type === 'pet_action') {
+            applyRemotePetAction(payload)
+          }
+          // pet_hello / pet_heartbeat 忽略
+        }
+      }
+      // 正常结束也重连
+      if (!signal.aborted) schedulePetReconnect()
+    } catch (e: any) {
+      if (signal.aborted) return
+      console.warn('[pet] events disconnected, retry…', e?.message || e)
+      schedulePetReconnect()
+    }
+  }
+  void run()
+}
+
+function schedulePetReconnect() {
+  if (petEventReconnectTimer) clearTimeout(petEventReconnectTimer)
+  petEventReconnectTimer = setTimeout(() => {
+    petEventReconnectTimer = null
+    void connectPetEvents()
+  }, 2000)
+}
+
+function stopPetEvents() {
+  if (petEventAbort) {
+    petEventAbort.abort()
+    petEventAbort = null
+  }
+  if (petEventReconnectTimer) {
+    clearTimeout(petEventReconnectTimer)
+    petEventReconnectTimer = null
+  }
+}
+
 
 // ---- 打开窗口 ----
 /**
@@ -175,7 +577,6 @@ async function revealWindow(win: WebviewWindow): Promise<boolean> {
     return false
   }
 }
-
 
 async function openOrCreateWindow(
   label: string,
@@ -255,8 +656,8 @@ onMounted(async () => {
   app = new Application()
   await app.init({
     canvas: canvasRef.value,
-    width: FRAME_W ,
-    height: FRAME_H *1.1,
+    width: FRAME_W,
+    height: FRAME_H * 1.1,
     backgroundAlpha: 0,
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
@@ -265,18 +666,33 @@ onMounted(async () => {
   baseSource = texture.source as TextureSource
   const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
   sprite = new AnimatedSprite(frames)
-  sprite.animationSpeed = FPS / 60
+  sprite.animationSpeed = animationSpeedFor('idle')
   sprite.scale.set(1)
   sprite.loop = true
   sprite.play()
+
   app.stage.addChild(sprite)
   scheduleRandom()
+  // 订阅后端 emit_pet_action → SSE，驱动远程动作
+  void connectPetEvents()
 })
 
 onUnmounted(() => {
   if (randomTimer) clearTimeout(randomTimer)
+  stopPetEvents()
+  if (bubbleClearTimer) {
+    clearTimeout(bubbleClearTimer)
+    bubbleClearTimer = null
+  }
+  endDragSession({ backToIdle: false, swallowClick: false })
+  if (unlistenMoved) {
+    unlistenMoved()
+    unlistenMoved = null
+  }
   app?.destroy(false)
 })
+
+
 </script>
 
 <style scoped>

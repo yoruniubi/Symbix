@@ -23,38 +23,49 @@ from application.state import (
 # build_system_prompt  —— 注入 RAG 检索结果（新）
 # ═══════════════════════════════════════════════════════════════════
 
+# 桌宠动作引导：鼓励模型在合适时机调用 emit_pet_action
+PET_ACTION_HINT = (
+    "【桌宠表现】你是带桌面宠物的助手。在合适时机请调用工具 emit_pet_action 驱动主窗口动画，"
+    "不要只在文字里描述动作。\n"
+    "常用映射：打招呼/欢迎→waving；开心/完成任务→jumping 或 happy；思考/分析→review 或 thinking；"
+    "失败/抱歉→failed 或 sad；等待用户→waiting；恢复常态→idle。\n"
+    "可选参数 bubble 为短中文气泡（≤40字）。同一轮回复最多调用 1–2 次，避免刷屏。"
+)
+
+
 def build_system_prompt(
     base: str = "",
     use_memory: bool = True,
     user_query: str = "",
     session_id: str = "",
 ) -> str:
-    """把用户长期记忆（RAG 检索自 memories 表）拼进 system_prompt。
+    """把用户长期记忆（RAG 检索自 memories 表）拼进 system_prompt，并附带桌宠动作提示。
 
     优先走 MemoryStore BM25 检索；若结果为空则回退到旧 user_profile 管线。
     """
-    if not use_memory:
-        return base or ""
+    parts: list[str] = []
+    if base and base.strip():
+        parts.append(base.strip())
+    parts.append(PET_ACTION_HINT)
 
-    memory_text = ""
+    if use_memory:
+        memory_text = ""
+        # ── 新管线：BM25 检索 ──
+        if user_query.strip():
+            try:
+                memory_text = memory_store.retrieve_for_chat(user_query, k=5)
+            except Exception as e:
+                print(f"[Memory] RAG retrieve failed: {e}")
 
-    # ── 新管线：BM25 检索 ──
-    if user_query.strip():
-        try:
-            memory_text = memory_store.retrieve_for_chat(user_query, k=5)
-        except Exception as e:
-            print(f"[Memory] RAG retrieve failed: {e}")
+        # ── 回退：旧画像管线 ──
+        if not memory_text:
+            memory_text = memory.get_profile_prompt()
 
-    # ── 回退：旧画像管线 ──
-    if not memory_text:
-        memory_text = memory.get_profile_prompt()
+        if memory_text:
+            parts.append(memory_text)
 
-    if not memory_text:
-        return base or ""
+    return "\n\n".join(parts)
 
-    if base:
-        return f"{base}\n\n{memory_text}"
-    return memory_text
 
 
 # ═══════════════════════════════════════════════════════════════════

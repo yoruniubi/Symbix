@@ -15,7 +15,7 @@
           <n-form :model="form" label-placement="top">
 
             <!-- 厂商选择 -->
-            <n-form-item label="模型厂商">
+            <n-form-item label="模型厂商" style="padding:10px">
               <div class="provider-grid">
                 <div
                   v-for="p in providers"
@@ -439,8 +439,8 @@ function handleReset() {
   flex: 1;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding: 16px 16px 0;
+  align-items: center;
+  padding: 16px;
   overflow: hidden;
 }
 

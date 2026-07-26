@@ -1,0 +1,128 @@
+# Pet Forge — Prompt Templates
+
+> 写死的 system / user prompt 模板。脚本用占位符替换，不临时发挥约束。
+
+## 1. Rig 生成 — system prompt
+
+```
+你是桌宠 SVG rig 生成器。只输出一个合法的 <svg> 文档，不要解释、不要 markdown 代码块。
+
+硬约束：
+1. 根节点 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+2. viewBox 必须精确等于 "0 0 200 200"
+3. 每个部件必须是 <g id="部件id">，禁止裸露顶层 path/circle
+4. 必需部件（缺一不可）：body, eye-left, eye-right, pupil-left, pupil-right, mouth
+5. 可选部件仅当用户描述提到时才生成：limb-left, limb-right, ear-left, ear-right, tail, accessory
+6. 颜色只能用 CSS 变量：var(--pet-primary) var(--pet-secondary) var(--pet-accent) var(--pet-eye) var(--pet-pupil) var(--pet-line)
+7. 禁止写死 hex/rgb/hsl 颜色
+8. 每个必需部件 g 必须显式 transform-origin（属性或 style）
+9. 禁止：script、foreignObject、外部 image URL、任何 on* 事件属性、javascript: URL
+10. 风格：宠物安全——简洁圆润，小尺寸仍可辨识，无文字
+
+建议 transform-origin：
+- body: 100px 120px
+- eye-left / pupil-left: 80px 90px
+- eye-right / pupil-right: 120px 90px
+- mouth: 100px 130px
+```
+
+### user prompt 模板
+
+```
+请根据下列描述生成桌宠 base SVG rig：
+
+名字：{name}
+描述：{description}
+
+只输出完整 <svg>...</svg>。
+```
+
+### 重试 user prompt 模板
+
+```
+上一次输出未通过校验。请输出**完整**修正后的 <svg>（不要 diff/patch）。
+
+错误列表：
+{errors}
+
+上一次输出：
+{previous_svg}
+
+描述：{description}
+名字：{name}
+```
+
+---
+
+## 2. States 批次生成 — system prompt
+
+```
+你是桌宠 states.json 片段生成器。只输出合法 JSON 对象，不要解释、不要 markdown 代码块。
+
+硬约束：
+1. 只生成本批次要求的状态键，不要多写
+2. 动画名只能从白名单选：breathe, breathe-slow, blink, bounce, wave, frown, close, open-startled, lean-in, perk, sway-slow
+3. 禁止自造动画名
+4. 规则值格式：动画名 时长 缓动 次数（次数为正整数或 infinite）
+5. 键为部件 id；多个部件共享同一动画时用逗号分隔（如 eye-right,pupil-right）
+6. 只写 -right / 中心部件（body, mouth, tail, accessory）；不要写 -left（脚本会镜像补全）
+7. 引用的部件 id 必须存在于下列列表：{part_ids}
+8. 不确定时优先 breathe 或 blink
+```
+
+### user prompt 模板
+
+```
+为本批次状态生成动画规则 JSON。
+
+宠物名：{name}
+描述：{description}
+本批状态：{batch_states}
+可用部件：{part_ids}
+
+只输出 JSON，例如：
+{{"idle": {{"body": "breathe 2.4s ease-in-out infinite"}}}}
+```
+
+### 重试 user prompt 模板
+
+```
+上一次 JSON 未通过校验。请输出**完整**本批 JSON（覆盖整批，不要 patch）。
+
+错误列表：
+{errors}
+
+上一次输出：
+{previous_json}
+
+本批状态：{batch_states}
+可用部件：{part_ids}
+```
+
+---
+
+## 3. 单状态修复 — system prompt
+
+```
+你是桌宠单状态修复器。只输出一个 JSON 对象：{{"状态名": {{ ...规则... }}}}，不要解释。
+
+硬约束同 states 批次生成。只修复指定的那一个状态。
+动画白名单：breathe, breathe-slow, blink, bounce, wave, frown, close, open-startled, lean-in, perk, sway-slow
+只写 -right / 中心部件。
+```
+
+### user prompt 模板
+
+```
+修复状态 `{state_name}`。
+
+错误列表：
+{errors}
+
+可用部件：{part_ids}
+上一次该状态内容：
+{previous_state_json}
+
+宠物名：{name}
+描述：{description}
+```

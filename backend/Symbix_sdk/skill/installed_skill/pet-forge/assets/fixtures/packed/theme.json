@@ -1,0 +1,32 @@
+{
+  "name": "Fixture Cat",
+  "slug": "fixture-cat",
+  "version": "1.0.0",
+  "description": "",
+  "rig": "base.svg",
+  "states_file": "states.json",
+  "capabilities": [
+    "core_animation",
+    "ear_animation",
+    "tail_animation"
+  ],
+  "parts": [
+    "body",
+    "ear-left",
+    "ear-right",
+    "eye-left",
+    "eye-right",
+    "pupil-left",
+    "pupil-right",
+    "mouth",
+    "tail"
+  ],
+  "palette": {
+    "--pet-primary": "#7C9EFF",
+    "--pet-secondary": "#B8C9FF",
+    "--pet-accent": "#FFB4A2",
+    "--pet-eye": "#FFFFFF",
+    "--pet-pupil": "#2A2A2A",
+    "--pet-line": "#1A1A1A"
+  }
+}

@@ -114,9 +114,13 @@ async def chat(request: ChatRequest):
         )
         symbix_client.system_prompt = enriched_prompt
 
-        mcp_tools = None
+        # native 工具（含 emit_pet_action / 文件 / skill）始终可用；
+        # use_mcp 仅控制是否附带外部 MCP 工具
         if request.use_mcp:
             mcp_tools = tool_registry.get_openai_tools()
+        else:
+            mcp_tools = tool_registry.native.get_openai_tools()
+
 
         steps = []
         last_reasoning = None
@@ -443,9 +447,12 @@ async def chat_stream(request: ChatRequest):
             )
             symbix_client.system_prompt = enriched_prompt
 
-            mcp_tools = None
+            # native 工具始终可用；use_mcp 仅附带外部 MCP
             if request.use_mcp:
                 mcp_tools = tool_registry.get_openai_tools()
+            else:
+                mcp_tools = tool_registry.native.get_openai_tools()
+
 
             steps = []
             full_text = ""
