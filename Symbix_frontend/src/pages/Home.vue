@@ -68,6 +68,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
 
 const router = useRouter()
@@ -84,7 +85,7 @@ const canvasRef = ref<HTMLCanvasElement>()
 const FRAME_W = 192
 const FRAME_H = 208
 // 整体略慢于原先 8fps；按动作分级，避免统一降速后“单帧停留太久”的卡顿感
-const TICKER_FPS = 60
+const TICKER_FPS = 80
 const STATE_FPS = {
   idle: 6,           // 呼吸感更柔和
   waving: 6.5,
@@ -650,6 +651,69 @@ async function openSettingWindow() {
   })
 }
 
+// ---- 皮肤切换 ----
+let unlistenPetSwitched: UnlistenFn | null = null
+let onPetStorage: ((e: StorageEvent) => void) | null = null
+let lastPetSwitchKey = ''
+
+async function loadPetTexture(spritesheetPath: string) {
+  if (!app || !sprite) return
+
+  // 规范化路径（Assets.load 需要 / 开头或完整 URL）
+  let path = spritesheetPath || ''
+  if (path && !path.startsWith('http') && !path.startsWith('/')) {
+    path = '/' + path
+  }
+  // 加 cache-bust，避免同路径换图后 Pixi 命中旧缓存
+  const cacheBust = path.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`
+  const loadPath = `${path}${cacheBust}`
+
+  // 卸载旧纹理（失败忽略）
+  try {
+    if (baseSource) {
+      // 尝试按当前 path 卸载；失败也不阻塞新加载
+      await Assets.unload(path).catch(() => undefined)
+    }
+  } catch { /* ignore */ }
+
+  // 加载新纹理
+  const texture = await Assets.load<Texture>(loadPath)
+  baseSource = texture.source as TextureSource
+
+  // 重建 sprite textures 并回到 idle
+  sprite.textures = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
+  sprite.animationSpeed = animationSpeedFor('idle')
+  sprite.loop = true
+  sprite.gotoAndPlay(0)
+  currentState = 'idle'
+}
+
+async function onPetSwitched(payload: {
+  petId: string
+  petFolder: string
+  spritesheetPath: string
+  displayName: string
+}) {
+  const key = `${payload.petId}|${payload.spritesheetPath}`
+  // 去重：emit + emitTo + storage 可能连发
+  if (key && key === lastPetSwitchKey) {
+    // 允许短时间后再次切换同一皮肤（用户手动再点）
+  }
+  lastPetSwitchKey = key
+  console.log('[pet] pet-switched received:', payload)
+  try {
+    await loadPetTexture(payload.spritesheetPath)
+    if (payload.petId) {
+      try { localStorage.setItem('currentPetId', payload.petId) } catch { /* ignore */ }
+    }
+    showBubble(`已换装「${payload.displayName || payload.petId}」`, 2000)
+  } catch (e: any) {
+    console.error('[pet] failed to switch pet texture:', e)
+    showBubble('换装失败，请检查皮肤文件', 2500)
+  }
+}
+
+
 // ---- 生命周期 ----
 onMounted(async () => {
   if (!canvasRef.value) return
@@ -662,7 +726,25 @@ onMounted(async () => {
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
   })
-  const texture = await Assets.load<Texture>('/pet/02/spritesheet.webp')
+
+  // 读取上次保存的皮肤
+  let spritesheetPath = '/pet/02/spritesheet.webp'
+  try {
+    const savedPetId = localStorage.getItem('currentPetId')
+    // 查找匹配的自定义皮肤
+    if (savedPetId && savedPetId !== '02') {
+      const savedPetsStr = localStorage.getItem('customPets')
+      if (savedPetsStr) {
+        const savedPets = JSON.parse(savedPetsStr)
+        const found = savedPets.find((p: any) => p.id === savedPetId)
+        if (found && found.preview) {
+          spritesheetPath = found.preview
+        }
+      }
+    }
+  } catch { /* fallback to default */ }
+
+  const texture = await Assets.load<Texture>(spritesheetPath)
   baseSource = texture.source as TextureSource
   const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
   sprite = new AnimatedSprite(frames)
@@ -675,6 +757,40 @@ onMounted(async () => {
   scheduleRandom()
   // 订阅后端 emit_pet_action → SSE，驱动远程动作
   void connectPetEvents()
+
+  // 订阅皮肤切换事件（Tauri 跨窗口）
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    unlistenPetSwitched = await listen<{
+      petId: string
+      petFolder: string
+      spritesheetPath: string
+      displayName: string
+    }>('pet-switched', (event) => {
+      void onPetSwitched(event.payload)
+    })
+  } catch (e) {
+    console.warn('[pet] failed to listen pet-switched event:', e)
+  }
+
+  // 兜底：同源多 webview 的 localStorage 信号（skin 窗写入 petSwitchSignal）
+  onPetStorage = (e: StorageEvent) => {
+    if (e.key !== 'petSwitchSignal' || !e.newValue) return
+    try {
+      const payload = JSON.parse(e.newValue)
+      if (payload?.spritesheetPath) {
+        void onPetSwitched({
+          petId: payload.petId || '',
+          petFolder: payload.petFolder || '',
+          spritesheetPath: payload.spritesheetPath,
+          displayName: payload.displayName || payload.petId || '',
+        })
+      }
+    } catch (err) {
+      console.warn('[pet] invalid petSwitchSignal:', err)
+    }
+  }
+  window.addEventListener('storage', onPetStorage)
 })
 
 onUnmounted(() => {
@@ -689,8 +805,17 @@ onUnmounted(() => {
     unlistenMoved()
     unlistenMoved = null
   }
+  if (unlistenPetSwitched) {
+    unlistenPetSwitched()
+    unlistenPetSwitched = null
+  }
+  if (onPetStorage) {
+    window.removeEventListener('storage', onPetStorage)
+    onPetStorage = null
+  }
   app?.destroy(false)
 })
+
 
 
 </script>
@@ -731,12 +856,16 @@ onUnmounted(() => {
   font-size: 13px;
   padding: 8px 14px;
   border-radius: var(--radius-lg, 12px);
-  white-space: nowrap;
   max-width: 240px;
-  white-space: normal;
   z-index: 10;
   border: 1px solid var(--accent-border);
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: calc();
+  overflow: hidden;
+  line-height: 1.45;
 }
 .speech-bubble::after {
   content: '';

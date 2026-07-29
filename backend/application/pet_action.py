@@ -83,6 +83,10 @@ def normalize_pet_action(action: str) -> str:
     return ACTION_ALIASES.get(key, key)
 
 
+# SSE 订阅结束哨兵：热重载 / 进程退出时塞入队列，让 event_gen 立刻跳出
+SSE_SHUTDOWN = object()
+
+
 class PetEventBus:
     """线程安全的桌宠事件总线。"""
 
@@ -91,10 +95,16 @@ class PetEventBus:
         self._subscribers: list[asyncio.Queue] = []
         self._history: deque[dict[str, Any]] = deque(maxlen=history_size)
         self._last_action: str = "idle"
+        self._closed: bool = False
 
     @property
     def last_action(self) -> str:
         return self._last_action
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
 
     def emit(
         self,
@@ -112,7 +122,7 @@ class PetEventBus:
             "id": uuid.uuid4().hex[:12],
             "action": normalized,
             "raw_action": action,
-            "bubble": (bubble or "").strip()[:120],
+            "bubble": ((bubble or "").strip()[:60] + "…") if len((bubble or "").strip()) > 60 else (bubble or "").strip(),
             "loop": normalized in LOOP_ACTIONS,
             "source": source,
             "session_id": session_id or "",
@@ -148,7 +158,14 @@ class PetEventBus:
         """注册一个异步订阅队列（供 SSE 使用）。"""
         q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         with self._lock:
-            self._subscribers.append(q)
+            if self._closed:
+                # 进程正在退出：立刻放哨兵，避免新连接挂住
+                try:
+                    q.put_nowait(SSE_SHUTDOWN)
+                except Exception:
+                    pass
+            else:
+                self._subscribers.append(q)
         return q
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
@@ -158,6 +175,28 @@ class PetEventBus:
             except ValueError:
                 pass
 
+    def close_all(self) -> None:
+        """热重载 / 进程退出时调用：唤醒并清空全部 SSE 订阅。
+
+        若不主动断开，uvicorn reload 会卡在
+        ``Waiting for connections to close``，直到前端关掉 SSE。
+        """
+        with self._lock:
+            self._closed = True
+            queues = list(self._subscribers)
+            self._subscribers.clear()
+        for q in queues:
+            try:
+                # 清空积压，避免 put 被满队列堵住
+                while True:
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                q.put_nowait(SSE_SHUTDOWN)
+            except Exception:
+                pass
+
     def recent(self, n: int = 5) -> list[dict[str, Any]]:
         with self._lock:
             items = list(self._history)
@@ -165,4 +204,6 @@ class PetEventBus:
 
 
 # 进程级单例
-pet_bus = PetEventBus()
+pet_action = PetEventBus()
+
+

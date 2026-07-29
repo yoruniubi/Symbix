@@ -398,6 +398,8 @@ function resetNotify() {
 }
 
 function previewSound() {
+  // 先保存当前表单设置，确保试听音量与实际通知一致
+  saveNotifySettings({ ...notifyForm.value })
   playNotifySound(notifyForm.value.soundId, notifyForm.value.volume)
 }
 

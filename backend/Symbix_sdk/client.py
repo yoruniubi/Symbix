@@ -210,6 +210,9 @@ class SymbixClient:
         """
         if raw_base:
             api_base_val = raw_base.rstrip("/")
+            # 自动补齐 /v1（与 _resolve_endpoint 行为一致）
+            if not api_base_val.endswith("/v1"):
+                api_base_val = api_base_val + "/v1"
             # 自定义/中转走 OpenAI 兼容协议
             if raw_model.startswith("openai/"):
                 model = raw_model[len("openai/"):]

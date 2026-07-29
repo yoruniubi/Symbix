@@ -288,9 +288,9 @@ class NativeToolkit:
 
         try:
             # application 层事件总线（backend 进程内可用）
-            from application.pet_bus import pet_bus, normalize_pet_action
+            from application.pet_action import pet_action, normalize_pet_action
 
-            event = pet_bus.emit(
+            event = pet_action.emit(
                 action,
                 bubble=bubble or "",
                 source="emit_pet_action",

@@ -17,7 +17,6 @@
     "core:window:allow-available-monitors",
     "core:window:allow-primary-monitor",
     "core:window:allow-minimize",
-
     "core:window:allow-unminimize",
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",
@@ -42,6 +41,11 @@
     "core:tray:default",
     "core:menu:default",
     "core:app:default",
+    "dialog:default",
+    {
+      "identifier": "dialog:allow-open",
+      "allow": [{"directory": true}]
+    },
     "http:default",
     {
       "identifier": "http:allow-fetch",
@@ -54,6 +58,11 @@
     },
     "http:allow-fetch-send",
     "http:allow-fetch-cancel-body",
-    "http:allow-fetch-read-body"
+    "http:allow-fetch-read-body",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to"
+
   ]
 }
