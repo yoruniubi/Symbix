@@ -1,0 +1,364 @@
+# tools/file_tools.py
+"""文件操作工具：edit_file / list_files / read_file / parse_file / search_files"""
+from __future__ import annotations
+import json
+import os
+import subprocess
+
+from Symbix_sdk.tools.file_pipeline import assert_path_allowed, parse_file_path
+
+
+def edit_file(file_path: str, new_content: str) -> str:
+    """编辑（覆盖写入）文件"""
+    try:
+        path = assert_path_allowed(file_path)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return f"File saved: {path}"
+    except Exception as e:
+        return f"Error editing file {file_path}: {e}"
+
+
+def list_files(directory: str = ".", recursive: bool = False) -> str:
+    """列出指定目录下的文件和子目录"""
+    import os
+    try:
+        directory = assert_path_allowed(directory)
+        entries = []
+        if recursive:
+            for root, dirs, files in os.walk(directory):
+                rel = os.path.relpath(root, directory)
+                prefix = "" if rel == "." else rel + "/"
+                for d in dirs:
+                    entries.append(f"{prefix}{d}/")
+                for f in files:
+                    entries.append(f"{prefix}{f}")
+        else:
+            for name in os.listdir(directory):
+                full = os.path.join(directory, name)
+                if os.path.isdir(full):
+                    entries.append(f"{name}/")
+                else:
+                    entries.append(name)
+        result = "\n".join(sorted(entries)) if entries else "(empty)"
+        return result
+    except Exception as e:
+        return f"Error listing directory {directory}: {e}"
+
+
+def read_file(file_path: str) -> str:
+    """读取文件内容"""
+    try:
+        path = assert_path_allowed(file_path)
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading file {file_path}: {e}"
+
+
+def parse_file(file_path: str, max_chars: int = 50000) -> str:
+    """结构化解析文件（txt/md/json/csv/pdf/docx/图片元信息），返回可读文本摘要。"""
+    try:
+        max_chars = int(max_chars) if max_chars is not None else 50000
+    except (TypeError, ValueError):
+        max_chars = 50000
+    max_chars = max(500, min(max_chars, 200_000))
+
+    try:
+        parsed = parse_file_path(
+            file_path,
+            max_chars=max_chars,
+            include_image_base64=False,
+        )
+        if parsed.get("status") != "ok":
+            return parsed.get("message") or f"Error parsing {file_path}"
+        kind = parsed.get("kind") or "file"
+        name = parsed.get("filename") or file_path
+        path = parsed.get("path") or file_path
+        body = parsed.get("text") or ""
+        size = parsed.get("size")
+        header = f"[{kind}] {name} ({size} bytes)\npath: {path}\n"
+        return header + body
+    except Exception as e:
+        return f"Error parsing file {file_path}: {e}"
+
+
+def search_files(
+    query: str,
+    path: str,
+    glob: str | None = None,
+    max_results: int = 100,
+    timeout: int = 30,
+) -> dict:
+    """使用 ripgrep 在文件中搜索关键词/正则，返回匹配列表。"""
+    if not path or not query:
+        return {"success": False, "error_msg": "path 和 query 均不能为空", "results": []}
+    if not os.path.exists(path):
+        return {"success": False, "error_msg": f"路径不存在: {path}", "results": []}
+
+    cmd = ["rg", "--json", query, path]
+    if glob:
+        cmd += ["--glob", glob]
+    cmd += ["--max-count", str(max_results)]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error_msg": f"搜索超时(超过 {timeout} 秒),请缩小搜索范围",
+            "results": [],
+        }
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error_msg": "ripgrep 未安装或不在 PATH 中",
+            "results": [],
+        }
+
+    if result.returncode == 2:
+        return {
+            "success": False,
+            "error_msg": f"rg 执行出错: {result.stderr.strip()}",
+            "results": [],
+        }
+
+    matches = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "match":
+            continue
+        matches.append({
+            "file": obj["data"]["path"]["text"],
+            "line_number": obj["data"]["line_number"],
+            "line_content": obj["data"]["lines"]["text"].rstrip("\n"),
+        })
+
+    truncated = False
+    if len(matches) > max_results:
+        matches = matches[:max_results]
+        truncated = True
+
+    return {
+        "success": True,
+        "error_msg": None,
+        "results": matches,
+        "truncated": truncated,
+    }
+
+# 帮助Agent找到文件中具体的某一部分，然后再实施替换
+def search_and_replace(
+    query: str = "",
+    new_content: str = "",
+    path: str = ".",
+    max_length: int = 100,
+) -> dict:
+    """搜索文件中匹配 query 的位置，然后用 new_content 替换该行。
+
+    适合代码片段替换、配置项修改等场景。返回替换后的结果字典。
+    """
+    if not query or not new_content:
+        return {"success": False, "error_msg": "query 和 new_content 都不能为空", "results": []}
+
+    # 搜索（限制到 3 处，避免太多结果）
+    search_res = search_files(
+        query=query,
+        path=path,
+        max_results=3,
+        timeout=20,
+    )
+    if not search_res.get("success") or not search_res["results"]:
+        return search_res
+
+    results = search_res["results"]
+    if len(results) > 1:
+        return {
+            "success": False,
+            "error_msg": f"找到 {len(results)} 处匹配，请指定要替换哪一个（可再调用 search_files 确认）",
+            "results": results,
+        }
+
+    match = results[0]
+    file_path = match["file"]
+    line_number = match["line_number"]
+    original_line = match["line_content"]
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if 0 <= line_number - 1 < len(lines):
+            lines[line_number - 1] = new_content.rstrip() + "\n" if new_content else ""
+        new_file_content = "".join(lines)
+
+        # 使用 edit_file 写入整个新内容
+        edit_file(file_path, new_file_content)
+
+        return {
+            "success": True,
+            "file": file_path,
+            "replaced_line": line_number,
+            "original_line": original_line,
+            "new_line": new_content,
+            "message": f"已成功替换第 {line_number} 行"
+        }
+    except Exception as e:
+        return {"success": False, "error_msg": f"替换失败: {e}", "results": []}
+# ---------------------------------------------------------------------------
+# 工具 schema 注册表（供 tool_setup.py 统一注册）
+# ---------------------------------------------------------------------------
+
+FILE_TOOLS_SCHEMAS = {
+    "edit_file": {
+        "func": edit_file,
+        "description": "编辑或创建文件，将内容写入指定路径",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "要编辑的文件路径",
+                },
+                "new_content": {
+                    "type": "string",
+                    "description": "要写入的新内容",
+                },
+            },
+            "required": ["file_path", "new_content"],
+        },
+    },
+    "list_files": {
+        "func": list_files,
+        "description": "列出指定目录下的文件和文件夹。如果不知道要读什么文件，先调用此工具浏览目录结构。工作目录是 F:\\Symbix，源代码在 backend/ 和 Symbix_frontend/ 中。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "directory": {
+                    "type": "string",
+                    "description": "要浏览的目录路径，默认为当前工作目录 (F:\\Symbix)",
+                    "default": ".",
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "是否递归列出所有子目录和文件，默认为 false",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    "read_file": {
+        "func": read_file,
+        "description": "读取指定路径的文件内容。先用 list_files 浏览目录结构确定文件路径，再用本工具读取。工作目录是 F:\\Symbix。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "要读取的文件路径（相对于工作目录 F:\\Symbix 的路径或绝对路径）",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
+    "parse_file": {
+        "func": parse_file,
+        "description": (
+            "结构化解析本地/上传文件内容并返回文本摘要。"
+            "支持 txt/md/json/csv/代码、PDF、DOCX、图片元信息。"
+            "用户附件路径一般在 backend/uploads/<session_id>/ 下；"
+            "比 read_file 更适合 PDF/表格/二进制文档。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "文件绝对路径或工作区内路径（上传接口返回的 path 可直接使用）",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "返回文本最大字符数，默认 50000",
+                    "default": 50000,
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
+    "search_and_replace": {
+        "func": search_and_replace,
+        "description": (
+            "搜索文件中匹配 query 的位置，然后用 new_content 替换该行。"
+            "适合代码片段替换、配置项修改等场景。先用 search_files 定位，再调用本工具精确替换。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "要搜索的关键词或正则（如 'def search_and_replace'、'# TODO'）",
+                },
+                "new_content": {
+                    "type": "string",
+                    "description": "替换后的新行内容（完整一行代码或文本）",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "搜索根目录，默认当前工作目录",
+                    "default": ".",
+                },
+                "max_length": {
+                    "type": "integer",
+                    "description": "替换行最大长度（可选）",
+                    "default": 100,
+                },
+            },
+            "required": ["query", "new_content"],
+        },
+    },
+    "search_files": {
+        "func": search_files,
+        "description": (
+            "在指定路径下使用 ripgrep 进行正则/关键词搜索（类似 grep）。"
+            "用于快速定位某个函数定义、类名、TODO 注释、配置项或任何文本片段的位置。"
+            "返回匹配所在的文件路径、行号和行内容；支持 glob 过滤文件类型（如 *.py、*.vue）。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "要搜索的文本或正则表达式，如 'def search_files' 或 'TODO'",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "要搜索的根目录路径，如 '.' 或 'backend/'",
+                },
+                "glob": {
+                    "type": "string",
+                    "description": "可选的文件匹配模式，如 '*.py'、'*.{ts,vue}'，用于只搜索特定类型文件",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "最大返回结果数，默认 100",
+                    "default": 100,
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "搜索超时时间（秒），默认 30",
+                    "default": 30,
+                },
+            },
+            "required": ["query", "path"],
+        },
+    },
+}

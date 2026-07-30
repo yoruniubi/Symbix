@@ -37,7 +37,7 @@ async def pet_status():
 
 
 @router.post("/pet/action")
-async def pet_action(req: PetActionRequest):
+async def trigger_pet_action(req: PetActionRequest):
     """手动触发桌宠动作（调试或非 tool 调用）。"""
     action = (req.action or "").strip()
     if not action:

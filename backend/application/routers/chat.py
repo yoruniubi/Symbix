@@ -291,9 +291,14 @@ async def chat_approve(req: ApproveRequest):
     for tc in remaining_tcs:
         if tc["id"] == pending_tc["id"]:
             continue
-        r_out = tool_registry.execute(tc["name"], tc["arguments"])
-        if not isinstance(r_out, str):
-            r_out = _json.dumps(r_out, ensure_ascii=False)
+        # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
+        if tc["name"] in APPROVAL_TOOLS:
+            # raise warning about multiple approval tools in one step
+            r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
+        else:
+            r_out = tool_registry.execute(tc["name"], tc["arguments"])
+            if not isinstance(r_out, str):
+                r_out = _json.dumps(r_out, ensure_ascii=False)
         tool_results.append({
             "tool_call_id": tc["id"],
             "role": "tool",
