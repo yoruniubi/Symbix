@@ -73,8 +73,16 @@ class SkillLoader:
         return match.group(1).strip() if match else ""
 
     def _extract_triggers(self, content: str) -> list[str]:
-        """从 When to use 段落里提取触发关键词列表"""
-        section = self._extract_section(content, "When to use this skill")
+        """从 When to use / 何时使用 段落里提取触发关键词列表"""
+        # 尝试多种 section 标题
+        for section_name in ["When to use this skill", "When to use", "何时使用", "使用场景", "适用场景"]:
+            section = self._extract_section(content, section_name)
+            if section:
+                break
+
+        if not section:
+            return []
+
         # 提取引号内的触发短语
         quoted = re.findall(r'"([^"]+)"', section)
         if quoted:

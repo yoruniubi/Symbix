@@ -565,4 +565,12 @@ function handleReset() {
   gap: 0;
   margin-top: 4px;
 }
+
+/* 隐藏 Naive UI n-form-item 占位的空白反馈区，避免出现多余的空条 */
+.scrollable-form :deep(.n-form-item-feedback-wrapper) {
+  display: none !important;
+}
+.scrollable-form :deep(.n-form-item .n-form-item-feedback) {
+  display: none !important;
+}
 </style>

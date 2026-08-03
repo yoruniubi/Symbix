@@ -620,6 +620,27 @@ onMounted(async () => {
   if (modelOptions.value.length === 0 && currentModel.value) {
     modelOptions.value = [{ label: currentModel.value, value: currentModel.value }]
   }
+
+  // 检测是否有从 SkinWindow 传来的预设皮肤生成消息
+  try {
+    const raw = localStorage.getItem('pendingSkinGen')
+    if (raw) {
+      const pending = JSON.parse(raw)
+      // 5 分钟内有效，防止过期消息被重复发送
+      if (pending.message && pending.ts && (Date.now() - pending.ts < 5 * 60 * 1000)) {
+        localStorage.removeItem('pendingSkinGen')
+        // 延迟一帧确保 ChatInput 等子组件已挂载
+        setTimeout(() => {
+          sendMessage(pending.message, [])
+        }, 300)
+      } else {
+        // 过期，清理
+        localStorage.removeItem('pendingSkinGen')
+      }
+    }
+  } catch (e) {
+    console.warn('[chat] 读取 pendingSkinGen 失败:', e)
+  }
 })
 async function testMcpConnection() {
   try {

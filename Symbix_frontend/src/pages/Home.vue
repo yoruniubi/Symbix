@@ -33,6 +33,30 @@
 
         <n-tooltip placement="right" trigger="hover">
           <template #trigger>
+            <button
+              class="icon-btn mode-btn"
+              @click="togglePetMode"
+              :aria-label="petMode === 'relax' ? '切换工作' : '切换休闲'"
+            >
+              <!-- 当前休闲 → 显示公文包,提示可切换到工作 -->
+              <svg v-if="petMode === 'relax'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+                <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              <!-- 当前工作 → 显示笑脸,提示可切换到休闲快乐模式 -->
+              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+                <line x1="9" y1="9" x2="9.01" y2="9"/>
+                <line x1="15" y1="9" x2="15.01" y2="9"/>
+              </svg>
+            </button>
+          </template>
+          {{ petMode === 'relax' ? '切换工作模式' : '切换休闲模式' }}
+        </n-tooltip>
+
+        <n-tooltip placement="right" trigger="hover">
+          <template #trigger>
             <button class="icon-btn" @click="openSettingWindow" aria-label="设置">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"/>
@@ -41,17 +65,6 @@
             </button>
           </template>
           设置
-        </n-tooltip>
-
-        <n-tooltip placement="right" trigger="hover">
-          <template #trigger>
-            <button class="icon-btn danger" @click="appWindow.hide()" aria-label="隐藏">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-            </button>
-          </template>
-          隐藏
         </n-tooltip>
       </div>
     </div>
@@ -79,6 +92,60 @@ const bubbleText = ref('')
 
 const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙吗？', '有什么想聊的？']
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
+
+// ---- 桌宠模式 ----\r
+type PetMode = 'work' | 'relax'
+const petMode = ref<PetMode>((localStorage.getItem('petMode') as PetMode) || 'relax')
+
+function togglePetMode() {
+  petMode.value = petMode.value === 'relax' ? 'work' : 'relax'
+  localStorage.setItem('petMode', petMode.value)
+  if (petMode.value === 'work') {
+    playState('idle', false)
+    snapToBottomRight()
+    showBubble('工作模式 · 我会乖乖待着', 2000)
+  } else {
+    if (currentState === 'idle') {
+      scheduleRandom(800)
+    }
+    showBubble('休闲模式 · 出门逛逛～', 2000)
+  }
+}
+
+async function snapToBottomRight() {
+  try {
+    if (!(window as any).__TAURI_INTERNALS__) return
+    const { PhysicalPosition, getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+
+    try {
+      const { availableMonitors } = await import('@tauri-apps/api/window')
+      const monitors = await availableMonitors()
+      if (monitors.length > 0) {
+        const primary = monitors[0]
+        const factor = primary.scaleFactor || 1
+        const screenW = primary.size.width / factor
+        const screenH = primary.size.height / factor
+        const winSize = await win.outerSize()
+        const w = winSize.width / factor
+        const h = winSize.height / factor
+        const px = Math.round(Math.max(0, screenW - w - 16) * factor)
+        const py = Math.round(Math.max(0, screenH - h - 48) * factor)
+        await win.setPosition(new PhysicalPosition(px, py))
+        return
+      }
+    } catch { /* fallthrough */ }
+
+    const screenW = window.screen.availWidth
+    const screenH = window.screen.availHeight
+    const { width: w, height: h } = (await win.outerSize()) || { width: 250, height: 240 }
+    const scale = await win.scaleFactor().catch(() => 1)
+    const px = Math.round((screenW - w / scale - 20) * scale)
+    const py = Math.round((screenH - h / scale - 20) * scale)
+    await win.setPosition(new PhysicalPosition(px, py))
+  } catch { /* silent */ }
+}
+
 
 // ---- PixiJS ----
 const canvasRef = ref<HTMLCanvasElement>()
@@ -136,7 +203,9 @@ let dragSession = false
 let dragMoved = false
 let suppressNextClick = false
 let lastDragX: number | null = null
+let lastDragY: number | null = null
 let dragDir: 'left' | 'right' | null = null
+let lastJumpTime = 0
 let unlistenMoved: (() => void) | null = null
 let dragWatchTimer: ReturnType<typeof setInterval> | null = null
 let lastMoveAt = 0
@@ -199,20 +268,27 @@ function onGlobalPointerEnd() {
   endDragSession({ backToIdle: true, swallowClick: true })
 }
 
-function onDragPosition(xLogical: number) {
+function onDragPosition(xLogical: number, yLogical?: number) {
   if (!dragSession) return
   const x = Math.round(xLogical)
 
   if (lastDragX == null) {
     lastDragX = x
+    lastDragY = yLogical != null ? Math.round(yLogical) : null
     return
   }
 
   const dx = x - lastDragX
   const adx = Math.abs(dx)
+  let ady = 0
+  if (yLogical != null) {
+    const y = Math.round(yLogical)
+    ady = Math.abs(y - (lastDragY ?? y))
+    lastDragY = y
+  }
 
-  // 小抖动：吸收进基准，避免假位移
-  if (adx < DRAG_DIR_THRESHOLD) {
+  // 小抖动:吸收进基准,避免假位移
+  if (adx < DRAG_DIR_THRESHOLD && ady < DRAG_DIR_THRESHOLD) {
     if (adx > 0) lastDragX = x
     return
   }
@@ -222,10 +298,23 @@ function onDragPosition(xLogical: number) {
   dragMoved = true
   suppressNextClick = true
 
-  const nextDir: 'left' | 'right' = dx > 0 ? 'right' : 'left'
-  if (nextDir !== dragDir || !isRunningState()) {
-    dragDir = nextDir
-    playState(nextDir === 'right' ? 'runningRight' : 'runningLeft', false)
+  // 垂直位移为主 → 跳跃(间隔 350ms, 且跳跃动画未播完时不再重触)
+  if (ady >= adx && ady >= DRAG_DIR_THRESHOLD) {
+    const now = performance.now()
+    if (currentState !== 'jumping' && now - lastJumpTime >= 350) {
+      lastJumpTime = now
+      playState('jumping', true)
+    }
+    return
+  }
+
+  // 水平位移为主 → 奔跑
+  if (adx >= DRAG_DIR_THRESHOLD) {
+    const nextDir: 'left' | 'right' = dx > 0 ? 'right' : 'left'
+    if (nextDir !== dragDir || !isRunningState()) {
+      dragDir = nextDir
+      playState(nextDir === 'right' ? 'runningRight' : 'runningLeft', false)
+    }
   }
 }
 
@@ -249,7 +338,7 @@ function startDragWatch() {
       try {
         const pos = await appWindow.outerPosition()
         const factor = await appWindow.scaleFactor().catch(() => window.devicePixelRatio || 1)
-        if (dragSession) onDragPosition(pos.x / factor)
+        if (dragSession) onDragPosition(pos.x / factor, pos.y / factor)
       } catch {
         // ignore
       } finally {
@@ -294,6 +383,8 @@ async function ensureDragMovedListener() {
 }
 
 async function onCanvasMousedown(e: MouseEvent) {
+  // 工作模式下禁止拖动
+  if (petMode.value === 'work') return
   if (e.button !== 0) return
 
   // 新会话：不立刻播奔跑，等窗口真的位移
@@ -362,15 +453,37 @@ function pickRandomAction(actions: readonly PetState[], exclude?: string): PetSt
 
 function scheduleRandom(delayMs?: number) {
   randomTimer = setTimeout(() => {
-    // 奔跑只绑定拖拽；空闲只播原地动作
+    // 工作模式:不做随机动作,只保持 idle
+    if (petMode.value !== 'relax') {
+      scheduleRandom()
+      return
+    }
     if (currentState === 'idle' && !dragSession) {
+      // 所有非循环动作池,充分展现活力
       const pool = ['waving', 'jumping', 'failed', 'review'] as const
       const act = pickRandomAction(pool, lastRandomAction)
       lastRandomAction = act
       playState(act)
+
+      // 15% 概率在动作完毕后追加第二个动作(连招:更生动)
+      if (Math.random() < 0.15) {
+        const originalAct = act
+        const secondPool = pool.filter(a => a !== originalAct)
+        const secondAct = secondPool[Math.floor(Math.random() * secondPool.length)]
+        // 在第一个动作播完后,短暂延迟再播第二个
+        const frameCount = ROWS[act].frames
+        const playTime = (frameCount / STATE_FPS[act]) * 1000
+        setTimeout(() => {
+          if (currentState === 'idle' && !dragSession) {
+            lastRandomAction = secondAct
+            playState(secondAct)
+          }
+        }, playTime + 200)
+      }
     }
+    // 随机间隔 3~9 秒,比之前更紧凑
     scheduleRandom()
-  }, delayMs ?? (5000 + Math.random() * 10000))
+  }, delayMs ?? (3000 + Math.random() * 6000))
 }
 
 function handlePetClick() {
@@ -383,12 +496,20 @@ function handlePetClick() {
   if (dragSession && !dragMoved) {
     endDragSession({ backToIdle: false, swallowClick: false })
   }
-  const clickPool = ['waving', 'jumping', 'failed'] as const
+  // 工作模式下只播气泡+waving，不做激进交互
+  if (petMode.value === 'work') {
+    playState('waving')
+    showBubble('正在工作中…有什么事吗？', 2500)
+    return
+  }
+  // 点击时所有动作都可触发,包括 review(思考)
+  const clickPool = ['waving', 'jumping', 'failed', 'review'] as const
   playState(clickPool[Math.floor(Math.random() * clickPool.length)])
   showBubble(greeting)
 }
 
 function onPetMouseEnter() {
+  if (petMode.value === 'work') return
   if (currentState === 'idle' && !dragSession) {
     playState('waving')
   }
@@ -442,10 +563,15 @@ function applyRemotePetAction(payload: {
   bubble?: string
   loop?: boolean
 }) {
+  // 工作模式下忽略远程动作（仅接收 bubble 消息）
+  if (petMode.value === 'work') {
+    if (payload.bubble) showBubble(payload.bubble, 3200)
+    return
+  }
   if (payload.id && payload.id === lastRemoteActionId) return
   if (payload.id) lastRemoteActionId = payload.id
 
-  // 拖拽奔跑优先，避免远程 idle 打断
+  // 拖爪奔跑优先，避免远程 idle 打断
   if (dragSession && dragMoved) return
 
   const state = resolvePetState(payload.action)
@@ -546,15 +672,12 @@ function stopPetEvents() {
   }
 }
 
+async function hangAround()
+{
+  
+}
 
-// ---- 打开窗口 ----
-/**
- * 显示已有窗口；若窗口已最小化/隐藏则还原并聚焦。
- * 失败（例如窗口已销毁但仍有 label 缓存）则返回 false，调用方重建。
- *
- * Windows 上最小化后仅 setFocus 不够，必须 unminimize + show。
- * 状态查询 API 若因权限失败，仍强制执行恢复动作。
- */
+
 async function revealWindow(win: WebviewWindow): Promise<boolean> {
   try {
     // 强制还原（不依赖 isMinimized 查询结果，避免权限/状态误判）
@@ -894,7 +1017,7 @@ onUnmounted(() => {
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--activity-bar-bg);
-  color: var(--text-secondary);
+  color: var(--accent-300, #F7A85B);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -906,13 +1029,21 @@ onUnmounted(() => {
 }
 .icon-btn:hover {
   background: var(--bg-elevated);
-  color: var(--text-primary);
+  color: var(--accent-500, #EF6B6E);
   border-color: var(--accent-border);
 }
 .icon-btn.danger:hover {
   background: rgba(211, 85, 90, 0.15);
   color: var(--error, #D3555A);
   border-color: rgba(211, 85, 90, 0.4);
+}
+
+/* 模式按钮 — 统一风格，颜色继承 icon-btn 默认 accent 色 */
+.mode-btn {
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+.mode-btn:hover {
+  background: var(--bg-elevated);
 }
 
 /* 气泡过渡动画 */

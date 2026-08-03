@@ -114,45 +114,36 @@
       class="skill-modal"
     >
       <div class="skill-modal-body">
-        <div v-if="skillGenerating" class="skill-progress">
-          <n-spin size="medium" />
-          <p class="skill-progress-text">{{ skillProgressText }}</p>
-          <div v-if="skillLogs.length > 0" class="skill-logs">
-            <div v-for="(log, i) in skillLogs" :key="i" class="skill-log-line">{{ log }}</div>
-          </div>
+        <div class="skill-placeholder-icon">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
+            <line x1="12" y1="22" x2="12" y2="15.5" />
+            <polyline points="22 8.5 12 15.5 2 8.5" />
+          </svg>
         </div>
-        <template v-else>
-          <div class="skill-placeholder-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
-              <line x1="12" y1="22" x2="12" y2="15.5" />
-              <polyline points="22 8.5 12 15.5 2 8.5" />
-            </svg>
-          </div>
-          <p class="skill-placeholder-text">
-            通过 pet-forge Skill<br />使用 AI 生成新桌宠皮肤素材。
-          </p>
-          <n-form label-placement="top" size="small" style="width: 100%;">
-            <n-form-item label="皮肤名称">
-              <n-input v-model:value="skillForm.name" placeholder="例如 my-pet" :disabled="skillGenerating" />
-            </n-form-item>
-            <n-form-item label="描述 / 提示词">
-              <n-input
-                v-model:value="skillForm.prompt"
-                type="textarea"
-                :autosize="{ minRows: 2, maxRows: 4 }"
-                placeholder="描述你想要的桌宠外观，比如：「圆润的橙色小猫，有尖耳朵和细尾巴，可爱风格」"
-                :disabled="skillGenerating"
-              />
-            </n-form-item>
-          </n-form>
-        </template>
+        <p class="skill-placeholder-text">
+          通过 pet-forge Skill<br />使用 AI 生成新桌宠皮肤素材。<br />
+          <span style="font-size: 11px; opacity: 0.7;">可上传参考图供 AI 分析</span>
+        </p>
+        <n-form label-placement="top" size="small" style="width: 100%;">
+          <n-form-item label="皮肤名称">
+            <n-input v-model:value="skillForm.name" placeholder="例如 my-pet" />
+          </n-form-item>
+          <n-form-item label="描述 / 提示词">
+            <n-input
+              v-model:value="skillForm.prompt"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              placeholder="描述你想要的桌宠外观，比如：「圆润的橙色小猫，有尖耳朵和细尾巴，可爱风格」"
+            />
+          </n-form-item>
+        </n-form>
       </div>
       <template #footer>
         <n-space justify="end">
-          <n-button @click="closeSkillModal" :disabled="skillGenerating">关闭</n-button>
-          <n-button type="primary" @click="triggerSkillGenerate" :disabled="!canGenerateSkill" :loading="skillGenerating">
-            {{ skillGenerating ? '生成中…' : '生成' }}
+          <n-button @click="closeSkillModal">关闭</n-button>
+          <n-button type="primary" @click="triggerSkillGenerate" :disabled="!canGenerateSkill">
+            前往 ChatWindow 生成
           </n-button>
         </n-space>
       </template>
@@ -163,6 +154,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import TitleBar from '@/components/TitleBar.vue'
 import { Assets, Texture } from 'pixi.js'
 
@@ -208,6 +200,7 @@ async function notifyPetSwitched(payload: {
 
 
 const message = useMessage()
+const router = useRouter()
 
 /** Skill 是否已接入（你指定 skill 后改为 true 并实现 generate） */
 const skillReady = ref(true)
@@ -225,12 +218,9 @@ const skillForm = ref({
 
 // ── Skill 生成 ──────────────────────────────────────────────
 const BACKEND_URL = 'http://127.0.0.1:8000'
-const skillGenerating = ref(false)
-const skillProgressText = ref('')
-const skillLogs = ref<string[]>([])
 
 const canGenerateSkill = computed(() => {
-  return !!skillForm.value.name.trim() && !!skillForm.value.prompt.trim() && !skillGenerating.value
+  return !!skillForm.value.name.trim() && !!skillForm.value.prompt.trim()
 })
 
 async function openSkillGenerate() {
@@ -253,120 +243,39 @@ async function openSkillGenerate() {
 }
 
 function closeSkillModal() {
-  if (skillGenerating.value) return
   showSkillModal.value = false
 }
 
 async function triggerSkillGenerate() {
-  if (!canGenerateSkill.value || skillGenerating.value) return
+  if (!canGenerateSkill.value) return
 
   const petName = skillForm.value.name.trim()
   const prompt = skillForm.value.prompt.trim()
   if (!petName || !prompt) return
 
-  skillGenerating.value = true
-  skillProgressText.value = '正在连接 AI…'
-  skillLogs.value = []
-
-  const userMessage = `请使用 pet-forge 技能为我生成一个新的桌宠皮肤。
+  // 构造发送给 AI 的消息
+  const messageText = `请使用 pet-forge 技能为我生成一个新的桌宠皮肤。
 
 皮肤名称：${petName}
 外观描述：${prompt}
 
 请严格按照 pet-forge skill 的流水线流程：generate_rig → validate_rig → generate_states_batch → derive_mirrors → validate_states → pack_theme。`
 
+  // 关闭弹窗
+  closeSkillModal()
+
+  // 通过 localStorage 传递消息给聊天窗口
   try {
-    const res = await fetch(`${BACKEND_URL}/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: userMessage,
-        session_id: `skin_gen_${Date.now()}`,
-        use_mcp: false,
-      }),
-    })
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`)
-    }
-
-    const reader = res.body?.getReader()
-    if (!reader) throw new Error('无法读取流响应')
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let fullContent = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const payload = line.slice(6).trim()
-        if (!payload || payload === '[DONE]') continue
-
-        try {
-          const evt = JSON.parse(payload)
-          switch (evt.type) {
-            case 'delta':
-              fullContent += evt.content || ''
-              break
-            case 'tool_call':
-              skillProgressText.value = `正在调用: ${evt.name || '工具'}`
-              skillLogs.value.push(`🔧 调用工具: ${evt.name}`)
-              break
-            case 'tool_result':
-              const preview = (evt.content || '').slice(0, 80)
-              skillLogs.value.push(`✅ 结果: ${preview}${evt.content?.length > 80 ? '…' : ''}`)
-              break
-            case 'steps':
-              skillProgressText.value = '正在编排动作…'
-              break
-            case 'done':
-              fullContent = evt.content || fullContent
-              break
-            case 'error':
-              skillLogs.value.push(`❌ 错误: ${evt.content}`)
-              break
-          }
-        } catch {
-          // 跳过非 JSON 行
-        }
-      }
-    }
-
-    skillProgressText.value = '生成完成！'
-
-    // 解析生成结果：查找 pack_theme 输出的路径
-    const pathMatch = fullContent.match(/主题已打包到[:：]\s*(.+)/i)
-      || fullContent.match(/(\/tmp\/[^\s]+theme[^\s]*)/i)
-      || fullContent.match(/([A-Za-z]:[^\s]*theme[^\s]*)/i)
-
-    if (pathMatch) {
-      const themePath = pathMatch[1].trim()
-      message.success(`皮肤生成成功！路径: ${themePath}`)
-      skillLogs.value.push(`📦 皮肤路径: ${themePath}`)
-    } else {
-      skillLogs.value.push('📝 生成完成，查看上方内容中的输出路径')
-      message.success('皮肤生成完成！')
-    }
-
-    // 重置表单
-    skillForm.value.name = ''
-    skillForm.value.prompt = ''
-  } catch (e: any) {
-    message.error(`生成失败: ${e.message || e}`)
-    skillLogs.value.push(`❌ 失败: ${e.message || e}`)
-    skillProgressText.value = '生成失败'
-  } finally {
-    skillGenerating.value = false
+    localStorage.setItem('pendingSkinGen', JSON.stringify({
+      message: messageText,
+      ts: Date.now(),
+    }))
+  } catch (e) {
+    console.warn('[skin] 保存 pendingSkinGen 失败:', e)
   }
+
+  // 跳转到聊天页面
+  router.push('/chat')
 }
 
 // ── Codex 桌宠文件夹导入 ─────────────────────────────────────
@@ -910,48 +819,6 @@ onMounted(() => {
   font-size: 13px;
   line-height: 1.55;
   color: var(--text-secondary);
-}
-
-/* Skill 生成中进度 */
-.skill-progress {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 0;
-}
-
-.skill-progress-text {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  text-align: center;
-}
-
-.skill-logs {
-  width: 100%;
-  max-height: 160px;
-  overflow-y: auto;
-  background: var(--surface-hover);
-  border-radius: var(--radius-md, 8px);
-  padding: 10px 12px;
-  font-size: 11px;
-  font-family: monospace;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.skill-log-line {
-  word-break: break-all;
-}
-
-.skill-logs::-webkit-scrollbar {
-  width: 4px;
-}
-.skill-logs::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
 }
 
 /* ---- Scrollbar ---- */
