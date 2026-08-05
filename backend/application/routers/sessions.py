@@ -13,6 +13,7 @@ from application.state import (
     memory,
     symbix_client,
     skill_registry,
+    provider_registry,
     SDK_CONFIG_DIR,
     SESSION_INDEX_PATH,
 )
@@ -140,6 +141,14 @@ async def generate_title(req: GenerateTitleRequest):
     if not context:
         return {"status": "skipped", "reason": "无对话上下文"}
 
+    # 检查 Provider 是否可用，避免未配置 API Key 时返回 500
+    try:
+        provider = provider_registry.get_active()
+        if not provider.api_key:
+            return {"status": "skipped", "reason": "未配置 API Key"}
+    except Exception:
+        return {"status": "skipped", "reason": "Provider 未就绪"}
+
     prompt = (
         "根据以下对话内容，生成一个简短的标题（不超过 15 个字）。"
         "直接返回标题，不要带引号、标点或多余说明：\n\n" + context
@@ -163,4 +172,7 @@ async def generate_title(req: GenerateTitleRequest):
 
         return {"status": "success", "title": title}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        # 返回 200 但标记为跳过，避免前端触发 500
+        return {"status": "skipped", "reason": str(e)}

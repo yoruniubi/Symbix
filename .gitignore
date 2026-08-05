@@ -8,6 +8,8 @@ backend/Symbix_sdk/config/providers.json
 # Conversation memory / SQLite
 **/*.db
 **/*.db-journal
+**/*.db-shm
+**/*.db-wal
 **/*.sqlite
 **/*.sqlite3
 

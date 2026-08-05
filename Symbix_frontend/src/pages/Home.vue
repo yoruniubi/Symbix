@@ -154,12 +154,12 @@ const FRAME_H = 208
 // 整体略慢于原先 8fps；按动作分级，避免统一降速后“单帧停留太久”的卡顿感
 const TICKER_FPS = 80
 const STATE_FPS = {
-  idle: 6,           // 呼吸感更柔和
+  idle: 5.5,           // 呼吸感更柔和
   waving: 6.5,
   jumping: 7,
-  failed: 6.5,
+  failed: 4.5,         // 失败动作慢一点，避免太快就结束
   waiting: 6,
-  review: 6,
+  review: 4.5,
   running: 8,        // 奔跑保持更密的换帧，避免拖动时发涩
   runningRight: 8.5,
   runningLeft: 8.5,
@@ -472,7 +472,7 @@ function scheduleRandom(delayMs?: number) {
         const secondAct = secondPool[Math.floor(Math.random() * secondPool.length)]
         // 在第一个动作播完后,短暂延迟再播第二个
         const frameCount = ROWS[act].frames
-        const playTime = (frameCount / STATE_FPS[act]) * 1000
+        const playTime = (frameCount / STATE_FPS[act]) * 5000
         setTimeout(() => {
           if (currentState === 'idle' && !dragSession) {
             lastRandomAction = secondAct

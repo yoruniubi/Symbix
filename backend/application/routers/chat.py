@@ -242,10 +242,12 @@ async def chat(request: ChatRequest):
 
 @router.post("/chat/approve")
 async def chat_approve(req: ApproveRequest):
+    print(f"[APPROVE] Received approval_id={req.approval_id}, pending keys={list(_pending_approvals.keys())}")
     ctx = _pending_approvals.pop(req.approval_id, None)
     if req.system_prompt:
         symbix_client.system_prompt = req.system_prompt
     if not ctx:
+        print(f"[APPROVE] approval_id {req.approval_id} not found in pending")
         raise HTTPException(status_code=404, detail="approval not found")
 
     steps = ctx["steps"]
