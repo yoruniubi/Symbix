@@ -38,6 +38,11 @@
         @test-mcp-connection="testMcpConnection"
       />
 
+      <!-- 文件浏览器:浏览本地文件 -->
+      <FilePanel
+        :active-panel="activePanel"
+        @update:active-panel="activePanel = $event"
+      />
 
       <!-- Session List (underneath, always present) -->
       <SessionList
@@ -118,8 +123,7 @@
       :form="mcpForm"
       @update:show="showAddMcpModal = $event"
       @update:mode="mcpAddMode = $event"
-      @submit="submitInstallMcp"
-    />
+      />
 
   </div>
 </template>
@@ -128,6 +132,7 @@
 <script setup lang="ts">
 import SkillPanel from '@/components/panels/SkillPanel.vue'
 import McpPanel from '@/components/panels/McpPanel.vue'
+import FilePanel from '@/components/panels/FilePanel.vue'
 import NativeToolsPanel from '@/components/panels/NativeToolsPanel.vue'
 import ChatActivityBar from '@/components/ChatActivityBar.vue'
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
@@ -147,7 +152,6 @@ const { settings, loadSettings, saveSettings } = useSettings()
 const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙吗？', '有什么想聊的吗？', '又见面了！']
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
-
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
@@ -165,7 +169,7 @@ interface Skill {
 
 const skillList = ref<Skill[]>([])
 const skillToolList = ref<any[]>([])
-const activePanel = ref<'skill' | 'mcp' | 'native_tools' | null>(null)
+const activePanel = ref<'files' | 'skill' | 'mcp' | 'native_tools' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref('gpt-4o-mini')
 const mcpConfigData = ref<any>(null)
@@ -301,6 +305,7 @@ onMounted(async () => {
         // 过期，清理
         localStorage.removeItem('pendingSkinGen')
       }
+
     }
   } catch (e) {
     console.warn('[chat] 读取 pendingSkinGen 失败:', e)
@@ -361,7 +366,7 @@ async function refreshSkillList() {
     }
   } catch {}
 }
-async function togglePanel(panel: 'skill' | 'mcp' | 'native_tools') {
+async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools') {
   console.log('🟡 togglePanel called', panel)
   // 如果当前已经是激活状态，点击则是关闭，不需要请求
   if (activePanel.value === panel) {
@@ -601,7 +606,7 @@ async function sendMessage(text: string, files: any[]) {
     let buffer = ''
     let done = false
     const steps: any[] = []
-    const toolCallAcc: Record<number, string> = {} // index → args 累积
+    const toolCallAcc: Record<string, string> = {} // tool-call id → args 累积
 
     while (!done) {
       const { value, done: readerDone } = await reader.read()
@@ -687,7 +692,7 @@ function handleSSEEvent(
   eventType: string,
   msg: any,
   steps: any[],
-  toolCallAcc: Record<number, string>,
+  toolCallAcc: Record<string, string>,
 ) {
   const type = evt.type || eventType
 
@@ -702,18 +707,21 @@ function handleSSEEvent(
       break
 
     case 'tool_call': {
-      // 工具调用分片：增量追加参数
-      const idx = steps.length // 简单 index — 后端每个 content_block 唯一
       const id = evt.id || ''
       const name = evt.name || ''
       const argsChunk = evt.arguments || ''
-      if (!toolCallAcc[idx]) {
-        toolCallAcc[idx] = argsChunk
-        steps.push({ id, name, arguments: argsChunk, status: 'pending' })
+      // 同一工具调用的参数可能跨多个 SSE 事件,按 id 聚合。
+      const key = id || `name:${name}`
+      if (toolCallAcc[key] === undefined) toolCallAcc[key] = ''
+      toolCallAcc[key] += argsChunk
+
+      const found = steps.find((s: any) =>
+        (id && s.id === id) || (!id && s._toolKey === key),
+      )
+      if (found) {
+        found.arguments = toolCallAcc[key]
       } else {
-        toolCallAcc[idx] += argsChunk
-        const found = steps.find((s: any) => s.id === id)
-        if (found) found.arguments = toolCallAcc[idx]
+        steps.push({ id, _toolKey: key, name, arguments: toolCallAcc[key], status: 'pending' })
       }
       msg.steps = steps.map((s: any) => ({
         ...s,
@@ -745,36 +753,22 @@ function handleSSEEvent(
       break
     }
 
-    case 'steps': {
-      const backendSteps = evt.steps || []
-      msg.steps = mapBackendSteps(backendSteps, undefined)
+    case 'steps':
+      msg.steps = mapBackendSteps(evt.steps || [], undefined)
       nextTick(() => scrollToBottom())
       break
-    }
 
     case 'await_approval':
       msg.approval_id = evt.approval_id
       if (msg.steps && msg.steps.length > 0) {
-        const pendingStep = msg.steps.find((s: any) => s.name === (evt.tool?.name))
+        const pendingStep = msg.steps.find((s: any) => s.name === evt.tool?.name)
         if (pendingStep) pendingStep.status = 'awaiting_approval'
       }
       break
 
     case 'done':
-      // done 的 content 是完整文本，覆盖（防止分片遗漏）
-      if (evt.content && evt.content !== msg.content) {
-        msg.content = evt.content
-      }
+      if (evt.content && evt.content !== msg.content) msg.content = evt.content
       if (evt.reasoning) msg.reasoning = evt.reasoning
-      if (evt.tool_calls) {
-        const mapped = evt.tool_calls.map((tc: any) => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments,
-          status: 'done',
-        }))
-        msg.steps = mapped
-      }
       break
 
     case 'error':

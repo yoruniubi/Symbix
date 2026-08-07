@@ -154,7 +154,9 @@ const FRAME_H = 208
 const TICKER_FPS = 60
 // 按动作分级控制速度,避免统一降速后单帧停留太久。
 const STATE_FPS = {
-  idle: 6,
+  // idle 是持续循环的 6 帧动作;6 FPS 会让每一帧停留过久,看起来像卡顿。
+  // 提高到 10 FPS 后仍保留像素动画的节奏,但帧间过渡更连贯。
+  idle: 5.5,
   waving: 6,
   jumping: 6.5,
   failed: 4.5,

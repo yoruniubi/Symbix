@@ -133,6 +133,14 @@ export const tokens = {
   },
 } as const
 
+/** Shared layout tokens for every resizable left-side panel. */
+export const panelTokens = {
+  minWidth: 140,
+  maxWidth: 420,
+  defaultWidth: 280,
+  resizeHandleWidth: 6,
+} as const
+
 /**
  * ─────────────────────────────────────────
  * 5. Global shared style: panel-icon-btn
@@ -260,6 +268,11 @@ export function buildCssVariables(mode: ThemeMode = DEFAULT_THEME_MODE): string 
   --shadow-sm: ${h.shadowSm};
   --shadow-md: ${h.shadowMd};
   --shadow-glow: ${tokens.shadow.glow};
+
+  --panel-min-width: ${panelTokens.minWidth}px;
+  --panel-max-width: ${panelTokens.maxWidth}px;
+  --panel-default-width: ${panelTokens.defaultWidth}px;
+  --panel-resize-handle-width: ${panelTokens.resizeHandleWidth}px;
 
   --ease-standard: ${tokens.ease};
   --duration-fast: ${tokens.duration.fast};

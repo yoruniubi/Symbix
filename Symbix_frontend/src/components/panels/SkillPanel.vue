@@ -1,6 +1,7 @@
 <template>
   <transition name="panel-slide">
-    <div class="side-panel" v-if="activePanel === 'skill'">
+    <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'skill'">
+      <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
       <div class="side-panel-header">
         <span class="side-panel-title">Skill 面板</span>
         <div class="side-panel-actions">
@@ -63,8 +64,10 @@
 </template>
 
 <script setup lang="ts">
+import { useResizablePanel } from '@/composables/useResizablePanel'
+
 const props = defineProps<{
-  activePanel: 'skill' | 'mcp' | 'native_tools' | null
+  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | null
   skillList: any[]
   skillToolList: any[]
 }>()
@@ -75,6 +78,10 @@ const emit = defineEmits<{
   (e: 'removeSkill', skillName: string): void
   (e: 'refreshSkillList'): void
 }>()
+
+const { width: panelWidth, isResizing, startResize } = useResizablePanel({
+  storageKey: 'symbix-panel-width-skill',
+})
 
 function getSkillTool(skillName: string) {
   return props.skillToolList.find((t: any) => t._skill_name === skillName)
@@ -103,8 +110,8 @@ function handleRefresh() {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 280px;
-  max-width: min(280px, 42vw);
+  min-width: var(--panel-min-width);
+  max-width: min(var(--panel-max-width), 70vw);
   height: 100%;
   min-height: 0;
   background: var(--panel-bg);
@@ -115,6 +122,20 @@ function handleRefresh() {
   overflow: hidden;
   z-index: 20;
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
+}
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  right: calc(var(--panel-resize-handle-width) / -2);
+  width: var(--panel-resize-handle-width);
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+.panel-resize-handle:hover,
+.is-resizing .panel-resize-handle {
+  background: var(--accent-500);
+  opacity: 0.35;
 }
 .panel-slide-enter-active {
   transition: all var(--duration-base, 180ms) var(--ease-standard, ease);

@@ -1,6 +1,7 @@
 <template>
   <transition name="panel-slide">
-    <div class="side-panel" v-if="activePanel === 'mcp'">
+    <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'mcp'">
+      <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
       <div class="side-panel-header">
         <span class="side-panel-title">MCP 面板</span>
         <div class="side-panel-actions">
@@ -104,8 +105,10 @@
 </template>
 
 <script setup lang="ts">
+import { useResizablePanel } from '@/composables/useResizablePanel'
+
 const props = defineProps<{
-  activePanel: 'skill' | 'mcp' | 'native_tools' | null
+  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | null
   mcpServerGroups: { server_id: string; tool_count: number; tools: any[]; error?: string }[]
   mcpToolList: any[]
   expandedMcpServers: Set<string>
@@ -113,13 +116,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:activePanel', value: 'skill' | 'mcp' | 'native_tools' | null): void
+  (e: 'update:activePanel', value:'files'| 'skill' | 'mcp' | 'native_tools' | null): void
   (e: 'toggleMcpServer', serverId: string): void
   (e: 'reconnectMcp', serverId: string): void
   (e: 'removeMcp', serverId: string): void
   (e: 'testMcpConnection'): void
   (e: 'openAddChooser', kind: 'mcp'): void
 }>()
+
+const { width: panelWidth, isResizing, startResize } = useResizablePanel({
+  storageKey: 'symbix-panel-width-mcp',
+})
 
 function mcpStatusClass(serverId: string) {
   const st = props.mcpStatusMap[serverId]?.status
@@ -167,8 +174,8 @@ function handleTestMcpConnection() {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 280px;
-  max-width: min(280px, 42vw);
+  min-width: var(--panel-min-width);
+  max-width: min(var(--panel-max-width), 70vw);
   height: 100%;
   min-height: 0;
   background: var(--panel-bg);
@@ -179,6 +186,20 @@ function handleTestMcpConnection() {
   overflow: hidden;
   z-index: 20;
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
+}
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  right: calc(var(--panel-resize-handle-width) / -2);
+  width: var(--panel-resize-handle-width);
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+.panel-resize-handle:hover,
+.is-resizing .panel-resize-handle {
+  background: var(--accent-500);
+  opacity: 0.35;
 }
 .panel-slide-enter-active {
   transition: all var(--duration-base, 180ms) var(--ease-standard, ease);

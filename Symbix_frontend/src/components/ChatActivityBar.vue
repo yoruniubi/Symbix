@@ -4,7 +4,10 @@
       <n-tooltip v-for="item in panelItems" :key="item.panel" placement="right" trigger="hover">
         <template #trigger>
           <div class="activity-btn" :class="{ active: activePanel === item.panel }" @click="emit('toggle', item.panel)">
-            <svg v-if="item.panel === 'skill'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <svg v-if="item.panel === 'files'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9h18"/>
+            </svg>
+            <svg v-else-if="item.panel === 'skill'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
               <line x1="12" y1="22" x2="12" y2="15.5"/>
               <polyline points="22 8.5 12 15.5 2 8.5"/>
@@ -41,13 +44,14 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 
-type Panel = 'skill' | 'mcp' | 'native_tools'
+type Panel = 'files' | 'skill' | 'mcp' | 'native_tools'
 
 defineProps<{ activePanel: Panel | null }>()
 
 const emit = defineEmits<{ (e: 'toggle', panel: Panel): void }>()
 const router = useRouter()
 const panelItems: { panel: Panel; label: string }[] = [
+  { panel: 'files', label: '文件浏览器' },
   { panel: 'skill', label: 'Skill' },
   { panel: 'mcp', label: 'MCP' },
   { panel: 'native_tools', label: 'Native Tools' },

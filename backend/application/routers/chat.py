@@ -397,16 +397,35 @@ async def chat_approve(req: ApproveRequest):
 
     last_reasoning = ctx.get("last_reasoning")
     max_tool_rounds = 5
-    response = await symbix_client.chat_with_tool_results(
-        user_input=user_input,
-        history=history,
-        registry=skill_registry,
-        tools=mcp_tools,
-        tool_results=tool_results,
-        override_api_key=api_key,
-        override_api_base=api_base,
-        override_model=model,
-    )
+    try:
+        response = await symbix_client.chat_with_tool_results(
+            user_input=user_input,
+            history=history,
+            registry=skill_registry,
+            tools=mcp_tools,
+            tool_results=tool_results,
+            override_api_key=api_key,
+            override_api_base=api_base,
+            override_model=model,
+        )
+    except Exception as exc:
+        # 审批工具已经在上面执行过了(例如文件已经写入)。
+        # 后续模型请求失败时不能让整个审批接口返回 500,否则前端会误报
+        # “审批失败”,用户也无法区分“工具失败”和“回复生成失败”。
+        error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
+        assistant_content = error_text
+        memory.add(ctx["session_id"], "assistant", assistant_content)
+        return {
+            "status": "ok",
+            "content": assistant_content,
+            "session_id": ctx["session_id"],
+            "reasoning": last_reasoning,
+            "steps": steps,
+            "act_mode": act_mode,
+            "act_plan": act_plan,
+            "tool_executed": True,
+            "continuation_error": str(exc),
+        }
     last_reasoning = response.get("reasoning")
 
     while response.get("tool_calls") and round_count < max_tool_rounds:
@@ -474,16 +493,32 @@ async def chat_approve(req: ApproveRequest):
                 "name": fn.name,
                 "content": out,
             })
-        response = await symbix_client.chat_with_tool_results(
-            user_input=user_input,
-            history=history,
-            registry=skill_registry,
-            tools=mcp_tools,
-            tool_results=tool_results,
-            override_api_key=api_key,
-            override_api_base=api_base,
-            override_model=model,
-        )
+        try:
+            response = await symbix_client.chat_with_tool_results(
+                user_input=user_input,
+                history=history,
+                registry=skill_registry,
+                tools=mcp_tools,
+                tool_results=tool_results,
+                override_api_key=api_key,
+                override_api_base=api_base,
+                override_model=model,
+            )
+        except Exception as exc:
+            error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
+            assistant_content = error_text
+            memory.add(ctx["session_id"], "assistant", assistant_content)
+            return {
+                "status": "ok",
+                "content": assistant_content,
+                "session_id": ctx["session_id"],
+                "reasoning": last_reasoning,
+                "steps": steps,
+                "act_mode": act_mode,
+                "act_plan": act_plan,
+                "tool_executed": True,
+                "continuation_error": str(exc),
+            }
         last_reasoning = response.get("reasoning")
 
     assistant_content = response["content"]
