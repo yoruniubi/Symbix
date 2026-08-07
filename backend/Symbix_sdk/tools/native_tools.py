@@ -215,7 +215,24 @@ class NativeToolkit:
             except json.JSONDecodeError:
                 return f"[Error] Invalid JSON arguments: {arguments}"
 
+        if not isinstance(arguments, dict):
+            return f"[Error] Invalid arguments for tool '{name}': expected a JSON object"
+
         try:
+            sig = inspect.signature(func)
+            accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            if not accepts_kwargs:
+                allowed = set(sig.parameters)
+                unknown = sorted(set(arguments) - allowed)
+                if unknown:
+                    return (
+                        f"[Error] Unsupported arguments for tool '{name}': {unknown}. "
+                        f"Supported arguments: {sorted(allowed)}. "
+                        "Please retry with only supported arguments."
+                    )
             result = func(**arguments)
             return str(result) if result is not None else ""
         except Exception as e:

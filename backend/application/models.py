@@ -32,6 +32,8 @@ class ChatResponse(BaseModel):
     session_id: str
     reasoning: str = None
     steps: list = []
+    act_mode: str = "reactive"
+    act_plan: list[str] = []
 
 
 class ApproveRequest(BaseModel):

@@ -11,6 +11,7 @@ from application.state import (
     provider_registry,
     skill_registry,
     symbix_client,
+    act_mode_controller,
     tool_registry,
     APPROVAL_TOOLS,
     _pending_approvals,
@@ -158,6 +159,9 @@ async def chat(request: ChatRequest):
             )
         memory.add(request.session_id, "user", mem_msg)
         history = memory.get_compressed_history(request.session_id, recent_limit=20)
+        act_decision = act_mode_controller.decide(mem_msg, history[:-1])
+        act_mode = act_decision.judgment.mode.value
+        act_plan = act_decision.plan
 
         # 注入 RAG 记忆到 system prompt
         use_mem = getattr(request, "use_memory", True)
@@ -167,6 +171,19 @@ async def chat(request: ChatRequest):
             user_query=mem_msg,
             session_id=request.session_id,
         )
+        if act_mode == "reactive":
+            enriched_prompt += (
+                "\n\n[Act Mode: reactive]\n"
+                "直接回应当前请求,保持简洁;如果需要工具,先判断必要性再行动。"
+            )
+        else:
+            plan_text = "\n".join(f"{i}. {step}" for i, step in enumerate(act_plan, 1))
+            enriched_prompt += (
+                "\n\n[Act Mode: plan_solve]\n"
+                "请遵循以下行为计划,并在工具结果后继续检查和调整:\n"
+                f"{plan_text}\n"
+                "完成后进行简短反思,确认是否满足用户原始目标。"
+            )
         symbix_client.system_prompt = enriched_prompt
 
         # native 工具（含 emit_pet_action / 文件 / skill）始终可用；
@@ -223,6 +240,8 @@ async def chat(request: ChatRequest):
                         "steps": steps,
                         "last_reasoning": last_reasoning,
                         "round_count": round_count,
+                        "act_mode": act_mode,
+                        "act_plan": act_plan,
                         "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
                         "remaining_tcs": [
                             {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
@@ -237,6 +256,8 @@ async def chat(request: ChatRequest):
                         "content": "",
                         "reasoning": last_reasoning,
                         "steps": steps,
+                        "act_mode": act_mode,
+                        "act_plan": act_plan,
                         "pending_tool": {
                             "tool_call_id": tc.id,
                             "name": fn.name,
@@ -288,6 +309,8 @@ async def chat(request: ChatRequest):
             session_id=request.session_id,
             reasoning=last_reasoning,
             steps=steps,
+            act_mode=act_mode,
+            act_plan=act_plan,
         )
     except Exception as e:
         import traceback
@@ -313,6 +336,8 @@ async def chat_approve(req: ApproveRequest):
     api_base = ctx["api_base"]
     model = ctx["model"]
     round_count = ctx["round_count"]
+    act_mode = ctx.get("act_mode", "reactive")
+    act_plan = ctx.get("act_plan", [])
     pending_tc = ctx["pending_tc"]
     remaining_tcs = ctx["remaining_tcs"]
 
@@ -410,6 +435,8 @@ async def chat_approve(req: ApproveRequest):
                     "steps": steps,
                     "last_reasoning": last_reasoning,
                     "round_count": round_count,
+                    "act_mode": act_mode,
+                    "act_plan": act_plan,
                     "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
                     "remaining_tcs": [
                         {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
@@ -423,6 +450,8 @@ async def chat_approve(req: ApproveRequest):
                     "content": "",
                     "reasoning": last_reasoning,
                     "steps": steps,
+                    "act_mode": act_mode,
+                    "act_plan": act_plan,
                     "pending_tool": {
                         "tool_call_id": tc.id,
                         "name": fn.name,
@@ -473,6 +502,8 @@ async def chat_approve(req: ApproveRequest):
         "session_id": ctx["session_id"],
         "reasoning": last_reasoning,
         "steps": steps,
+        "act_mode": act_mode,
+        "act_plan": act_plan,
     }
 
 
@@ -498,6 +529,9 @@ async def chat_stream(request: ChatRequest):
                 )
             memory.add(request.session_id, "user", mem_msg)
             history = memory.get_compressed_history(request.session_id, recent_limit=20)
+            act_decision = act_mode_controller.decide(mem_msg, history[:-1])
+            act_mode = act_decision.judgment.mode.value
+            act_plan = act_decision.plan
 
             # 注入 RAG 记忆到 system prompt
             use_mem = getattr(request, "use_memory", True)
@@ -507,6 +541,19 @@ async def chat_stream(request: ChatRequest):
                 user_query=mem_msg,
                 session_id=request.session_id,
             )
+            if act_mode == "reactive":
+                enriched_prompt += (
+                    "\n\n[Act Mode: reactive]\n"
+                    "直接回应当前请求,保持简洁;如果需要工具,先判断必要性再行动。"
+                )
+            else:
+                plan_text = "\n".join(f"{i}. {step}" for i, step in enumerate(act_plan, 1))
+                enriched_prompt += (
+                    "\n\n[Act Mode: plan_solve]\n"
+                    "请遵循以下行为计划,并在工具结果后继续检查和调整:\n"
+                    f"{plan_text}\n"
+                    "完成后进行简短反思,确认是否满足用户原始目标。"
+                )
             symbix_client.system_prompt = enriched_prompt
 
             # native 工具始终可用；use_mcp 仅附带外部 MCP
@@ -546,27 +593,22 @@ async def chat_stream(request: ChatRequest):
                 override_model=model or None,
                 image_parts=image_parts or None,
             ):
-                for _sse in _batch_yield(
-                    event, _batcher,
-                    on_delta=lambda c: full_text.__class__(full_text)
-                ) if False else _batch_yield(event, _batcher, on_delta=lambda c: None):
-                    pass
-                # 不用干净调用：手工计数
-            def _patch():
-                pass
-                yield format_sse(event)
-
+                for _sse in _batch_yield(event, _batcher):
+                    yield _sse
                 if event["type"] == "delta":
                     full_text += event["content"]
-                elif event["type"] == "tool_call":
-                    pass
                 elif event["type"] == "done":
                     full_text = event.get("content") or full_text
                     tool_calls_raw = event.get("tool_calls")
 
+            flushed = _batcher.flush()
+            if flushed is not None:
+                yield format_sse(flushed)
+
             max_rounds = 5
             round_count = 0
             last_reasoning = None
+            attempted_tool_calls = set()
 
             while tool_calls_raw and round_count < max_rounds:
                 round_count += 1
@@ -586,6 +628,41 @@ async def chat_stream(request: ChatRequest):
                     tc_name = tc["name"]
                     tc_args = tc.get("arguments", "{}")
 
+                    try:
+                        parsed_args = (
+                            _json.loads(tc_args)
+                            if isinstance(tc_args, str) else tc_args
+                        )
+                        call_signature = (
+                            tc_name,
+                            _json.dumps(parsed_args, ensure_ascii=False, sort_keys=True),
+                        )
+                    except (TypeError, _json.JSONDecodeError):
+                        call_signature = (tc_name, str(tc_args))
+
+                    if call_signature in attempted_tool_calls:
+                        repeated_error = (
+                            f"[Error] Tool '{tc_name}' was called again with the same "
+                            "arguments. Do not retry unchanged; correct the arguments "
+                            "or explain the limitation to the user."
+                        )
+                        steps.append({
+                            "type": "tool_result",
+                            "tool_call_id": tc_id,
+                            "name": tc_name,
+                            "content": repeated_error,
+                        })
+                        yield format_sse({
+                            "type": "tool_result",
+                            "id": tc_id,
+                            "name": tc_name,
+                            "content": repeated_error,
+                        })
+                        tool_calls_raw = None
+                        full_text = full_text or repeated_error
+                        break
+                    attempted_tool_calls.add(call_signature)
+
                     if tc_name in APPROVAL_TOOLS:
                         approval_id = str(uuid.uuid4())
                         _pending_approvals[approval_id] = {
@@ -600,6 +677,8 @@ async def chat_stream(request: ChatRequest):
                             "last_reasoning": last_reasoning,
                             "round_count": round_count,
                             "full_text": full_text,
+                            "act_mode": act_mode,
+                            "act_plan": act_plan,
                             "pending_tc": {
                                 "id": tc_id,
                                 "name": tc_name,
@@ -619,6 +698,8 @@ async def chat_stream(request: ChatRequest):
                             "type": "await_approval",
                             "approval_id": approval_id,
                             "tool": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                            "act_mode": act_mode,
+                            "act_plan": act_plan,
                         })
                         yield format_sse({"type": "done", "content": full_text})
                         return
@@ -636,8 +717,14 @@ async def chat_stream(request: ChatRequest):
                         "type": "tool_result",
                         "id": tc_id,
                         "name": tc_name,
-                        "content": tool_output[:200] + ("..." if len(tool_output) > 200 else ""),
+                        # 工具结果必须完整传给前端。这里之前只发送前 200 个字符,
+                        # 会把 JSON 结果截断,看起来像被 SSE 分割成了多段。
+                        "content": tool_output,
                     })
+
+                # 已经发现完全重复的调用时,不要再把空的 tool_calls 请求发回模型。
+                if not tool_calls_raw:
+                    break
 
                 tool_results = [
                     {
@@ -730,7 +817,12 @@ async def chat_stream(request: ChatRequest):
                     full_text = full_text_round
 
             memory.add(request.session_id, "assistant", full_text)
-            yield format_sse({"type": "done", "content": full_text})
+            yield format_sse({
+                "type": "done",
+                "content": full_text,
+                "act_mode": act_mode,
+                "act_plan": act_plan,
+            })
             yield "data: [DONE]\n\n"
 
             asyncio.create_task(maybe_compress_session(
@@ -738,6 +830,11 @@ async def chat_stream(request: ChatRequest):
             asyncio.create_task(maybe_extract_memories(
                 request.session_id, api_key or "", api_base or "", model or ""))
 
+        except asyncio.CancelledError:
+            # 客户端主动中止 SSE、浏览器关闭页面或服务热重载时,Starlette 会取消
+            # 当前生成器。取消属于正常的连接生命周期事件,不要把它当成业务异常
+            # 再发送 error SSE 或打印 traceback。
+            return
         except Exception as e:
             import traceback
             traceback.print_exc()

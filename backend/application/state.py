@@ -13,6 +13,7 @@ from Symbix_sdk.mcp.connector import McpServerManager
 from Symbix_sdk.tools.registry import ToolRegistry
 from Symbix_sdk.skill.registry import SkillRegistry
 from Symbix_sdk.mcp.installer import McpInstaller
+from Symbix_sdk.act_mode import ActModeController
 
 # ============ 路径 ============
 # backend/ 目录（application 的上一级）
@@ -26,6 +27,7 @@ provider_registry = ProviderRegistry(
     config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "providers.json")
 )
 symbix_client = SymbixClient(registry=provider_registry)
+act_mode_controller = ActModeController(symbix_client)
 memory = ConversationMemory(
     db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db")
 )

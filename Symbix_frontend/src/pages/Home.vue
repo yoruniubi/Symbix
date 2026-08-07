@@ -146,24 +146,36 @@ async function snapToBottomRight() {
   } catch { /* silent */ }
 }
 
-
 // ---- PixiJS ----
 const canvasRef = ref<HTMLCanvasElement>()
 const FRAME_W = 192
 const FRAME_H = 208
-// 整体略慢于原先 8fps；按动作分级，避免统一降速后“单帧停留太久”的卡顿感
-const TICKER_FPS = 80
+// Pixi 默认 ticker 是 60Hz;动画速度应以 ticker 频率为基准,否则会出现动作忽快忽慢。
+const TICKER_FPS = 60
+// 按动作分级控制速度,避免统一降速后单帧停留太久。
 const STATE_FPS = {
-  idle: 5.5,           // 呼吸感更柔和
-  waving: 6.5,
-  jumping: 7,
-  failed: 4.5,         // 失败动作慢一点，避免太快就结束
-  waiting: 6,
+  idle: 6,
+  waving: 6,
+  jumping: 6.5,
+  failed: 4.5,
+  waiting: 5.5,
   review: 4.5,
-  running: 8,        // 奔跑保持更密的换帧，避免拖动时发涩
-  runningRight: 8.5,
-  runningLeft: 8.5,
+  running: 8,
+  runningRight: 8,
+  runningLeft: 8,
 } as const
+
+// 一次性动作播完后留一点“落地/回神”的时间,避免立刻硬切到 idle。
+const ACTION_SETTLE_MS: Partial<Record<PetState, number>> = {
+  waving: 220,
+  jumping: 320,
+  failed: 520,
+  review: 700,
+}
+// 思考先停一下再开始,让“收到任务 → 回神 → 思考”更自然。
+const ACTION_START_DELAY_MS: Partial<Record<PetState, number>> = {
+  review: 480,
+}
 
 // 标准 Petdex 8x9 spritesheet 行定义
 const ROWS = {
@@ -172,7 +184,9 @@ const ROWS = {
   runningLeft:  { row: 2, frames: 8 },
   waving:       { row: 3, frames: 4 },
   jumping:      { row: 4, frames: 5 },
-  failed:       { row: 5, frames: 8 },
+  // 原始第 7 帧已经恢复站立,放进失败动作会造成“趴下后突然起身”的跳变。
+  // 这里的 frames 是优化后的播放序列长度,不是精灵图原始帧数。
+  failed:       { row: 5, frames: 7 },
   waiting:      { row: 6, frames: 6 }, // 被抱起时循环（备用）
   running:      { row: 7, frames: 6 },
   review:       { row: 8, frames: 6 },
@@ -180,6 +194,12 @@ const ROWS = {
 
 type PetState = keyof typeof ROWS
 const LOOP_STATES: ReadonlySet<PetState> = new Set(['idle', 'waiting', 'running', 'runningRight', 'runningLeft'])
+
+// 个别动作的原图帧并非严格按时间顺序排列,允许在不修改素材的情况下重排/重复帧。
+// failed:站立 → 蹲下 → 跪地 → 趴倒,最后重复趴倒作为落地停留。
+const FRAME_SEQUENCES: Partial<Record<PetState, readonly number[]>> = {
+  failed: [0, 1, 3, 5, 6, 6, 6],
+}
 
 function animationSpeedFor(state: PetState) {
   return STATE_FPS[state] / TICKER_FPS
@@ -191,6 +211,9 @@ let sprite: AnimatedSprite | null = null
 let baseSource: TextureSource | null = null
 let currentState: PetState = 'idle'
 let randomTimer: ReturnType<typeof setTimeout> | null = null
+let actionStartTimer: ReturnType<typeof setTimeout> | null = null
+let actionSettleTimer: ReturnType<typeof setTimeout> | null = null
+let actionToken = 0
 let lastRandomAction: PetState | '' = ''
 
 /**
@@ -205,6 +228,7 @@ let suppressNextClick = false
 let lastDragX: number | null = null
 let lastDragY: number | null = null
 let dragDir: 'left' | 'right' | null = null
+let dragScaleFactor = 1
 let lastJumpTime = 0
 let unlistenMoved: (() => void) | null = null
 let dragWatchTimer: ReturnType<typeof setInterval> | null = null
@@ -250,6 +274,7 @@ function endDragSession(opts: { backToIdle: boolean; swallowClick: boolean }) {
   clearDragWatch()
   detachPointerEndListeners()
   lastDragX = null
+  lastDragY = null
   dragDir = null
   if (opts.swallowClick || dragMoved) suppressNextClick = true
   const wasRunning = isRunningState()
@@ -337,8 +362,7 @@ function startDragWatch() {
     void (async () => {
       try {
         const pos = await appWindow.outerPosition()
-        const factor = await appWindow.scaleFactor().catch(() => window.devicePixelRatio || 1)
-        if (dragSession) onDragPosition(pos.x / factor, pos.y / factor)
+        if (dragSession) onDragPosition(pos.x / dragScaleFactor, pos.y / dragScaleFactor)
       } catch {
         // ignore
       } finally {
@@ -373,9 +397,9 @@ async function ensureDragMovedListener() {
   try {
     unlistenMoved = await appWindow.onMoved(({ payload }) => {
       if (!dragSession) return
-      void appWindow.scaleFactor()
-        .then((factor) => onDragPosition(payload.x / factor))
-        .catch(() => onDragPosition(payload.x / (window.devicePixelRatio || 1)))
+      // 拖动期间不要每个窗口位移事件都异步查询 scaleFactor；复用会话开始时
+      // 缓存的比例，避免事件堆积导致方向判断和动画切换一卡一卡。
+      onDragPosition(payload.x / dragScaleFactor)
     })
   } catch (e) {
     console.warn('onMoved listen failed:', e)
@@ -394,9 +418,11 @@ async function onCanvasMousedown(e: MouseEvent) {
   suppressNextClick = false
   dragDir = null
   lastDragX = null
+  lastDragY = null
   sessionStartAt = performance.now()
   lastMoveAt = sessionStartAt
 
+  dragScaleFactor = await appWindow.scaleFactor().catch(() => window.devicePixelRatio || 1)
   await ensureDragMovedListener()
   attachPointerEndListeners()
   startDragWatch()
@@ -413,16 +439,26 @@ async function onCanvasMousedown(e: MouseEvent) {
 
 
 
-function getFrames(source: TextureSource, row: number, frameCount: number) {
+function getFrames(
+  source: TextureSource,
+  row: number,
+  frameCount: number,
+  frameIndices?: readonly number[],
+) {
   return Array.from({ length: frameCount }, (_, i) =>
     new Texture({
       source: source as TextureSource,
-      frame: new Rectangle(i * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H),
+      frame: new Rectangle(
+        (frameIndices?.[i] ?? i) * FRAME_W,
+        row * FRAME_H,
+        FRAME_W,
+        FRAME_H,
+      ),
     })
   )
 }
 
-function playState(state: PetState, returnToIdle = true) {
+function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
   if (!sprite || !baseSource) return
   // 同一循环动作不要重开，否则拖拽中反复 set textures 会看起来只闪一帧
   if (state === currentState && LOOP_STATES.has(state) && sprite.playing) {
@@ -430,19 +466,64 @@ function playState(state: PetState, returnToIdle = true) {
   }
   currentState = state
   const def = ROWS[state]
-  sprite.textures = getFrames(baseSource as TextureSource, def.row, def.frames)
+  sprite.textures = getFrames(
+    baseSource as TextureSource,
+    def.row,
+    def.frames,
+    FRAME_SEQUENCES[state],
+  )
   sprite.animationSpeed = animationSpeedFor(state)
   sprite.loop = LOOP_STATES.has(state)
-
+  // 清掉上一个一次性动作的回调，避免旧动作完成时抢先把新动作切回 idle。
   sprite.onComplete = undefined
+  // 更换 textures 后显式从第 0 帧开始播放。仅设置 textures 不保证 Pixi
+  // 在所有版本/场景下仍会继续推进帧，尤其是上一个动作刚刚结束时。
   sprite.gotoAndPlay(0)
+
   if (returnToIdle && !sprite.loop) {
     const playing = state
     sprite.onComplete = () => {
-      // 仅当仍是本次动作时回 idle，避免被后续状态覆盖后误切
-      if (currentState === playing) playState('idle', false)
+      // 仅当仍是本次动作时回 idle,并留出一个短暂的自然停顿。
+      if (currentState !== playing || token !== actionToken) return
+      const settleMs = ACTION_SETTLE_MS[playing] ?? 0
+      actionSettleTimer = setTimeout(() => {
+        actionSettleTimer = null
+        if (currentState === playing && token === actionToken) playState('idle', false)
+      }, settleMs)
     }
   }
+}
+
+function playState(state: PetState, returnToIdle = true) {
+  if (!sprite || !baseSource) return
+  const token = ++actionToken
+  if (actionStartTimer) {
+    clearTimeout(actionStartTimer)
+    actionStartTimer = null
+  }
+  if (actionSettleTimer) {
+    clearTimeout(actionSettleTimer)
+    actionSettleTimer = null
+  }
+
+  const delay = ACTION_START_DELAY_MS[state] ?? 0
+  if (delay > 0 && state !== currentState) {
+    // 思考前保持 idle,但不重置 idle 的当前帧,避免突然闪回第一帧。
+    if (!LOOP_STATES.has(currentState)) {
+      currentState = 'idle'
+      const idleDef = ROWS.idle
+      sprite.textures = getFrames(baseSource as TextureSource, idleDef.row, idleDef.frames)
+      sprite.animationSpeed = animationSpeedFor('idle')
+      sprite.loop = true
+      sprite.play()
+    }
+    actionStartTimer = setTimeout(() => {
+      actionStartTimer = null
+      if (token === actionToken) playStateNow(state, returnToIdle, token)
+    }, delay)
+    return
+  }
+  playStateNow(state, returnToIdle, token)
 }
 
 function pickRandomAction(actions: readonly PetState[], exclude?: string): PetState {
@@ -472,13 +553,13 @@ function scheduleRandom(delayMs?: number) {
         const secondAct = secondPool[Math.floor(Math.random() * secondPool.length)]
         // 在第一个动作播完后,短暂延迟再播第二个
         const frameCount = ROWS[act].frames
-        const playTime = (frameCount / STATE_FPS[act]) * 5000
+        const playTime = (frameCount / STATE_FPS[act]) * 1000
         setTimeout(() => {
           if (currentState === 'idle' && !dragSession) {
             lastRandomAction = secondAct
             playState(secondAct)
           }
-        }, playTime + 200)
+        }, playTime + (ACTION_SETTLE_MS[act] ?? 0) + (ACTION_START_DELAY_MS[secondAct] ?? 0) + 120)
       }
     }
     // 随机间隔 3~9 秒,比之前更紧凑
