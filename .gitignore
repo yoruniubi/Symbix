@@ -14,6 +14,7 @@ backend/Symbix_sdk/config/providers.json
 **/*.sqlite3
 
 # Chat exports & uploads
+backend/Symbix_sdk/skill/installed_skills/
 backend/Symbix_sdk/config/history_list/
 backend/uploads/
 uploads/

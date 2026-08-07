@@ -18,8 +18,8 @@ from application.pet_action import LOOP_ACTIONS, SSE_SHUTDOWN, normalize_pet_act
 _PUBLIC_PET_DIR = Path(os.environ.get("PET_PUBLIC_DIR", "../Symbix_frontend/public/pet")).resolve()
 
 # pet-forge 脚本目录
-# pet.py 在 backend/application/routers/，脚本在 backend/Symbix_sdk/skill/installed_skill/pet-forge/scripts/
-_PET_FORGE_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "Symbix_sdk" / "skill" / "installed_skill" / "pet-forge" / "scripts"
+# pet.py 在 backend/application/routers/,脚本在 backend/Symbix_sdk/skill/installed_skills/pet-forge/scripts/
+_PET_FORGE_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "Symbix_sdk" / "skill" / "installed_skills" / "pet-forge" / "scripts"
 if str(_PET_FORGE_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_PET_FORGE_SCRIPTS))
 
@@ -445,6 +445,3 @@ async def pet_import_folder(
         "files_saved": saved_count,
         "message": f"皮肤文件夹 '{folder_name}' 导入成功",
     }
-
-
-

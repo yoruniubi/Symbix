@@ -135,7 +135,7 @@ class SymbixClient:
         # Skill 创建路径规则：始终注入，确保 agent 写入正确目录
         system += (
             "\n\n## Skill 创建规则（必须遵守）\n"
-            "- 创建新 skill 时，**必须**写入目录：`backend/Symbix_sdk/skill/installed_skill/<skill-name>/`\n"
+            "- 创建新 skill 时,**必须**写入目录:`backend/Symbix_sdk/skill/installed_skills/<skill-name>/`\n"
             "- **优先使用 `create_skill` 工具**生成完整骨架（SKILL.md + agents/scripts/references/assets），"
             "不要在其他路径手动建目录\n"
             "- skill 名称使用英文小写 + 连字符（如 `pdf-helper`）；"

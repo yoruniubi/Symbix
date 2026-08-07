@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "validate:chat-window": "node scripts/validate-chat-window.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -58,13 +58,13 @@ def _run_create_skill_skeleton(
     try:
         import importlib.util
 
-        # 本文件位于 tools/，目标脚本在 skill/installed_skill/skill-creator/scripts/init_skill.py
+        # 本文件位于 tools/,目标脚本在 skill/installed_skills/skill-creator/scripts/init_skill.py
         _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
         init_path = os.path.join(
             _TOOLS_DIR,
             "..",
             "skill",
-            "installed_skill",
+            "installed_skills",
             "skill-creator",
             "scripts",
             "init_skill.py",
@@ -191,13 +191,13 @@ def create_skill(
     _default_skills_dir: str = ".",
     _on_skill_created=None,  # callback: fn() to re-register skills after creation
 ) -> str:
-    """在 installed_skill/ 下创建完整 skill 骨架（类似 MCP installer）
+    """在 installed_skills/ 下创建完整 skill 骨架(类似 MCP installer)
 
     优先委托 skill-creator/scripts/init_skill.py 的 create_skill_skeleton，
     保证 CLI 与 native tool 使用同一套模板逻辑。
 
     目录结构:
-        installed_skill/<skill_name>/
+        installed_skills/<skill_name>/
         ├── SKILL.md
         ├── agents/
         ├── scripts/
@@ -303,7 +303,7 @@ SKILL_TOOLS_SCHEMAS = {
     "create_skill": {
         "func": create_skill,
         "description": (
-            "创建新的 Agent Skill 骨架，写入 installed_skill/<skill_name>/ 目录。"
+            "创建新的 Agent Skill 骨架,写入 installed_skills/<skill_name>/ 目录。"
             "当用户要求创建 skill、生成技能模板、或 skill-creator 工作流需要初始化目录时调用。"
             "会自动生成 SKILL.md（含 frontmatter）以及 agents/、scripts/、references/、assets/ 子目录，"
             "并在创建后热加载注册。请勿在其他路径手动创建 skill。"

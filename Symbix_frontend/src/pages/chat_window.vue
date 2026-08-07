@@ -2,259 +2,42 @@
   <div class="layout">
     <TitleBar />
 
-    <!-- VSCode-style Activity Bar -->
-    <div class="activity-bar">
-      <div class="activity-bar-top">
-        <n-tooltip placement="right" trigger="hover">
-          <template #trigger>
-            <div class="activity-btn" :class="{ active: activePanel === 'skill' }" @click="togglePanel('skill')">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"></polygon>
-                <line x1="12" y1="22" x2="12" y2="15.5"></line>
-                <polyline points="22 8.5 12 15.5 2 8.5"></polyline>
-              </svg>
-            </div>
-          </template>
-          Skill
-        </n-tooltip>
-        <n-tooltip placement="right" trigger="hover">
-          <template #trigger>
-            <div class="activity-btn" :class="{ active: activePanel === 'mcp' }" @click="togglePanel('mcp')">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-                <line x1="6" y1="6" x2="6.01" y2="6"></line>
-                <line x1="6" y1="18" x2="6.01" y2="18"></line>
-              </svg>
-            </div>
-          </template>
-          MCP
-        </n-tooltip>
-        <n-tooltip placement="right" trigger="hover">
-          <template #trigger>
-            <div class="activity-btn" :class="{ active: activePanel === 'native_tools' }" @click="togglePanel('native_tools')">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-              </svg>
-            </div>
-          </template>
-          Native Tools
-        </n-tooltip>
-      </div>
-      <div class="activity-bar-bottom">
-        <n-tooltip placement="right" trigger="hover">
-          <template #trigger>
-            <div class="activity-btn" @click="$router.push('/model_setting')">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-            </div>
-          </template>
-          模型设置
-        </n-tooltip>
-      </div>
-    </div>
-
-    <!-- Sidebar Area: panels overlay the session list -->
+    <ChatActivityBar
+      :active-panel="activePanel"
+      @toggle="togglePanel"
+    />
     <div class="sidebar-container">
       <!-- Skill Panel -->
-      <transition name="panel-slide">
-        <div class="side-panel" v-if="activePanel === 'skill'">
-          <div class="side-panel-header">
-            <span class="side-panel-title">Skill 面板</span>
-            <div class="side-panel-actions">
-              <n-button size="tiny" type="primary" class="add-entry-btn" @click="openAddChooser('skill')">
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                  </svg>
-                </template>
-                添加
-              </n-button>
-              <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-              </n-button>
-            </div>
+      <SkillPanel
+        :active-panel="activePanel"
+        :skill-list="skillList"
+        :skill-tool-list="skillToolList"
+        @update:active-panel="activePanel = $event"
+        @open-add-chooser="openAddChooser"
+        @remove-skill="removeSkill"
+        @refresh-skill-list="refreshSkillList"
+      />
 
-          </div>
-          <div class="side-panel-body">
-            <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill（{{ skillToolList.length }} 个工具）</n-text>
-            <div v-for="skill in skillList" :key="skill.name" class="skill-card">
-              <div class="skill-card-head">
-                <div class="skill-card-info">
-                  <div class="skill-card-name">{{ skill.display_name || skill.name }}</div>
-                  <div class="skill-card-desc">{{ skill.description }}</div>
-                  <div v-if="getSkillTool(skill.name)" class="skill-card-tool">
-                    🔧 工具: skill__{{ skill.name }}
-                  </div>
-                </div>
-                <n-button
-                  size="small"
-                  quaternary
-                  type="error"
-                  class="panel-icon-btn"
-                  title="删除 Skill"
-                  @click="removeSkill(skill.name)"
-                >
-                  <template #icon>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                      <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-                    </svg>
-                  </template>
-                </n-button>
-              </div>
-            </div>
+      <NativeToolsPanel
+        :active-panel="activePanel"
+        :native-tool-list="nativeToolList"
+        @update:active-panel="activePanel = $event"
+      />
 
-            <n-empty v-if="skillList.length === 0" description="暂无 Skill" size="small" style="margin-top:20px;" />
-          </div>
-          <div class="side-panel-footer">
-            <n-button size="medium" secondary block class="panel-footer-btn" @click="refreshSkillList">
-              <template #icon>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                </svg>
-              </template>
-              刷新列表
-            </n-button>
-          </div>
+      <McpPanel
+        :active-panel="activePanel"
+        :mcp-server-groups="mcpServerGroups"
+        :mcp-tool-list="mcpToolList"
+        :expanded-mcp-servers="expandedMcpServers"
+        :mcp-status-map="mcpStatusMap"
+        @update:active-panel="activePanel = $event"
+        @open-add-chooser="openAddChooser"
+        @toggle-mcp-server="toggleMcpServer"
+        @reconnect-mcp="reconnectMcp"
+        @remove-mcp="removeMcp"
+        @test-mcp-connection="testMcpConnection"
+      />
 
-        </div>
-      </transition>
-
-
-      <!-- Native Tools Panel -->
-      <transition name="panel-slide">
-        <div class="side-panel" v-if="activePanel === 'native_tools'">
-          <div class="side-panel-header">
-            <span class="side-panel-title">Native Tools 面板</span>
-            <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-            </n-button>
-          </div>
-          <div class="side-panel-body">
-            <n-text depth="3" style="font-size:13px;">已注册 {{ nativeToolList.length }} 个内置工具</n-text>
-            <div v-for="tool in nativeToolList" :key="tool.function.name" class="mcp-tool-item">
-              <div class="mcp-tool-name">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                </svg>
-                {{ tool.function.name }}
-              </div>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
-            </div>
-            <n-empty v-if="nativeToolList.length === 0" description="暂无内置工具" size="small" style="margin-top:20px;" />
-          </div>
-        </div>
-      </transition>
-
-      <!-- MCP Panel -->
-      <transition name="panel-slide">
-        <div class="side-panel" v-if="activePanel === 'mcp'">
-          <div class="side-panel-header">
-            <span class="side-panel-title">MCP 面板</span>
-            <div class="side-panel-actions">
-              <n-button size="tiny" type="primary" class="add-entry-btn" @click="openAddChooser('mcp')">
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                  </svg>
-                </template>
-                添加
-              </n-button>
-              <n-button text size="tiny" @click="activePanel = null" class="close-btn">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-              </n-button>
-            </div>
-
-          </div>
-
-          <div class="side-panel-body">
-            <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-              {{ mcpServerGroups.length }} 个 Server · {{ mcpToolList.length }} 个工具
-            </div>
-            <!-- 每组一个可折叠 Server -->
-            <div v-for="group in mcpServerGroups" :key="group.server_id" class="mcp-server-card">
-              <div class="mcp-server-group-header">
-                <div class="mcp-server-title" @click="toggleMcpServer(group.server_id)">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    class="mcp-expand-icon"
-                    :style="{ transform: expandedMcpServers.has(group.server_id) ? 'rotate(90deg)' : 'rotate(0deg)' }"
-                  >
-                    <polygon points="9,5 18,12 9,19"/>
-                  </svg>
-                  <span class="mcp-server-name">{{ group.server_id }}</span>
-                  <span class="mcp-status-dot" :class="mcpStatusClass(group.server_id)" :title="mcpStatusLabel(group.server_id)"></span>
-                  <span class="mcp-tool-count">{{ group.tool_count }} 工具</span>
-                </div>
-                <div class="mcp-server-ops" @click.stop>
-                  <n-button
-                    size="small"
-                    quaternary
-                    class="panel-icon-btn"
-                    title="重连"
-                    @click="reconnectMcp(group.server_id)"
-                  >
-                    <template #icon>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                      </svg>
-                    </template>
-                  </n-button>
-                  <n-button
-                    size="small"
-                    quaternary
-                    type="error"
-                    class="panel-icon-btn"
-                    title="删除"
-                    @click="removeMcp(group.server_id)"
-                  >
-                    <template #icon>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-                      </svg>
-                    </template>
-                  </n-button>
-                </div>
-              </div>
-
-              <div v-if="expandedMcpServers.has(group.server_id)" class="mcp-server-tools">
-                <div v-if="group.error" class="mcp-server-error">⚠ {{ group.error }}</div>
-                <div v-else v-for="tool in group.tools" :key="tool.function.name" class="mcp-tool-item">
-                  <div class="mcp-tool-name">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
-                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                    </svg>
-                    {{ tool.function.name }}
-                  </div>
-                  <div class="mcp-tool-desc">{{ tool.function.description }}</div>
-                </div>
-              </div>
-            </div>
-            <n-empty v-if="mcpServerGroups.length === 0" description="未连接任何 MCP Server" size="small" style="margin-top:20px;" />
-          </div>
-          <div class="side-panel-footer">
-            <n-button size="medium" secondary block class="panel-footer-btn" @click="testMcpConnection">
-              <template #icon>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                  <polyline points="22 4 12 14.01 9 11.01"/>
-                </svg>
-              </template>
-              测试连接
-            </n-button>
-          </div>
-
-        </div>
-      </transition>
 
       <!-- Session List (underneath, always present) -->
       <SessionList
@@ -270,32 +53,11 @@
     <!-- Main Chat Area -->
     <div class="chat-area">
       <!-- Welcome Screen -->
-      <div class="greeting" v-if="messages.length === 0">
-        <div class="greeting-icon">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-            <line x1="9" y1="9" x2="9.01" y2="9"/>
-            <line x1="15" y1="9" x2="15.01" y2="9"/>
-          </svg>
-        </div>
-        <h2 class="greeting-title">{{ greeting }}</h2>
-        <p class="greeting-sub">Symbix Agent 随时为你服务</p>
-        <div class="quick-actions">
-          <n-button text class="quick-action" @click="sendQuick('帮我写一段代码')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            帮我写一段代码
-          </n-button>
-          <n-button text class="quick-action" @click="sendQuick('解释一个概念')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            解释一个概念
-          </n-button>
-          <n-button text class="quick-action" @click="sendQuick('给我一些灵感')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            给我一些灵感
-          </n-button>
-        </div>
-      </div>
+      <ChatWelcome
+        v-if="messages.length === 0"
+        :greeting="greeting"
+        @quick-send="sendQuick"
+      />
 
       <!-- Message List -->
       <div class="message-list" ref="messageListRef" v-else>
@@ -338,132 +100,48 @@
     </div>
 
     <!-- 添加 Skill 弹窗：GitHub 安装 / 自定义创建 -->
-    <n-modal
-      v-model:show="showAddSkillModal"
-      preset="card"
-      title="添加 Skill"
-      style="width: 480px; max-width: 94vw;"
-      :bordered="false"
-      class="add-modal"
-    >
-      <n-tabs v-model:value="skillAddMode" type="segment" size="small" style="margin-bottom: 12px;">
-        <n-tab-pane name="github" tab="从 GitHub 安装" />
-        <n-tab-pane name="custom" tab="自定义创建" />
-      </n-tabs>
-      <n-form label-placement="top" size="small">
-        <template v-if="skillAddMode === 'github'">
-          <n-form-item label="GitHub 仓库" required>
-            <n-input v-model:value="skillForm.repo_url" placeholder="owner/repo 或 https://github.com/owner/repo" />
-          </n-form-item>
-          <n-form-item label="Skill 名称（可选，仓库有多个时指定）">
-            <n-input v-model:value="skillForm.skill_name" placeholder="例如 my-helper" />
-          </n-form-item>
-          <n-form-item label="分支（可选）">
-            <n-input v-model:value="skillForm.branch" placeholder="默认 main/master" />
-          </n-form-item>
-          <n-form-item label="覆盖已存在">
-            <n-switch v-model:value="skillForm.overwrite" />
-          </n-form-item>
-        </template>
-        <template v-else>
-          <n-form-item label="Skill 名称（小写-连字符）" required>
-            <n-input v-model:value="skillForm.skill_name" placeholder="例如 my-helper" />
-          </n-form-item>
-          <n-form-item label="显示名称">
-            <n-input v-model:value="skillForm.display_name" placeholder="例如 我的助手" />
-          </n-form-item>
-          <n-form-item label="描述">
-            <n-input v-model:value="skillForm.description" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="简要说明用途" />
-          </n-form-item>
-          <n-form-item label="用途（可选）">
-            <n-input v-model:value="skillForm.purpose" type="textarea" :autosize="{ minRows: 2, maxRows: 3 }" />
-          </n-form-item>
-          <n-form-item label="指令（可选）">
-            <n-input v-model:value="skillForm.instructions" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-          </n-form-item>
-        </template>
-      </n-form>
-      <template #footer>
-        <n-space justify="end">
-          <n-button @click="showAddSkillModal = false">取消</n-button>
-          <n-button type="primary" :loading="creatingSkill" @click="submitCreateSkill">
-            {{ skillAddMode === 'github' ? '安装' : '创建' }}
-          </n-button>
-        </n-space>
-      </template>
-    </n-modal>
+    <AddSkillModal
+      :show="showAddSkillModal"
+      :creating="creatingSkill"
+      :mode="skillAddMode"
+      :form="skillForm"
+      @update:show="showAddSkillModal = $event"
+      @update:mode="skillAddMode = $event"
+      @submit="submitCreateSkill"
+    />
 
     <!-- 添加 MCP 弹窗：远程 URL / 本地 npm -->
-    <n-modal
-      v-model:show="showAddMcpModal"
-      preset="card"
-      title="添加 MCP Server"
-      style="width: 480px; max-width: 94vw;"
-      :bordered="false"
-      class="add-modal"
-    >
-      <n-tabs v-model:value="mcpAddMode" type="segment" size="small" style="margin-bottom: 12px;">
-        <n-tab-pane name="remote" tab="远程 URL" />
-        <n-tab-pane name="npm" tab="本地 npm" />
-      </n-tabs>
-      <n-form label-placement="top" size="small">
-        <n-form-item label="Server ID" required>
-          <n-input v-model:value="mcpForm.server_id" placeholder="例如 context7 / playwright" />
-        </n-form-item>
-        <template v-if="mcpAddMode === 'remote'">
-          <n-form-item label="远程 URL" required>
-            <n-input v-model:value="mcpForm.url" placeholder="https://.../sse 或 /mcp" />
-          </n-form-item>
-          <n-form-item label="Transport">
-            <n-select
-              v-model:value="mcpForm.transport"
-              :options="[{ label: 'SSE', value: 'sse' }, { label: 'Streamable HTTP', value: 'streamable_http' }]"
-            />
-          </n-form-item>
-          <n-form-item label="Headers JSON（可选）">
-            <n-input
-              v-model:value="mcpForm.headersText"
-              type="textarea"
-              :autosize="{ minRows: 2, maxRows: 4 }"
-              placeholder='{"Authorization":"Bearer xxx"}'
-            />
-          </n-form-item>
-        </template>
-        <template v-else>
-          <n-form-item label="npm 包名" required>
-            <n-input v-model:value="mcpForm.package_name" placeholder="例如 @playwright/mcp@latest" />
-          </n-form-item>
-          <n-form-item label="额外参数（空格分隔，可选）">
-            <n-input v-model:value="mcpForm.argsText" placeholder="例如 --headless" />
-          </n-form-item>
-        </template>
-      </n-form>
-      <template #footer>
-        <n-space justify="end">
-          <n-button @click="showAddMcpModal = false">取消</n-button>
-          <n-button type="primary" :loading="installingMcp" @click="submitInstallMcp">
-            {{ mcpAddMode === 'remote' ? '连接' : '安装' }}
-          </n-button>
-        </n-space>
-      </template>
-    </n-modal>
+    <AddMcpModal
+      :show="showAddMcpModal"
+      :installing="installingMcp"
+      :mode="mcpAddMode"
+      :form="mcpForm"
+      @update:show="showAddMcpModal = $event"
+      @update:mode="mcpAddMode = $event"
+      @submit="submitInstallMcp"
+    />
 
   </div>
 </template>
 
 
 <script setup lang="ts">
+import SkillPanel from '@/components/panels/SkillPanel.vue'
+import McpPanel from '@/components/panels/McpPanel.vue'
+import NativeToolsPanel from '@/components/panels/NativeToolsPanel.vue'
+import ChatActivityBar from '@/components/ChatActivityBar.vue'
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
 import SessionList from '@/components/SessionList.vue'
 import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import ChatWelcome from '@/components/ChatWelcome.vue'
+import AddSkillModal from '@/components/AddSkillModal.vue'
+import AddMcpModal from '@/components/AddMcpModal.vue'
 import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
 import { fetch } from '@tauri-apps/plugin-http'
-const router = useRouter()
 const messageUi = useMessage()
 const { settings, loadSettings, saveSettings } = useSettings()
 const { fetchModels, chatCompletion } = useApiClient()
@@ -534,20 +212,6 @@ function openAddChooser(kind: 'skill' | 'mcp') {
   }
 }
 
-function mcpStatusClass(serverId: string) {
-  const st = mcpStatusMap.value[serverId]?.status
-  if (st === 'connected') return 'ok'
-  if (st === 'error') return 'err'
-  return 'off'
-}
-
-function mcpStatusLabel(serverId: string) {
-  const info = mcpStatusMap.value[serverId]
-  if (!info) return '未知'
-  if (info.status === 'connected') return `已连接 · ${info.tools_count ?? 0} 工具`
-  if (info.status === 'error') return info.error || '错误'
-  return info.status || '未连接'
-}
 
 async function refreshMcpStatus() {
   try {
@@ -670,9 +334,6 @@ async function testMcpConnection() {
 }
 
 
-function getSkillTool(skillName: string): any {
-  return skillToolList.value.find((t: any) => t._skill_name === skillName)
-}
 
 async function refreshSkillList() {
   try {
@@ -1448,66 +1109,6 @@ function scrollToBottom() {
 }
 
 
-/* ---- Activity Bar (VSCode-style) ---- */
-.activity-bar {
-  width: 48px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 0;
-  background: var(--activity-bar-bg);
-  backdrop-filter: blur(12px);
-  border-right: 1px solid var(--border);
-  flex-shrink: 0;
-  z-index: 10;
-}
-.activity-bar-top {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-.activity-bar-bottom {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin-top: auto;
-  padding-bottom: 8px;
-}
-.activity-btn {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md, 8px);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
-  position: relative;
-  transform: translateY(-15px);
-}
-.activity-btn:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-.activity-btn.active {
-  color: var(--accent-500, #EF6B6E);
-  background: var(--accent-soft);
-}
-.activity-btn.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 2px;
-  background: var(--symbix-gradient-soft, linear-gradient(135deg, #F7A85B 0%, #E85C93 100%));
-  border-radius: 0 2px 2px 0;
-}
-
 /* ---- Sidebar Container ---- */
 .sidebar-container {
   position: relative;
@@ -1516,297 +1117,6 @@ function scrollToBottom() {
   min-height: 0;
   align-self: stretch;
 }
-
-
-/* ---- Side Panel (Skill / MCP) ---- */
-.side-panel {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 280px;
-  max-width: min(280px, 42vw);
-  height: 100%;
-  min-height: 0;
-  background: var(--panel-bg);
-  backdrop-filter: blur(16px);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 20;
-  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
-}
-
-
-/* Panel slide transition */
-.panel-slide-enter-active {
-  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
-}
-.panel-slide-leave-active {
-  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
-}
-.panel-slide-enter-from {
-  opacity: 0;
-  transform: translateX(-20px);
-}
-.panel-slide-leave-to {
-  opacity: 0;
-  transform: translateX(-12px);
-}
-.side-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-
-.side-panel-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.side-panel-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.add-entry-btn {
-  font-weight: 600 !important;
-}
-.skill-card {
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--surface-hover);
-  border: 1px solid transparent;
-  transition: border-color var(--duration-fast, 120ms) ease, background var(--duration-fast, 120ms) ease;
-}
-.skill-card:hover {
-  border-color: var(--border);
-  background: var(--bg-elevated, var(--surface-hover));
-}
-.skill-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-.skill-card-info {
-  flex: 1;
-  min-width: 0;
-}
-.skill-card-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.35;
-  word-break: break-word;
-}
-.skill-card-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-.skill-card-tool {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--accent-300);
-  padding-left: 2px;
-}
-.panel-icon-btn {
-  width: 32px !important;
-  height: 32px !important;
-  min-width: 32px !important;
-  padding: 0 !important;
-  border-radius: 8px !important;
-  flex-shrink: 0;
-}
-.panel-icon-btn :deep(.n-button__icon) {
-  margin: 0 !important;
-}
-.panel-footer-btn {
-  height: 36px !important;
-  font-weight: 600 !important;
-  white-space: nowrap;
-}
-.panel-footer-btn :deep(.n-button__content) {
-  white-space: nowrap;
-}
-
-.mcp-server-card {
-  margin-bottom: 10px;
-}
-.mcp-server-group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 10px 10px 12px;
-  border-radius: var(--radius-md, 8px);
-  background: var(--accent-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  user-select: none;
-}
-.mcp-server-title {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-  cursor: pointer;
-  gap: 4px;
-}
-.mcp-expand-icon {
-  flex-shrink: 0;
-  transition: transform 0.15s ease;
-  opacity: 0.75;
-}
-.mcp-server-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 110px;
-}
-.mcp-tool-count {
-  font-size: 11px;
-  color: var(--accent-300);
-  margin-left: auto;
-  flex-shrink: 0;
-  padding-right: 2px;
-}
-.mcp-server-ops {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.mcp-server-tools {
-  padding: 6px 4px 2px 14px;
-}
-.mcp-server-error {
-  font-size: 12px;
-  color: var(--error, #ef4444);
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(239, 68, 68, 0.08);
-}
-.mcp-tool-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  padding-left: 20px;
-  line-height: 1.4;
-}
-.mcp-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-left: 4px;
-  background: #888;
-  flex-shrink: 0;
-}
-.mcp-status-dot.ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.55); }
-.mcp-status-dot.err { background: #ef4444; }
-.mcp-status-dot.off { background: #9ca3af; }
-.close-btn {
-  color: var(--text-muted) !important;
-}
-.close-btn:hover {
-  color: var(--text-secondary) !important;
-}
-
-
-
-.side-panel-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 16px 16px 20px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-
-.side-panel-body:hover {
-  scrollbar-color: var(--scrollbar) transparent;
-}
-.side-panel-body::-webkit-scrollbar {
-  width: 4px;
-}
-.side-panel-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-.side-panel-body::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 4px;
-}
-.side-panel-body:hover::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-}
-.side-panel-body::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-hover);
-}
-.mcp-tool-item {
-  margin-top: 8px;
-  padding: 8px;
-  border-radius: var(--radius-md);
-  background: var(--surface-hover);
-  border: 1px solid transparent;
-}
-.mcp-tool-name {
-  font-size: 13px;
-  color: var(--accent-300, #F7A85B);
-  display: flex;
-  align-items: flex-start;
-  gap: 2px;
-  line-height: 1.35;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-.mcp-tool-item > div:last-child {
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  line-height: 1.4;
-}
-
-.mcp-server-group-header {
-  transition: background var(--duration-fast) ease;
-}
-.mcp-server-group-header:hover {
-  background: var(--accent-soft-hover);
-}
-
-
-
-/* ---- Side Panel Footer (固定底部按钮区) ---- */
-.side-panel-footer {
-  flex: 0 0 auto;
-  flex-shrink: 0;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid var(--border);
-  background: var(--panel-bg);
-  z-index: 1;
-}
-.panel-footer-btn {
-  height: 36px !important;
-  font-weight: 600 !important;
-  white-space: nowrap;
-}
-.panel-footer-btn :deep(.n-button__content) {
-  white-space: nowrap;
-}
-
 
 
 /* ---- Chat Area ---- */
@@ -1828,74 +1138,6 @@ function scrollToBottom() {
   z-index: 2;
 }
 
-
-/* ---- Welcome / Greeting ---- */
-.greeting {
-  text-align: center;
-  margin: auto;
-  padding-bottom: 24px;
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  animation: fadeUp 0.5s var(--ease-standard, ease);
-}
-
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.greeting-icon {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 20px;
-  color: var(--accent-500, #EF6B6E);
-}
-.greeting-title {
-  font-size: 24px;
-  font-weight: 600;
-  background: var(--symbix-gradient, linear-gradient(135deg, #F7A85B 0%, #F2657A 55%, #E85C93 100%));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin: 0 0 8px;
-}
-.greeting-sub {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0 0 32px;
-}
-.quick-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.quick-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px !important;
-  border-radius: var(--radius-full) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text-secondary) !important;
-  font-size: 13px !important;
-  transition: all var(--duration-base) var(--ease-standard);
-}
-.quick-action:hover {
-  border-color: var(--accent-border) !important;
-  color: var(--text-primary) !important;
-  background: var(--accent-soft) !important;
-  transform: translateY(-1px);
-}
 
 /* ---- Message List ---- */
 .message-list {

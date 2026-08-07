@@ -92,7 +92,7 @@ async def delete_skill(skill_name: str):
 async def create_skill(req: CreateSkillRequest):
     """创建 skill 骨架目录"""
     try:
-        from Symbix_sdk.skill.installed_skill.skill_creator_scripts import (  # type: ignore
+        from Symbix_sdk.skill.installed_skills.skill_creator_scripts import (  # type: ignore
             create_skill_skeleton,
         )
     except Exception:
@@ -102,7 +102,7 @@ async def create_skill(req: CreateSkillRequest):
             BASE_DIR,
             "Symbix_sdk",
             "skill",
-            "installed_skill",
+            "installed_skills",
             "skill-creator",
             "scripts",
             "init_skill.py",

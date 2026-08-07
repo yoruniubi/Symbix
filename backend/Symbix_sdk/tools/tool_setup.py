@@ -35,7 +35,7 @@ def setup_builtin_tools(toolkit) -> None:
     # 计算默认 skill 安装目录（供 create_skill 回退使用）
     _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
     _DEFAULT_SKILLS_DIR = os.path.normpath(
-        os.path.join(_TOOLS_DIR, "..", "skill", "installed_skill")
+        os.path.join(_TOOLS_DIR, "..", "skill", "installed_skills")
     )
 
     for name, spec in ALL_TOOL_SCHEMAS.items():

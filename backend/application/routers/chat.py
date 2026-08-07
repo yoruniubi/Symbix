@@ -23,6 +23,61 @@ from application.memory_ops import (
 )
 
 router = APIRouter(tags=["chat"])
+
+
+# 为避免上游 模型逐 token 推 delta 导致前端 高频解析/rAF 重绘，这里将连续 delta 事件批量合并
+class _DeltaBatcher:
+    """攒批 delta 事件：相邻 delta 合并到默认 彈；遇非 delta 或达上限立即 flush。"""
+    def __init__(self, max_chunks: int = 8, max_chars: int = 512) -> None:
+        self.max_chunks = max_chunks
+        self.max_chars = max_chars
+        self._buf = ""
+        self._n = 0
+        self._has = False
+
+    def add_delta(self, s: str) -> dict | None:
+        """加入 delta，返回 flush 事件（若需）或 None仍需继续攒。"""
+        if not s:
+            return None
+        self._buf += s
+        self._n += 1
+        self._has = True
+        if self._n >= self.max_chunks or len(self._buf) >= self.max_chars:
+            return self.flush()
+        return None
+
+    def flush(self) -> dict | None:
+        if not self._has:
+            return None
+        evt = {"type": "delta", "content": self._buf}
+        self._buf = ""
+        self._n = 0
+        self._has = False
+        return evt
+
+
+def _batch_yield(
+    event: dict,
+    batcher: "_DeltaBatcher",
+    on_delta: "callable[[str], None] | None" = None,
+):
+    """对单个上游事件，返回需 yield 的 SSE 字符串列表（顺序：先 flush缓冲 delta，再透传本事件）。"""
+    out: list[str] = []
+    etype = event.get("type")
+    if etype == "delta":
+        content = event.get("content", "")
+        if on_delta is not None:
+            on_delta(content)
+        flushed = batcher.add_delta(content)
+        if flushed is not None:
+            out.append(format_sse(flushed))
+        return out
+    # 非 delta：先 flush 缓冲，再透传
+    flushed = batcher.flush()
+    if flushed is not None:
+        out.append(format_sse(flushed))
+    out.append(format_sse(event))
+    return out
 def _prepare_user_message(request: ChatRequest) -> tuple[str, list[dict], list[dict]]:
     """解析 attachments 并注入用户消息；返回 (enriched_text, parsed_list, image_parts)。"""
     from Symbix_sdk.tools.file_pipeline import inject_attachments_into_message
@@ -480,6 +535,7 @@ async def chat_stream(request: ChatRequest):
                     ],
                 })
 
+            _batcher = _DeltaBatcher()
             async for event in symbix_client.chat_stream(
                 user_input=user_for_llm,
                 history=history[:-1],
@@ -490,6 +546,14 @@ async def chat_stream(request: ChatRequest):
                 override_model=model or None,
                 image_parts=image_parts or None,
             ):
+                for _sse in _batch_yield(
+                    event, _batcher,
+                    on_delta=lambda c: full_text.__class__(full_text)
+                ) if False else _batch_yield(event, _batcher, on_delta=lambda c: None):
+                    pass
+                # 不用干净调用：手工计数
+            def _patch():
+                pass
                 yield format_sse(event)
 
                 if event["type"] == "delta":

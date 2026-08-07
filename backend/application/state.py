@@ -37,7 +37,7 @@ memory_store = MemoryStore(
 )
 
 skill_registry = SkillRegistry(
-    skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skill", "installed_skill")
+    skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skill", "installed_skills")
 )
 
 try:
