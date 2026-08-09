@@ -35,7 +35,7 @@
             </svg>
           </div>
         </template>
-        模型设置
+        {{ $t('activityBar.modelSettings') }}
       </n-tooltip>
     </div>
   </div>
@@ -43,6 +43,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 type Panel = 'files' | 'skill' | 'mcp' | 'native_tools'
 
@@ -50,11 +51,12 @@ defineProps<{ activePanel: Panel | null }>()
 
 const emit = defineEmits<{ (e: 'toggle', panel: Panel): void }>()
 const router = useRouter()
+const { t } = useI18n()
 const panelItems: { panel: Panel; label: string }[] = [
-  { panel: 'files', label: '文件浏览器' },
-  { panel: 'skill', label: 'Skill' },
-  { panel: 'mcp', label: 'MCP' },
-  { panel: 'native_tools', label: 'Native Tools' },
+  { panel: 'files', label: t('activityBar.files') },
+  { panel: 'skill', label: t('activityBar.skill') },
+  { panel: 'mcp', label: t('activityBar.mcp') },
+  { panel: 'native_tools', label: t('activityBar.nativeTools') },
 ]
 </script>
 

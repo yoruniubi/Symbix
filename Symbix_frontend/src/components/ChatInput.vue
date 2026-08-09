@@ -27,7 +27,7 @@
         v-model:value="inputValue"
         type="textarea"
         :autosize="{ minRows: 1, maxRows: 5 }"
-        placeholder="输入消息，Enter 发送，Shift+Enter 换行..."
+        :placeholder="$t('chatInput.placeholder')"
         @keydown="handleInputKeydown"
         :disabled="loading"
         class="chat-input"

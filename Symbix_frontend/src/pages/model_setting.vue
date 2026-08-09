@@ -2,7 +2,7 @@
   <div class="setting-page">
     <TitleBar />
     <div class="setting-card-wrapper">
-      <n-card title="模型设置" class="setting-card">
+      <n-card :title="t('modelSetting.title')" class="setting-card">
         <template #header-extra>
           <n-button circle text @click="router.back()">
             <template #icon>
@@ -15,7 +15,7 @@
           <n-form :model="form" label-placement="top">
 
             <!-- 厂商选择 -->
-            <n-form-item label="模型厂商" style="padding:10px">
+            <n-form-item :label="t('modelSetting.provider')" style="padding:10px">
               <div class="provider-grid">
                 <div
                   v-for="p in providers"
@@ -31,25 +31,25 @@
             </n-form-item>
 
             <!-- API Key -->
-            <n-form-item label="API Key">
+            <n-form-item :label="t('modelSetting.apiKey')">
               <n-input
                 v-model:value="form.apiKey"
                 type="password"
                 show-password-on="click"
-                placeholder="输入你的 API Key"
+                :placeholder="t('modelSetting.apiKeyPlaceholder')"
               />
             </n-form-item>
 
             <!-- Base URL：仅自定义或需要中转时显示 -->
-            <n-form-item label="Base URL" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
+            <n-form-item :label="t('modelSetting.baseUrl')" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
               <n-input
                 v-model:value="form.baseUrl"
-                :placeholder="selectedProvider === 'custom' ? '例如 https://your-proxy.com/v1' : '可选，留空使用官方地址'"
+                :placeholder="selectedProvider === 'custom' ? t('modelSetting.baseUrlPlaceholder') : t('modelSetting.baseUrlOptional')"
               />
             </n-form-item>
 
             <!-- 模型选择 -->
-            <n-form-item label="模型">
+            <n-form-item :label="t('modelSetting.model')">
               <n-input-group>
                 <n-select
                   v-model:value="form.model"
@@ -57,7 +57,7 @@
                   :loading="fetchingModels"
                   filterable
                   tag
-                  placeholder="选择预设模型或手动输入"
+                  :placeholder="t('modelSetting.modelPlaceholder')"
                   style="flex: 1"
                 />
                 <n-button
@@ -66,21 +66,21 @@
                   @click="handleFetchModels"
                   style="width: 110px; flex-shrink: 0;"
                 >
-                  {{ fetchingModels ? '获取中...' : '获取模型' }}
+                  {{ fetchingModels ? t('modelSetting.fetching') : t('modelSetting.fetchModels') }}
                 </n-button>
               </n-input-group>
             </n-form-item>
              <div v-if="form.model" style="margin-top: 6px; font-size: 11px; color: var(--text-muted);">
-                litellm 调用标识：<span style="color: var(--accent-300);">{{ form.model }}</span>
+                 {{ t('modelSetting.litellmLabel') }}<span style="color: var(--accent-300);">{{ form.model }}</span>
               </div>
 
             <!-- 系统提示词 -->
-            <n-form-item label="系统提示词">
+            <n-form-item :label="t('modelSetting.systemPrompt')">
               <n-input
                 v-model:value="form.systemPrompt"
                 type="textarea"
                 :autosize="{ minRows: 3, maxRows: 8 }"
-                placeholder="设置 AI 的系统提示词，用于定义 AI 的角色、行为或回答风格..."
+                :placeholder="t('modelSetting.systemPromptPlaceholder')"
               />
               <template #extra>
                 <div class="preset-tags">
@@ -100,9 +100,9 @@
             </n-form-item>
 
             <n-space justify="end" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border);">
-              <n-button @click="handleReset">重置</n-button>
-              <n-button :loading="testing" @click="handleTest">测试连接</n-button>
-              <n-button type="primary" @click="handleSave">保存</n-button>
+              <n-button @click="handleReset">{{ t('modelSetting.reset') }}</n-button>
+              <n-button :loading="testing" @click="handleTest">{{ t('modelSetting.test') }}</n-button>
+              <n-button type="primary" @click="handleSave">{{ t('modelSetting.save') }}</n-button>
             </n-space>
           </n-form>
         </div>
@@ -115,12 +115,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
 import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
 
 const router = useRouter()
 const message = useMessage()
+const { t } = useI18n()
 const { settings, loadSettings, saveSettings, resetSettings } = useSettings()
 const { fetchModels, testConnection } = useApiClient()
 
@@ -246,7 +248,7 @@ const providers: Provider[] = [
   },
   {
     id: 'zhipu',
-    name: '智谱',
+    name: 'GLM',
     icon: ICONS.zhipu,
     baseUrl: '',
     needsBase: false,
@@ -291,16 +293,15 @@ const currentProviderNeedsBase = computed(() => {
   const p = providers.find(p => p.id === selectedProvider.value)
   return p?.needsBase ?? false
 })
-
-// 系统提示词预设
-const systemPromptPresets = [
-  { label: '通用助手', text: '你是一个有帮助的 AI 助手，请用中文回答用户的问题。回答应准确、简洁、友好。' },
-  { label: '代码专家', text: '你是一位资深软件工程师。请用中文提供清晰、可运行的代码示例，并解释关键设计决策。优先考虑最佳实践和安全性。' },
-  { label: '翻译官', text: '你是一个专业的翻译助手。请将用户输入的内容翻译成中文，保持原文的语气和风格。如果是中文则翻译成英文。' },
-  { label: '写作助手', text: '你是一个专业的写作助手。请帮助用户改进文章的语法、结构和表达，使其更加流畅和专业。' },
-  { label: '数据分析师', text: '你是一个数据分析专家。请帮助用户解读数据、提供分析思路，并用清晰的方式呈现分析结果。' },
-  { label: '创意伙伴', text: '你是一个富有创意的头脑风暴伙伴。请提供新颖的想法和独特的视角，激发用户的灵感。' },
-]
+const systemPromptPresets = computed(() => [
+  { label: t('modelSetting.presetGeneral'), text: t('modelSetting.presetGeneralText') },
+  { label: t('modelSetting.presetCode'), text: t('modelSetting.presetCodeText') },
+  { label: t('modelSetting.presetTranslate'), text: t('modelSetting.presetTranslateText') },
+  { label: t('modelSetting.presetWriting'), text: t('modelSetting.presetWritingText') },
+  { label: t('modelSetting.presetData'), text: t('modelSetting.presetDataText') },
+  { label: t('modelSetting.presetCreative'), text: t('modelSetting.presetCreativeText') },
+])
+ 
 
 function applySystemPromptPreset(preset: { label: string; text: string }) {
   if (form.value.systemPrompt === preset.text) {
@@ -368,7 +369,7 @@ function selectProvider(p: Provider) {
 
 async function handleFetchModels() {
   if (!form.value.apiKey || !form.value.baseUrl) {
-    message.warning('请先填写 API Key 和 Base URL')
+    message.warning(t('modelSetting.needApiKeyAndBase'))
     return
   }
   fetchingModels.value = true
@@ -380,16 +381,16 @@ async function handleFetchModels() {
       value: id,
     }))
     if (models.length > 0) {
-      message.success(`获取到 ${models.length} 个模型`)
+      message.success(t('modelSetting.fetchSuccess', { count: models.length }))
       if (!form.value.model) {
         form.value.model = models[0]
         customModel.value = models[0]
       }
     } else {
-      message.warning('未获取到模型列表')
+      message.warning(t('modelSetting.fetchEmpty'))
     }
   } catch (e: any) {
-    message.error(`获取失败：${e.message}`)
+    message.error(t('modelSetting.fetchFail', { msg: e.message }))
   } finally {
     fetchingModels.value = false
   }
@@ -397,15 +398,15 @@ async function handleFetchModels() {
 
 async function handleTest() {
   if (!form.value.apiKey) {
-    message.warning('请先填写 API Key')
+    message.warning(t('modelSetting.needApiKey'))
     return
   }
   testing.value = true
   try {
     await testConnection(form.value.apiKey, form.value.baseUrl)
-    message.success('连接成功！')
+    message.success(t('modelSetting.connectionSuccess'))
   } catch (e: any) {
-    message.error(`连接失败：${e.message}`)
+    message.error(t('modelSetting.connectionFail', { msg: e.message }))
   } finally {
     testing.value = false
   }
@@ -413,7 +414,7 @@ async function handleTest() {
 
 function handleSave() {
   saveSettings(form.value)
-  message.success('设置已保存')
+  message.success(t('modelSetting.saved'))
   setTimeout(() => router.back(), 300)  
 }
 
@@ -422,7 +423,7 @@ function handleReset() {
   form.value = { apiKey: '', baseUrl: '', model: '', systemPrompt: '' }
   modelOptions.value = []
   selectedProvider.value = 'custom'
-  message.info('已重置')
+  message.info(t('modelSetting.resetDone'))
 }
 </script>
 

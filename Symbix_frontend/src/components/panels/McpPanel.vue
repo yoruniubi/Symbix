@@ -3,7 +3,7 @@
     <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'mcp'">
       <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
       <div class="side-panel-header">
-        <span class="side-panel-title">MCP 面板</span>
+        <span class="side-panel-title">{{ $t('mcpPanel.title') }}</span>
         <div class="side-panel-actions">
           <n-button size="tiny" type="primary" class="add-entry-btn" @click="handleOpenAddChooser">
             <template #icon>
@@ -11,7 +11,7 @@
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </template>
-            添加
+            {{ $t('mcpPanel.add') }}
           </n-button>
           <n-button text size="tiny" class="close-btn" @click="handleClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
@@ -21,7 +21,7 @@
 
       <div class="side-panel-body">
         <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-          {{ mcpServerGroups.length }} 个 Server · {{ mcpToolList.length }} 个工具
+          {{ $t('mcpPanel.summary', { count: mcpServerGroups.length, toolCount: mcpToolList.length }) }}
         </div>
         <!-- 每组一个可折叠 Server -->
         <div v-for="group in mcpServerGroups" :key="group.server_id" class="mcp-server-card">
@@ -39,14 +39,14 @@
               </svg>
               <span class="mcp-server-name">{{ group.server_id }}</span>
               <span class="mcp-status-dot" :class="mcpStatusClass(group.server_id)" :title="mcpStatusLabel(group.server_id)"></span>
-              <span class="mcp-tool-count">{{ group.tool_count }} 工具</span>
+              <span class="mcp-tool-count">{{ group.tool_count }} {{ $t('mcpPanel.toolUnit') }}</span>
             </div>
             <div class="mcp-server-ops" @click.stop>
               <n-button
                 size="small"
                 quaternary
                 class="panel-icon-btn"
-                title="重连"
+                :title="$t('mcpPanel.reconnect')"
                 @click="handleReconnectMcp(group.server_id)"
               >
                 <template #icon>
@@ -61,7 +61,7 @@
                 quaternary
                 type="error"
                 class="panel-icon-btn"
-                title="删除"
+                :title="$t('mcpPanel.delete')"
                 @click="handleRemoveMcp(group.server_id)"
               >
                 <template #icon>
@@ -87,7 +87,7 @@
             </div>
           </div>
         </div>
-        <n-empty v-if="mcpServerGroups.length === 0" description="未连接任何 MCP Server" size="small" style="margin-top:20px;" />
+        <n-empty v-if="mcpServerGroups.length === 0" :description="$t('mcpPanel.empty')" size="small" style="margin-top:20px;" />
       </div>
       <div class="side-panel-footer">
         <n-button size="medium" secondary block class="panel-footer-btn" @click="handleTestMcpConnection">
@@ -97,7 +97,7 @@
               <polyline points="22 4 12 14.01 9 11.01"/>
             </svg>
           </template>
-          测试连接
+          {{ $t('mcpPanel.testConnection') }}
         </n-button>
       </div>
     </div>
@@ -105,6 +105,7 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 const props = defineProps<{
@@ -124,6 +125,7 @@ const emit = defineEmits<{
   (e: 'openAddChooser', kind: 'mcp'): void
 }>()
 
+const { t } = useI18n()
 const { width: panelWidth, isResizing, startResize } = useResizablePanel({
   storageKey: 'symbix-panel-width-mcp',
 })
@@ -137,10 +139,10 @@ function mcpStatusClass(serverId: string) {
 
 function mcpStatusLabel(serverId: string) {
   const info = props.mcpStatusMap[serverId]
-  if (!info) return '未知'
-  if (info.status === 'connected') return `已连接 · ${info.tools_count ?? 0} 工具`
-  if (info.status === 'error') return info.error || '错误'
-  return info.status || '未连接'
+  if (!info) return t('mcpPanel.statusUnknown')
+  if (info.status === 'connected') return t('mcpPanel.statusConnected', { count: info.tools_count ?? 0 })
+  if (info.status === 'error') return info.error || t('mcpPanel.statusError')
+  return info.status || t('mcpPanel.statusOffline')
 }
 
 function handleClose() {

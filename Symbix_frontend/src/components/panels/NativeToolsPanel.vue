@@ -3,13 +3,13 @@
     <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'native_tools'">
       <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
       <div class="side-panel-header">
-        <span class="side-panel-title">Native Tools 面板</span>
+        <span class="side-panel-title">{{ $t('nativeToolsPanel.title') }}</span>
         <n-button text size="tiny" class="close-btn" @click="handleClose">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </n-button>
       </div>
       <div class="side-panel-body">
-        <n-text depth="3" style="font-size:13px;">已注册 {{ nativeToolList.length }} 个内置工具</n-text>
+        <n-text depth="3" style="font-size:13px;">{{ $t('nativeToolsPanel.summary', { count: nativeToolList.length }) }}</n-text>
         <div v-for="tool in nativeToolList" :key="tool.function.name" class="mcp-tool-item">
           <div class="mcp-tool-name">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
@@ -19,7 +19,7 @@
           </div>
           <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
         </div>
-        <n-empty v-if="nativeToolList.length === 0" description="暂无内置工具" size="small" style="margin-top:20px;" />
+        <n-empty v-if="nativeToolList.length === 0" :description="$t('nativeToolsPanel.empty')" size="small" style="margin-top:20px;" />
       </div>
     </div>
   </transition>

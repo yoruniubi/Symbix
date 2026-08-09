@@ -89,7 +89,7 @@
 
       <!-- Alert -->
       <n-alert v-if="!hasApiKey" type="warning" style="margin-bottom: 12px;" closable>
-        未设置 API Key，请先配置 API 密钥
+        {{ $t('chat.noApiKey') }}
       </n-alert>
 
       <!-- Chat Input -->
@@ -104,7 +104,7 @@
       />
     </div>
 
-    <!-- 添加 Skill 弹窗：GitHub 安装 / 自定义创建 -->
+    <!-- 添加 Skill 弹窗:GitHub 安装 / 自定义创建 -->
     <AddSkillModal
       :show="showAddSkillModal"
       :creating="creatingSkill"
@@ -115,7 +115,7 @@
       @submit="submitCreateSkill"
     />
 
-    <!-- 添加 MCP 弹窗：远程 URL / 本地 npm -->
+    <!-- 添加 MCP 弹窗:远程 URL / 本地 npm -->
     <AddMcpModal
       :show="showAddMcpModal"
       :installing="installingMcp"
@@ -147,10 +147,14 @@ import AddMcpModal from '@/components/AddMcpModal.vue'
 import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
 import { fetch } from '@tauri-apps/plugin-http'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 const messageUi = useMessage()
 const { settings, loadSettings, saveSettings } = useSettings()
 const { fetchModels, chatCompletion } = useApiClient()
-const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙吗？', '有什么想聊的吗？', '又见面了！']
+const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat'), t('home.petGreetingList')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
@@ -232,11 +236,11 @@ async function reconnectMcp(serverId: string) {
     const res = await fetch(`${BACKEND_URL}/mcp/servers/${encodeURIComponent(serverId)}/reconnect`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-    if (data.connected) messageUi.success(data.message || '重连成功')
-    else messageUi.warning(data.message || '已尝试重连，当前仍未连通')
+    if (data.connected) messageUi.success(data.message || t('mcpPanel.reconnectSuccess'))
+    else messageUi.warning(data.message || '已尝试重连,当前仍未连通')
     await refreshMcpPanel()
   } catch (e: any) {
-    messageUi.error(`重连失败：${e.message || e}`)
+    messageUi.error(t('mcpPanel.reconnectFail', { msg: e.message || e }))
   }
 }
 
@@ -245,10 +249,10 @@ async function removeMcp(serverId: string) {
     const res = await fetch(`${BACKEND_URL}/mcp/servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-    messageUi.success(data.message || `已删除 ${serverId}`)
+    messageUi.success(data.message || t('mcpPanel.removeSuccess', { serverId }))
     await refreshMcpPanel()
   } catch (e: any) {
-    messageUi.error(`删除失败：${e.message || e}`)
+    messageUi.error(t('mcpPanel.removeFail', { msg: e.message || e }))
   }
 }
 
@@ -257,16 +261,16 @@ async function removeSkill(skillName: string) {
     const res = await fetch(`${BACKEND_URL}/skills/${encodeURIComponent(skillName)}`, { method: 'DELETE' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-    messageUi.success(data.message || `已删除 ${skillName}`)
+    messageUi.success(data.message || t('skillPanel.deleteSuccess', { name: skillName }))
     await refreshSkillList()
   } catch (e: any) {
-    messageUi.error(`删除 Skill 失败：${e.message || e}`)
+    messageUi.error(t('skillPanel.deleteFail', { msg: e.message || e }))
   }
 }
 
 
 
-// 监听 settings 变化，同步 currentModel
+// 监听 settings 变化,同步 currentModel
 watch(() => settings.value.model, (newModel) => {
   if (newModel) currentModel.value = newModel
 }, { immediate: true })
@@ -295,7 +299,7 @@ onMounted(async () => {
     const raw = localStorage.getItem('pendingSkinGen')
     if (raw) {
       const pending = JSON.parse(raw)
-      // 5 分钟内有效，防止过期消息被重复发送
+      // 5 分钟内有效,防止过期消息被重复发送
       if (pending.message && pending.ts && (Date.now() - pending.ts < 5 * 60 * 1000)) {
         localStorage.removeItem('pendingSkinGen')
         // 延迟一帧确保 ChatInput 等子组件已挂载
@@ -303,7 +307,7 @@ onMounted(async () => {
           sendMessage(pending.message, [])
         }, 300)
       } else {
-        // 过期，清理
+        // 过期,清理
         localStorage.removeItem('pendingSkinGen')
       }
 
@@ -324,18 +328,18 @@ async function testMcpConnection() {
       const entries = Object.entries(mcpStatusMap.value)
       const connected = entries.filter(([, v]: any) => v?.status === 'connected').length
       if (connected > 0) {
-        messageUi.success(`MCP 连接正常：${connected}/${entries.length} 个 Server 在线`)
+        messageUi.success(t('mcpPanel.testOk', { connected, total: entries.length }))
       } else if (entries.length === 0) {
-        messageUi.warning('尚未配置任何 MCP Server')
+        messageUi.warning(t('mcpPanel.testNoConfig'))
       } else {
-        messageUi.warning('MCP 已配置但当前均未连通')
+        messageUi.warning(t('mcpPanel.testWarning'))
       }
     } else {
-      messageUi.error('无法连接到 MCP 服务 (HTTP ' + res.status + ')')
+      messageUi.error(t('mcpPanel.testFail', { status: res.status }))
     }
   } catch (err: any) {
     console.error('MCP测试连接失败:', err)
-    messageUi.error('无法连接到 MCP 服务: ' + (err.message || err))
+    messageUi.error(t('mcpPanel.testFailDetail', { msg: err.message || err }))
   }
 }
 
@@ -350,13 +354,13 @@ async function refreshSkillList() {
     if (res.ok) {
       const data = await res.json()
       skillList.value = data.skills || []
-      messageUi.success('Skill 列表已刷新')
+      messageUi.success(t('skillPanel.refreshSuccess'))
     } else {
-      messageUi.error('获取 Skill 列表失败 (HTTP ' + res.status + ')')
+      messageUi.error(t('skillPanel.fetchFail', { status: res.status }))
     }
   } catch (err: any) {
     console.error('获取Skill列表失败:', err)
-    messageUi.error('获取 Skill 列表失败: ' + (err.message || err))
+    messageUi.error(t('skillPanel.fetchFailDetail', { msg: err.message || err }))
   }
   // 同时刷新 skill 工具列表
   try {
@@ -369,7 +373,7 @@ async function refreshSkillList() {
 }
 async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools') {
   console.log('🟡 togglePanel called', panel)
-  // 如果当前已经是激活状态，点击则是关闭，不需要请求
+  // 如果当前已经是激活状态,点击则是关闭,不需要请求
   if (activePanel.value === panel) {
     activePanel.value = null
     return
@@ -385,8 +389,8 @@ async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools') {
       const data = await res.json()
       skillList.value = data.skills
     } catch (err) {
-      console.log("具体错误为：",err)
-      messageUi.error('获取 Skill 列表失败')
+      console.log("具体错误为:",err)
+      messageUi.error(t('skillPanel.fetchFailShort'))
     }
   } else if (panel === 'native_tools') {
     try {
@@ -395,15 +399,15 @@ async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools') {
       nativeToolList.value = data.tools || []
     } catch (err) {
       console.log("获取 Native Tools 列表失败:", err)
-      messageUi.error('获取 Native Tools 列表失败')
+      messageUi.error(t('nativeToolsPanel.fetchFail'))
     }
   } else if (panel === 'mcp') {
     try {
       const res = await fetch('http://127.0.0.1:8000/mcp/config')
       mcpConfigData.value = await res.json()
     } catch (err) {
-      console.log("具体错误为：",err)
-      messageUi.error('获取 MCP 配置失败')
+      console.log("具体错误为:",err)
+      messageUi.error(t('mcpPanel.fetchConfigFail'))
     }
     try {
       const res = await fetch('http://127.0.0.1:8000/mcp/tools')
@@ -433,17 +437,17 @@ function handleStopGeneration() {
     abortController.value = null
   }
   loading.value = false
-  publishAgentStatus('idle', '已暂停')
+  publishAgentStatus('idle', t('chat.stopGenerate'))
 }
 
 function handleEditMessage(idx: number, newText: string) {
-  // 截断到该消息位置，替换为新文本并重新发送
+  // 截断到该消息位置,替换为新文本并重新发送
   messages.value.splice(idx)
   loading.value = false
   sendMessage(newText, [])
 }
 
-/** 重试 assistant 回复：找到对应 user 消息，截断后重新发送 */
+/** 重试 assistant 回复:找到对应 user 消息,截断后重新发送 */
 function handleRetryMessage(idx: number) {
   if (loading.value) return
   if (idx <= 0 || messages.value[idx]?.role !== 'assistant') return
@@ -456,7 +460,7 @@ function handleRetryMessage(idx: number) {
   if (userIdx < 0) return
 
   const userText = messages.value[userIdx].content
-  // 从 user 消息起截断（含 assistant 及之后），由 sendMessage 重新推入
+  // 从 user 消息起截断(含 assistant 及之后),由 sendMessage 重新推入
   messages.value.splice(userIdx)
   loading.value = false
   if (abortController.value) {
@@ -472,7 +476,7 @@ function setModel(model: string) {
 }
 
 function newChat() {
-  // 清空当前对话区；真正创建会话在首次 sendMessage 时
+  // 清空当前对话区;真正创建会话在首次 sendMessage 时
   messages.value = []
   activeSessionId.value = null
 }
@@ -513,7 +517,7 @@ async function renameSession(id: string, newTitle: string) {
   if (!session || !newTitle.trim()) return
   const oldTitle = session.title
   session.title = newTitle.trim()
-  session.titleGenerated = true // 用户手动改过，不再自动生成
+  session.titleGenerated = true // 用户手动改过,不再自动生成
   try {
     await fetch(`${BACKEND_URL}/api/rename_session`, {
       method: 'POST',
@@ -541,7 +545,7 @@ function publishAgentStatus(status: AgentStatus, bubble?: string) {
 }
 
 async function sendMessage(text: string, files: any[]) {
-  console.log('=== sendMessage 开始（SSE 流式）===')
+  console.log('=== sendMessage 开始(SSE 流式)===')
   safeLog('settings:', settings.value)
 
   let displayContent = text
@@ -553,10 +557,10 @@ async function sendMessage(text: string, files: any[]) {
 
   messages.value.push({ role: 'user', content: displayContent })
 
-  // 新对话首轮：创建带 UUID 的 session，并激活
+  // 新对话首轮:创建带 UUID 的 session,并激活
   if (!activeSessionId.value) {
     const newId = crypto.randomUUID()
-    const title = displayContent.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || '新对话'
+    const title = displayContent.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || t('chat.newChatTitle')
     sessions.value.unshift({
       id: newId,
       title,
@@ -572,7 +576,7 @@ async function sendMessage(text: string, files: any[]) {
   const currentSessionId = activeSessionId.value!
 
   loading.value = true
-  publishAgentStatus('thinking', '我来看看...')
+  publishAgentStatus('thinking', t('chat.thinking'))
   await nextTick()
   scrollToBottom()
   let assistantMsgIndex = -1
@@ -660,17 +664,17 @@ async function sendMessage(text: string, files: any[]) {
 
     loading.value = false
     abortController.value = null
-    // 同步当前会话消息，避免侧边栏停留在旧内容
+    // 同步当前会话消息,避免侧边栏停留在旧内容
     const active = sessions.value.find(s => s.id === currentSessionId)
     if (active) active.messages = [...messages.value]
     await saveSessionToLocalMarkdown()
-    // 流式结束且不在等待审批时，触发任务完成提醒
+    // 流式结束且不在等待审批时,触发任务完成提醒
     if (!assistantMsg.approval_id) {
       publishAgentStatus('complete')
       const preview = (assistantMsg.content || '').slice(0, 80).replace(/\s+/g, ' ')
       void notifyTaskComplete({
         title: 'Symbix · 任务完成',
-        body: preview || '我在这里，任务已经完成啦～',
+        body: preview || '我在这里,任务已经完成啦~',
       })
 
     }
@@ -681,26 +685,26 @@ async function sendMessage(text: string, files: any[]) {
     if (e.name === 'AbortError') {
 
       console.log('=== 流被用户中断 ===')
-      publishAgentStatus('idle', '已暂停')
+      publishAgentStatus('idle', t('chat.stopGenerate'))
       if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
         messages.value.splice(assistantMsgIndex, 1)
       }
       return
     }
     console.error('=== 流式异常 ===', e)
-    publishAgentStatus('error', '处理时遇到了一点问题')
+    publishAgentStatus('error', t('chat.errorOccurred'))
     if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
       messages.value.splice(assistantMsgIndex, 1)
     } else if (assistantMsgIndex !== -1) {
       messages.value[assistantMsgIndex].content += `\n\n[错误] ${e.message}`
     }
-    messageUi.error(`请求失败：${e.message}`)
+    messageUi.error(t('chat.requestFail', { msg: e.message }))
   }
 }
 
 
 /**
- * 处理单条 SSE 事件，更新 assistant 消息。
+ * 处理单条 SSE 事件,更新 assistant 消息。
  */
 function handleSSEEvent(
   evt: any,
@@ -807,7 +811,7 @@ async function saveSessionToLocalMarkdown() {
     })
     console.log('历史记录已保存为 Markdown')
 
-    // 新会话首次保存后，异步生成 AI 标题
+    // 新会话首次保存后,异步生成 AI 标题
     const session = sessions.value.find(s => s.id === activeSessionId.value)
     if (session && !session.titleGenerated) {
       tryGenerateTitle(session.id)
@@ -963,7 +967,7 @@ async function submitCreateSkill() {
     }
     await refreshSkillList()
   } catch (e: any) {
-    messageUi.error(`安装/创建失败：${e.message || e}`)
+    messageUi.error(`安装/创建失败:${e.message || e}`)
   } finally {
     creatingSkill.value = false
   }
@@ -989,7 +993,7 @@ async function submitInstallMcp() {
         try {
           headers = JSON.parse(ht)
         } catch {
-          messageUi.warning('Headers 需为合法 JSON，例如 {"Authorization":"Bearer xxx"}')
+          messageUi.warning('Headers 需为合法 JSON,例如 {"Authorization":"Bearer xxx"}')
           return
         }
       }
@@ -1006,7 +1010,7 @@ async function submitInstallMcp() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
       if (data.connected) messageUi.success(data.message || '远程 MCP 已连接')
-      else messageUi.warning(data.message || '配置已保存，但当前未连通（可能需要鉴权后重连）')
+      else messageUi.warning(data.message || '配置已保存,但当前未连通(可能需要鉴权后重连)')
     } else {
       const packageName = mcpForm.value.package_name.trim()
       if (!packageName) {
@@ -1032,14 +1036,14 @@ async function submitInstallMcp() {
     mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'sse', headersText: '' }
     await refreshMcpPanel()
   } catch (e: any) {
-    messageUi.error(`添加失败：${e.message || e}`)
+    messageUi.error(`添加失败:${e.message || e}`)
   } finally {
     installingMcp.value = false
   }
 }
 
 
-// 工具审批：用户在 ChatMessage 卡片点击 同意/拒绝 后回调
+// 工具审批:用户在 ChatMessage 卡片点击 同意/拒绝 后回调
 async function approveTool(msgIdx: number, approved: boolean) {
   const msg: any = messages.value[msgIdx]
   if (!msg || !msg.approval_id) return
@@ -1049,7 +1053,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
   const approvalId = msg.approval_id
   msg.approval_pending = true
   loading.value = true
-  publishAgentStatus('thinking', approved ? '继续处理...' : '正在整理结果...')
+  publishAgentStatus('thinking', approved ? t('chat.continueProcessing') : t('chat.processingResult'))
   try {
     const res = await fetch(`${BACKEND_URL}/chat/approve`, {
       method: 'POST',
@@ -1085,12 +1089,12 @@ async function approveTool(msgIdx: number, approved: boolean) {
     msg.approval_id = undefined
     msg.approval_pending = false
     loading.value = false
-    publishAgentStatus('complete', approved ? '完成啦!' : '已处理完毕')
+    publishAgentStatus('complete', approved ? t('chat.complete') : t('chat.processedDone'))
     await saveSessionToLocalMarkdown()
     const preview = (msg.content || '').slice(0, 80).replace(/\s+/g, ' ')
     void notifyTaskComplete({
       title: 'Symbix · 任务完成',
-      body: preview || '审批已通过，任务完成啦～',
+      body: preview || '审批已通过,任务完成啦~',
     })
 
   } catch (e: any) {
@@ -1099,9 +1103,9 @@ async function approveTool(msgIdx: number, approved: boolean) {
     // 可点击并再次提交同一个已经消费的 approval_id。
     if (msg.approval_id === approvalId) msg.approval_id = undefined
     msg.approval_pending = false
-    publishAgentStatus('error', '审批处理失败')
-    console.error('审批失败:', e)
-    messageUi.error(`审批失败：${e.message}`)
+    publishAgentStatus('error', t('chat.approvalFailed'))
+    console.error(t('chat.approvalFailed'), e)
+    messageUi.error(t('chat.approvalFailedDetail', { msg: e.message }))
   }
 }
 

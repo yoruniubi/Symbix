@@ -3,7 +3,7 @@
     <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'skill'">
       <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
       <div class="side-panel-header">
-        <span class="side-panel-title">Skill 面板</span>
+        <span class="side-panel-title">{{ $t('skillPanel.title') }}</span>
         <div class="side-panel-actions">
           <n-button size="tiny" type="primary" class="add-entry-btn" @click="handleOpenAddChooser">
             <template #icon>
@@ -11,7 +11,7 @@
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </template>
-            添加
+            {{ $t('skillPanel.add') }}
           </n-button>
           <n-button text size="tiny" class="close-btn" @click="handleClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
@@ -19,14 +19,14 @@
         </div>
       </div>
       <div class="side-panel-body">
-        <n-text depth="3" style="font-size:13px;">已安装 {{ skillList.length }} 个 Skill（{{ skillToolList.length }} 个工具）</n-text>
+        <n-text depth="3" style="font-size:13px;">{{ $t('skillPanel.installed', { count: skillList.length, toolCount: skillToolList.length }) }}</n-text>
         <div v-for="skill in skillList" :key="skill.name" class="skill-card">
           <div class="skill-card-head">
             <div class="skill-card-info">
               <div class="skill-card-name">{{ skill.display_name || skill.name }}</div>
               <div class="skill-card-desc">{{ skill.description }}</div>
               <div v-if="getSkillTool(skill.name)" class="skill-card-tool">
-                🔧 工具: skill__{{ skill.name }}
+                {{ $t('skillPanel.tool', { name: 'skill__' + skill.name }) }}
               </div>
             </div>
             <n-button
@@ -34,7 +34,7 @@
               quaternary
               type="error"
               class="panel-icon-btn"
-              title="删除 Skill"
+              :title="$t('skillPanel.delete')"
               @click="handleRemoveSkill(skill.name)"
             >
               <template #icon>
@@ -46,7 +46,7 @@
             </n-button>
           </div>
         </div>
-        <n-empty v-if="skillList.length === 0" description="暂无 Skill" size="small" style="margin-top:20px;" />
+        <n-empty v-if="skillList.length === 0" :description="$t('skillPanel.empty')" size="small" style="margin-top:20px;" />
       </div>
       <div class="side-panel-footer">
         <n-button size="medium" secondary block class="panel-footer-btn" @click="handleRefresh">
@@ -56,7 +56,7 @@
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
           </template>
-          刷新列表
+          {{ $t('skillPanel.refresh') }}
         </n-button>
       </div>
     </div>

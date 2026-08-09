@@ -1,6 +1,7 @@
 import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router/index.js";
+import i18n from "./i18n";
 import { injectCssVariables, injectPanelIconBtnStyle, DEFAULT_THEME_MODE } from "./theme";
 import "markstream-vue/index.css";
 
@@ -17,4 +18,4 @@ function getInitialThemeMode() {
 injectCssVariables(getInitialThemeMode());
 injectPanelIconBtnStyle();
 
-createApp(App).use(router).mount("#app");
+createApp(App).use(router).use(i18n).mount("#app");

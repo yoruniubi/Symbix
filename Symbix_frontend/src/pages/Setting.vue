@@ -3,9 +3,9 @@
     <TitleBar />
     <div class="setting-container">
       <!-- 外观设置卡片 -->
-      <n-card title="外观" class="setting-card">
+      <n-card :title="t('setting.appearance')" class="setting-card">
         <n-form label-placement="top">
-          <n-form-item label="主题模式">
+          <n-form-item :label="t('setting.themeMode')">
             <div class="theme-options">
               <button
                 type="button"
@@ -25,8 +25,8 @@
                   </div>
                 </div>
                 <div class="theme-option-meta">
-                  <span class="theme-option-label">浅色</span>
-                  <span class="theme-option-desc">温暖明亮，默认推荐</span>
+                  <span class="theme-option-label">{{ t('setting.light') }}</span>
+                  <span class="theme-option-desc">{{ t('setting.lightDesc') }}</span>
                 </div>
               </button>
 
@@ -43,41 +43,40 @@
                     <div class="preview-main">
                       <div class="preview-line short"></div>
                       <div class="preview-line"></div>
-                      <div class="preview-line mid"></div>
                     </div>
                   </div>
                 </div>
                 <div class="theme-option-meta">
-                  <span class="theme-option-label">深色</span>
-                  <span class="theme-option-desc">暖炭色调，贴近品牌色</span>
+                  <span class="theme-option-label">{{ t('setting.dark') }}</span>
+                  <span class="theme-option-desc">{{ t('setting.darkDesc') }}</span>
                 </div>
               </button>
             </div>
           </n-form-item>
           <n-text depth="3" style="font-size: 12px;">
-            主题会立即生效，并同步到对话窗口与桌宠界面。
+            {{ t('setting.themeHint') }}
           </n-text>
         </n-form>
       </n-card>
 
       <!-- 任务完成提醒 -->
-      <n-card title="任务完成提醒" class="setting-card">
+      <n-card :title="t('setting.notification')" class="setting-card">
         <n-form label-placement="top">
-          <n-form-item label="启用提醒">
+          <n-form-item :label="t('setting.notifyEnabled')">
             <div class="inline-row">
               <n-switch v-model:value="notifyForm.enabled" />
               <n-text depth="3" style="font-size: 12px;">
-                Agent 回复 / 工具任务完成后提醒
+                {{ t('setting.notifyEnabledHint') }}
               </n-text>
             </div>
           </n-form-item>
-          <n-form-item label="播放音效">
+          <n-form-item :label="t('setting.notifySound')">
             <n-switch
               v-model:value="notifyForm.soundEnabled"
               :disabled="!notifyForm.enabled"
             />
           </n-form-item>
-          <n-form-item label="音效">
+          <n-form-item :label="t('setting.notifySoundSelect')">
             <div class="inline-row">
               <n-select
                 v-model:value="notifyForm.soundId"
@@ -91,15 +90,15 @@
                 :disabled="!notifyForm.enabled || !notifyForm.soundEnabled || notifyForm.soundId === 'none'"
                 @click="previewSound"
               >
-                试听
+                {{ t('setting.previewSound') }}
               </n-button>
               <n-text depth="3" style="font-size: 12px; margin-top: 6px; display: block;">
-              默认「随机柔和，会从 14 种轻柔音效中轮换
+              {{ t('setting.soundHint') }}
             </n-text>
             </div>
           </n-form-item>
 
-          <n-form-item label="音量">
+          <n-form-item :label="t('setting.notifyVolume')">
             <n-slider
               v-model:value="notifyVolumePercent"
               :min="0"
@@ -110,25 +109,25 @@
               style="max-width: 320px;"
             />
           </n-form-item>
-          <n-form-item label="系统桌面通知">
+          <n-form-item :label="t('setting.notifyDesktop')">
             <div class="inline-row">
               <n-switch
                 v-model:value="notifyForm.desktopNotify"
                 :disabled="!notifyForm.enabled"
               />
               <n-text depth="3" style="font-size: 12px;">
-                任务完成时弹出系统通知（需授权）
+                {{ t('setting.notifyDesktopHint') }}
               </n-text>
             </div>
           </n-form-item>
-          <n-form-item label="仅后台通知">
+          <n-form-item :label="t('setting.notifyBackgroundOnly')">
             <div class="inline-row">
               <n-switch
                 v-model:value="notifyForm.onlyWhenBackground"
                 :disabled="!notifyForm.enabled || !notifyForm.desktopNotify"
               />
               <n-text depth="3" style="font-size: 12px;">
-                开启后仅在窗口失焦/最小化时弹系统通知
+                {{ t('setting.notifyBackgroundHint') }}
               </n-text>
             </div>
           </n-form-item>
@@ -138,23 +137,23 @@
               :disabled="!notifyForm.enabled"
               @click="testNotify"
             >
-              测试提醒
+          {{ t('setting.testNotify') }}
             </n-button>
-            <n-button @click="resetNotify">重置</n-button>
-            <n-button type="primary" @click="saveNotify">保存提醒设置</n-button>
+            <n-button @click="resetNotify">{{ t('setting.resetNotify') }}</n-button>
+            <n-button type="primary" @click="saveNotify">{{ t('setting.saveNotify') }}</n-button>
           </n-space>
         </n-form>
       </n-card>
 
 
       <!-- STT 设置卡片 -->
-      <n-card title="语音识别 (STT)" class="setting-card">
+      <n-card :title="t('setting.stt')" class="setting-card">
         <n-form :model="sttForm" label-placement="top">
-          <n-form-item label="STT 服务商">
+          <n-form-item :label="t('setting.sttProvider')">
             <n-select
               v-model:value="sttForm.provider"
               :options="sttProviders"
-              placeholder="选择 STT 服务商"
+              :placeholder="t('setting.sttProviderPlaceholder')"
             />
           </n-form-item>
           <n-form-item label="API Key">
@@ -162,38 +161,38 @@
               v-model:value="sttForm.apiKey"
               type="password"
               show-password-on="click"
-              placeholder="输入 STT API Key"
+              :placeholder="t('setting.sttApiKeyPlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="模型">
+          <n-form-item :label="t('setting.sttModel')">
             <n-input
               v-model:value="sttForm.model"
-              placeholder="例如 whisper-1"
+              :placeholder="t('setting.sttModelPlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="语言">
+          <n-form-item :label="t('setting.sttLanguage')">
             <n-select
               v-model:value="sttForm.language"
               :options="languageOptions"
-              placeholder="选择识别语言（可选）"
+              :placeholder="t('setting.sttLanguagePlaceholder')"
               clearable
             />
           </n-form-item>
           <n-space justify="end">
-            <n-button @click="resetStt">重置</n-button>
-            <n-button type="primary" @click="saveStt">保存 STT 设置</n-button>
+            <n-button @click="resetStt">{{ t('setting.sttReset') }}</n-button>
+            <n-button type="primary" @click="saveStt">{{ t('setting.sttSave') }}</n-button>
           </n-space>
         </n-form>
       </n-card>
 
       <!-- TTS 设置卡片 -->
-      <n-card title="语音合成 (TTS)" class="setting-card">
+      <n-card :title="t('setting.tts')" class="setting-card">
         <n-form :model="ttsForm" label-placement="top">
-          <n-form-item label="TTS 服务商">
+          <n-form-item :label="t('setting.ttsProvider')">
             <n-select
               v-model:value="ttsForm.provider"
               :options="ttsProviders"
-              placeholder="选择 TTS 服务商"
+              :placeholder="t('setting.ttsProviderPlaceholder')"
             />
           </n-form-item>
           <n-form-item label="API Key">
@@ -201,23 +200,23 @@
               v-model:value="ttsForm.apiKey"
               type="password"
               show-password-on="click"
-              placeholder="输入 TTS API Key"
+              :placeholder="t('setting.ttsApiKeyPlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="模型">
+          <n-form-item :label="t('setting.ttsModel')">
             <n-input
               v-model:value="ttsForm.model"
-              placeholder="例如 tts-1"
+              :placeholder="t('setting.ttsModelPlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="语音">
+          <n-form-item :label="t('setting.ttsVoice')">
             <n-select
               v-model:value="ttsForm.voice"
               :options="voiceOptions"
-              placeholder="选择语音"
+              :placeholder="t('setting.ttsVoicePlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="语速">
+          <n-form-item :label="t('setting.ttsSpeed')">
             <n-slider
               v-model:value="ttsForm.speed"
               :min="0.25"
@@ -227,8 +226,8 @@
             />
           </n-form-item>
           <n-space justify="end">
-            <n-button @click="resetTts">重置</n-button>
-            <n-button type="primary" @click="saveTts">保存 TTS 设置</n-button>
+            <n-button @click="resetTts">{{ t('setting.ttsReset') }}</n-button>
+            <n-button type="primary" @click="saveTts">{{ t('setting.ttsSave') }}</n-button>
           </n-space>
         </n-form>
       </n-card>
@@ -239,6 +238,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
 import { useTheme } from '@/composables/useTheme'
 import {
@@ -251,6 +251,7 @@ import {
 } from '@/composables/useNotify'
 
 const message = useMessage()
+const { t } = useI18n()
 const { mode, setMode } = useTheme()
 const {
   notifySettings,
@@ -280,7 +281,7 @@ const sttProviders = [
   { label: 'OpenAI Whisper', value: 'openai' },
   { label: 'Azure Speech', value: 'azure' },
   { label: 'Google Speech-to-Text', value: 'google' },
-  { label: '自定义', value: 'custom' },
+  { label: 'Custom', value: 'custom' },
 ]
 
 const ttsProviders = [
@@ -288,17 +289,16 @@ const ttsProviders = [
   { label: 'Azure Speech', value: 'azure' },
   { label: 'Google Text-to-Speech', value: 'google' },
   { label: 'Edge TTS', value: 'edge' },
-  { label: '自定义', value: 'custom' },
+  { label: 'Custom', value: 'custom' },
 ]
-
-const languageOptions = [
-  { label: '自动检测', value: 'auto' },
-  { label: '中文（简体）', value: 'zh-CN' },
-  { label: '中文（繁体）', value: 'zh-TW' },
-  { label: 'English', value: 'en' },
-  { label: '日本語', value: 'ja' },
-  { label: '한국어', value: 'ko' },
-]
+const languageOptions = computed(() => [
+  { label: t('setting.langAuto'), value: 'auto' },
+  { label: t('setting.langZhCN'), value: 'zh-CN' },
+  { label: t('setting.langZhTW'), value: 'zh-TW' },
+  { label: t('setting.langEn'), value: 'en' },
+  { label: t('setting.langJa'), value: 'ja' },
+  { label: t('setting.langKo'), value: 'ko' },
+])
 
 const voiceOptions = [
   { label: 'Alloy', value: 'alloy' },
@@ -309,24 +309,16 @@ const voiceOptions = [
   { label: 'Shimmer', value: 'shimmer' },
 ]
 
-const soundOptions: { label: string; value: NotifySoundId }[] = [
-  { label: '随机柔和 · 推荐', value: 'random' },
-  { label: '轻风 Breeze', value: 'breeze' },
-  { label: '晨露 Dew', value: 'dew' },
-  { label: '摇篮 Lullaby', value: 'lullaby' },
-  { label: '花瓣 Petal', value: 'petal' },
-  { label: '暖意 Warmth', value: 'warmth' },
-  { label: '涟漪 Ripple', value: 'ripple' },
-  { label: '薄雾 Mist', value: 'mist' },
-  { label: '余烬 Ember', value: 'ember' },
-  { label: '云朵 Cloud', value: 'cloud' },
-  { label: '轻语 Hush', value: 'hush' },
-  { label: '破晓 Dawn', value: 'dawn' },
-  { label: '丝绸 Silk', value: 'silk' },
-  { label: '月色 Moon', value: 'moon' },
-  { label: '细雨 Rain', value: 'rain' },
-  { label: '无音效', value: 'none' },
-]
+const soundOptions = computed<{ label: string; value: NotifySoundId }[]>(() => [
+  { label: t('setting.soundRandom'), value: 'random' }, { label: t('setting.soundBreeze'), value: 'breeze' },
+  { label: t('setting.soundDew'), value: 'dew' }, { label: t('setting.soundLullaby'), value: 'lullaby' },
+  { label: t('setting.soundPetal'), value: 'petal' }, { label: t('setting.soundWarmth'), value: 'warmth' },
+  { label: t('setting.soundRipple'), value: 'ripple' }, { label: t('setting.soundMist'), value: 'mist' },
+  { label: t('setting.soundEmber'), value: 'ember' }, { label: t('setting.soundCloud'), value: 'cloud' },
+  { label: t('setting.soundHush'), value: 'hush' }, { label: t('setting.soundDawn'), value: 'dawn' },
+  { label: t('setting.soundSilk'), value: 'silk' }, { label: t('setting.soundMoon'), value: 'moon' },
+  { label: t('setting.soundRain'), value: 'rain' }, { label: t('setting.soundNone'), value: 'none' },
+])
 
 
 
@@ -380,21 +372,21 @@ async function saveNotify() {
   if (notifyForm.value.desktopNotify) {
     const perm = await requestDesktopNotifyPermission()
     if (perm === 'denied') {
-      message.warning('系统通知权限被拒绝，请在系统设置中允许 Symbix 通知')
+      message.warning(t('setting.notifyPermDenied'))
     } else if (perm === 'granted') {
-      message.success('提醒设置已保存，系统通知已授权')
+      message.success(t('setting.notifySavedWithPerm'))
     } else {
-      message.success('提醒设置已保存')
+      message.success(t('setting.notifySaved'))
     }
   } else {
-    message.success('提醒设置已保存')
+    message.success(t('setting.notifySaved'))
   }
 }
 
 function resetNotify() {
   resetNotifySettings()
   notifyForm.value = { ...defaultSettings }
-  message.info('提醒设置已重置')
+  message.info(t('setting.notifyReset'))
 }
 
 function previewSound() {
@@ -410,34 +402,34 @@ async function testNotify() {
     await requestDesktopNotifyPermission()
   }
   await notifyTaskComplete({
-    title: 'Symbix · 测试提醒',
-    body: '这是一条测试通知，我会一直陪着你～',
+    title: t('chat.taskCompleteTitle'),
+    body: t('setting.testNotifyBody'),
     forceDesktop: true,
   })
-  message.info('已触发测试提醒（音效 + 系统通知）')
+  message.info(t('setting.testNotifyTriggered'))
 }
 
 
 function saveStt() {
   localStorage.setItem(STT_KEY, JSON.stringify(sttForm.value))
-  message.success('STT 设置已保存')
+  message.success(t('setting.sttSaved'))
 }
 
 function resetStt() {
   sttForm.value = { ...defaultStt }
   localStorage.removeItem(STT_KEY)
-  message.info('STT 设置已重置')
+  message.info(t('setting.sttResetInfo'))
 }
 
 function saveTts() {
   localStorage.setItem(TTS_KEY, JSON.stringify(ttsForm.value))
-  message.success('TTS 设置已保存')
+  message.success(t('setting.ttsSaved'))
 }
 
 function resetTts() {
   ttsForm.value = { ...defaultTts }
   localStorage.removeItem(TTS_KEY)
-  message.info('TTS 设置已重置')
+  message.info(t('setting.ttsResetInfo'))
 }
 </script>
 

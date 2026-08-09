@@ -3,16 +3,16 @@
     <div v-if="activePanel === 'files'" class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }">
       <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
       <div class="side-panel-header">
-        <span class="side-panel-title">文件浏览器</span>
+        <span class="side-panel-title">{{ $t('filePanel.title') }}</span>
         <div class="side-panel-actions">
-          <button type="button" class="panel-action-btn" title="选择电脑上的目录" @click="chooseDirectory">打开目录</button>
-          <button type="button" class="panel-icon-btn" title="刷新" @click="loadDirectory(currentPath)">↻</button>
-          <button type="button" class="panel-icon-btn close-btn" title="关闭" @click="emit('update:activePanel', null)">×</button>
+          <button type="button" class="panel-action-btn" :title="$t('filePanel.openDir')" @click="chooseDirectory">{{ $t('filePanel.openDir') }}</button>
+          <button type="button" class="panel-icon-btn" :title="$t('filePanel.refresh')" @click="loadDirectory(currentPath)">↻</button>
+          <button type="button" class="panel-icon-btn close-btn" :title="$t('filePanel.close')" @click="emit('update:activePanel', null)">×</button>
         </div>
       </div>
 
       <div class="breadcrumb">
-        <button type="button" @click="loadDirectory('.')">项目</button>
+        <button type="button" @click="loadDirectory('.')">{{ $t('filePanel.project') }}</button>
         <template v-if="isExternalPath">
           <span>/</span>
           <button type="button" @click="loadDirectory(externalRoot)">{{ externalRootName }}</button>
@@ -26,7 +26,7 @@
       </div>
 
       <div v-if="error" class="error">{{ error }}</div>
-      <div v-if="loading" class="empty">加载中…</div>
+      <div v-if="loading" class="empty">{{ $t('filePanel.loading') }}</div>
 
       <div v-else class="file-list">
         <button
@@ -35,7 +35,7 @@
           class="file-row"
           @click="loadDirectory(parentPath)"
         >
-          <span>↩</span><span>返回上级</span>
+          <span>↩</span><span>{{ $t('filePanel.backParent') }}</span>
         </button>
 
         <button
@@ -50,14 +50,14 @@
           <small v-if="entry.type === 'file'">{{ formatSize(entry.size) }}</small>
         </button>
 
-        <div v-if="entries.length === 0" class="empty">此文件夹为空</div>
+        <div v-if="entries.length === 0" class="empty">{{ $t('filePanel.empty') }}</div>
       </div>
 
       <div v-if="selectedFile" class="editor">
         <div class="editor-header">
           <span>{{ selectedFile.name }}</span>
-          <button type="button" @click="saveFile">保存</button>
-          <button type="button" @click="deleteFile">删除</button>
+          <button type="button" @click="saveFile">{{ $t('filePanel.save') }}</button>
+          <button type="button" @click="deleteFile">{{ $t('filePanel.delete') }}</button>
         </div>
         <textarea v-model="selectedFile.content" spellcheck="false" />
       </div>
@@ -67,6 +67,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 type Panel = 'files' | 'skill' | 'mcp' | 'native_tools'
@@ -89,6 +90,7 @@ const currentPath = ref('.')
 const selectedFile = ref<SelectedFile | null>(null)
 const loading = ref(false)
 const error = ref('')
+const { t } = useI18n()
 const { width: panelWidth, isResizing, startResize } = useResizablePanel({
   storageKey: 'symbix-panel-width-files',
 })
@@ -96,7 +98,7 @@ const { width: panelWidth, isResizing, startResize } = useResizablePanel({
 const pathParts = computed(() => currentPath.value === '.' ? [] : currentPath.value.split('/'))
 const isExternalPath = computed(() => /^[a-zA-Z]:[\\/]/.test(currentPath.value) || currentPath.value.startsWith('\\\\'))
 const externalRoot = ref('')
-const externalRootName = computed(() => externalRoot.value.split(/[\\/]/).filter(Boolean).pop() || '电脑目录')
+const externalRootName = computed(() => externalRoot.value.split(/[\\/]/).filter(Boolean).pop() || t('filePanel.computerDir'))
 const breadcrumbParts = computed(() => {
   if (!isExternalPath.value) return pathParts.value
   const root = externalRoot.value.replace(/[\\/]+$/, '')
@@ -111,7 +113,7 @@ const parentPath = computed(() => (
 async function request(path: string, options?: RequestInit) {
   const response = await fetch(`${backendUrl}${path}`, options)
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.detail || `请求失败 (${response.status})`)
+  if (!response.ok) throw new Error(data.detail || t('filePanel.requestError', { status: response.status }))
   return data
 }
 
@@ -125,7 +127,7 @@ async function loadDirectory(path: string) {
     currentPath.value = data.path || path
     entries.value = data.entries || []
   } catch (err: any) {
-    error.value = err.message || '目录加载失败'
+    error.value = err.message || t('filePanel.loadError')
   } finally {
     loading.value = false
   }
@@ -134,13 +136,13 @@ async function loadDirectory(path: string) {
 async function chooseDirectory() {
   try {
     const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({ directory: true, multiple: false, title: '选择要浏览的目录' })
+    const selected = await open({ directory: true, multiple: false, title: t('filePanel.openDirTitle') })
     if (typeof selected === 'string' && selected) {
       externalRoot.value = selected
       await loadDirectory(selected)
     }
   } catch (err) {
-    error.value = '当前环境无法打开系统目录选择框,请使用桌面版 Tauri。'
+    error.value = t('filePanel.envError')
     console.warn('选择目录失败:', err)
   }
 }
@@ -164,7 +166,7 @@ async function openEntry(entry: FileEntry) {
   try {
     selectedFile.value = await request(`/api/files/read?path=${encodeURIComponent(entry.path)}`)
   } catch (err: any) {
-    error.value = err.message || '文件读取失败'
+    error.value = err.message || t('filePanel.fileReadError')
   }
 }
 
@@ -178,13 +180,13 @@ async function saveFile() {
       body: JSON.stringify(selectedFile.value),
     })
   } catch (err: any) {
-    error.value = err.message || '文件保存失败'
+    error.value = err.message || t('filePanel.fileSaveError')
   }
 }
 
 async function deleteFile() {
   if (!selectedFile.value) return
-  if (!window.confirm(`确定删除「${selectedFile.value.name}」吗？`)) return
+  if (!window.confirm(t('filePanel.deleteConfirm', { name: selectedFile.value.name }))) return
 
   try {
     await request(`/api/files/item?path=${encodeURIComponent(selectedFile.value.path)}`, {
@@ -192,7 +194,7 @@ async function deleteFile() {
     })
     await loadDirectory(currentPath.value)
   } catch (err: any) {
-    error.value = err.message || '文件删除失败'
+    error.value = err.message || t('filePanel.fileDeleteError')
   }
 }
 

@@ -11,24 +11,24 @@
       <div class="btn-col">
         <n-tooltip placement="right" trigger="hover">
             <template #trigger>
-              <button class="icon-btn" @click="openChatWindow" aria-label="对话">
+              <button class="icon-btn" @click="openChatWindow" :aria-label="$t('home.chat')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
               </button>
             </template>
-            对话
+            {{ $t('home.chat') }}
           </n-tooltip>
 
         <n-tooltip placement="right" trigger="hover">
           <template #trigger>
-            <button class="icon-btn" @click="openSkinWindow" aria-label="换肤">
+            <button class="icon-btn" @click="openSkinWindow" :aria-label="$t('home.skin')">
               <svg width="18" height="18" viewBox="0 0 1024 1024" fill="currentColor">
                 <path d="M752.8 143.2c3.2 0 6.3 1.3 8.5 3.5L955.6 341c5.5 5.5 5.5 14.3 0 19.8L864 452.5l-96-96V895H448v1H256V357.5l-96 96-91.6-91.6c-5.5-5.5-5.5-14.3 0-19.8L263 147.5c2.3-2.3 5.3-3.5 8.5-3.5H351c33.4 26.9 92.6 64 164.6 64 72.1 0 131.4-37.2 164.8-64.2l72.3-0.6h0.1z m0-64h-0.6l-83.8 0.7c-7.6 0.1-15 2.8-20.7 7.8-19.6 17-71.3 56.3-132.1 56.3-60.6 0-112.3-39.1-132-56.2-5.8-5.1-13.3-7.8-21-7.8h-91c-20.2 0-39.5 8-53.7 22.3L23.1 296.8c-30.5 30.5-30.5 79.8 0 110.3L128 512c8.8 8.8 20.4 13.3 32 13.3s23.2-4.4 32-13.3v416c0 17.7 14.3 32 32 32h288v-1h288c17.7 0 32-14.3 32-32V511c8.8 8.8 20.4 13.3 32 13.3s23.2-4.4 32-13.3l104.8-104.8c30.5-30.5 30.5-79.8 0-110.3L806.5 101.5c-14.2-14.2-33.6-22.3-53.7-22.3z"/>
               </svg>
             </button>
           </template>
-          换肤
+          {{ $t('home.skin') }}
         </n-tooltip>
 
         <n-tooltip placement="right" trigger="hover">
@@ -36,7 +36,7 @@
             <button
               class="icon-btn mode-btn"
               @click="togglePetMode"
-              :aria-label="petMode === 'relax' ? '切换工作' : '切换休闲'"
+              :aria-label="petMode === 'relax' ? $t('home.switchWork') : $t('home.switchRelax')"
             >
               <!-- 当前休闲 → 显示公文包,提示可切换到工作 -->
               <svg v-if="petMode === 'relax'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -52,19 +52,19 @@
               </svg>
             </button>
           </template>
-          {{ petMode === 'relax' ? '切换工作模式' : '切换休闲模式' }}
+          {{ petMode === 'relax' ? $t('home.toggleWork') : $t('home.toggleRelax') }}
         </n-tooltip>
 
         <n-tooltip placement="right" trigger="hover">
           <template #trigger>
-            <button class="icon-btn" @click="openSettingWindow" aria-label="设置">
+            <button class="icon-btn" @click="openSettingWindow" :aria-label="$t('home.settings')">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
               </svg>
             </button>
           </template>
-          设置
+          {{ $t('home.settings') }}
         </n-tooltip>
       </div>
     </div>
@@ -84,13 +84,16 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
 
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 const router = useRouter()
 const appWindow = getCurrentWindow()
 
 // ---- 状态 ----
 const bubbleText = ref('')
 
-const hello_list = ['今天想做些什么？', '欢迎回来！', '需要帮忙吗？', '有什么想聊的？']
+const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 
 // ---- 桌宠模式 ----\r
@@ -103,12 +106,12 @@ function togglePetMode() {
   if (petMode.value === 'work') {
     playState('idle', false)
     snapToBottomRight()
-    showBubble('工作模式 · 我会乖乖待着', 2000)
+    showBubble(t('home.workModeHint'), 2000)
   } else {
     if (currentState === 'idle') {
       scheduleRandom(800)
     }
-    showBubble('休闲模式 · 出门逛逛～', 2000)
+    showBubble(t('home.relaxModeHint'), 2000)
   }
 }
 
@@ -167,14 +170,14 @@ const STATE_FPS = {
   runningLeft: 8,
 } as const
 
-// 一次性动作播完后留一点“落地/回神”的时间,避免立刻硬切到 idle。
+// 一次性动作播完后留一点"落地/回神"的时间,避免立刻硬切到 idle。
 const ACTION_SETTLE_MS: Partial<Record<PetState, number>> = {
   waving: 220,
   jumping: 320,
   failed: 520,
   review: 700,
 }
-// 思考先停一下再开始,让“收到任务 → 回神 → 思考”更自然。
+// 思考先停一下再开始,让"收到任务 → 回神 → 思考"更自然。
 const ACTION_START_DELAY_MS: Partial<Record<PetState, number>> = {
   review: 480,
 }
@@ -186,10 +189,10 @@ const ROWS = {
   runningLeft:  { row: 2, frames: 8 },
   waving:       { row: 3, frames: 4 },
   jumping:      { row: 4, frames: 5 },
-  // 原始第 7 帧已经恢复站立,放进失败动作会造成“趴下后突然起身”的跳变。
+  // 原始第 7 帧已经恢复站立,放进失败动作会造成"趴下后突然起身"的跳变。
   // 这里的 frames 是优化后的播放序列长度,不是精灵图原始帧数。
   failed:       { row: 5, frames: 7 },
-  waiting:      { row: 6, frames: 6 }, // 被抱起时循环（备用）
+  waiting:      { row: 6, frames: 6 }, // 被抱起时循环(备用)
   running:      { row: 7, frames: 6 },
   review:       { row: 8, frames: 6 },
 } as const
@@ -225,10 +228,10 @@ let lastRandomAction: PetState | '' = ''
 let agentThinking = false
 
 /**
- * 拖拽奔跑（Windows / Tauri 要点）：
- * 1. startDragging() 的 Promise 会立刻 resolve，不能当“拖拽结束”
- * 2. 进入原生拖拽后 webview 常立刻收到 pointerup，也不能靠它结束
- * 3. 正确做法：真正发生窗口位移才进入 running；位移停顿一段时间再回 idle
+ * 拖拽奔跑(Windows / Tauri 要点):
+ * 1. startDragging() 的 Promise 会立刻 resolve,不能当"拖拽结束"
+ * 2. 进入原生拖拽后 webview 常立刻收到 pointerup,也不能靠它结束
+ * 3. 正确做法:真正发生窗口位移才进入 running;位移停顿一段时间再回 idle
  */
 let dragSession = false
 let dragMoved = false
@@ -243,10 +246,10 @@ let dragWatchTimer: ReturnType<typeof setInterval> | null = null
 let lastMoveAt = 0
 let sessionStartAt = 0
 
-const DRAG_DIR_THRESHOLD = 3 // 逻辑像素：超过才算“在拖”
-const DRAG_STOP_MS = 120 // 停顿 → 先停奔跑动画（会话保持，便于继续拖再跑）
-const DRAG_STALE_MS = 1800 // 很久无位移 → 兜底结束会话（Windows 常丢真实 pointerup）
-const CLICK_IDLE_MS = 400 // 按下后几乎没动 → 当点击，结束会话
+const DRAG_DIR_THRESHOLD = 3 // 逻辑像素:超过才算"在拖"
+const DRAG_STOP_MS = 120 // 停顿 → 先停奔跑动画(会话保持,便于继续拖再跑)
+const DRAG_STALE_MS = 1800 // 很久无位移 → 兜底结束会话(Windows 常丢真实 pointerup)
+const CLICK_IDLE_MS = 400 // 按下后几乎没动 → 当点击,结束会话
 const EARLY_POINTER_UP_MS = 300 // startDragging 后这段内的 pointerup 一律忽略
 
 function clearDragWatch() {
@@ -265,7 +268,7 @@ function detachPointerEndListeners() {
 
 function attachPointerEndListeners() {
   detachPointerEndListeners()
-  // capture：尽量在被吞掉前收到松手；真实松手用于立刻停跑
+  // capture:尽量在被吞掉前收到松手;真实松手用于立刻停跑
   window.addEventListener('pointerup', onGlobalPointerEnd, true)
   window.addEventListener('mouseup', onGlobalPointerEnd, true)
   window.addEventListener('pointercancel', onGlobalPointerEnd, true)
@@ -287,16 +290,16 @@ function endDragSession(opts: { backToIdle: boolean; swallowClick: boolean }) {
   if (opts.swallowClick || dragMoved) suppressNextClick = true
   const wasRunning = isRunningState()
   dragMoved = false
-  // onMoved 监听保持常驻，不在每次会话结束时拆掉
+  // onMoved 监听保持常驻,不在每次会话结束时拆掉
   if (opts.backToIdle && wasRunning) playState('idle', false)
 }
 
 function onGlobalPointerEnd() {
   if (!dragSession) return
-  // Windows：startDragging 后立刻 pointerup，绝不能结束会话（否则轮询/位移检测全废）
+  // Windows:startDragging 后立刻 pointerup,绝不能结束会话(否则轮询/位移检测全废)
   const sinceStart = performance.now() - sessionStartAt
   if (sinceStart < EARLY_POINTER_UP_MS) return
-  // 已真正拖动过：松手 → idle；纯点击：交给 click / 超时
+  // 已真正拖动过:松手 → idle;纯点击:交给 click / 超时
   if (!dragMoved) return
   endDragSession({ backToIdle: true, swallowClick: true })
 }
@@ -356,7 +359,7 @@ function startDragWatch() {
   lastMoveAt = performance.now()
   let polling = false
 
-  // 50ms 轮询 outerPosition：onMoved 在部分 Windows 场景会漏事件
+  // 50ms 轮询 outerPosition:onMoved 在部分 Windows 场景会漏事件
   dragWatchTimer = setInterval(() => {
     if (!dragSession) {
       clearDragWatch()
@@ -385,17 +388,17 @@ function checkDragIdle() {
   if (!dragSession) return
   const idleFor = performance.now() - lastMoveAt
   if (dragMoved) {
-    // 只停动画，不结束会话：按住鼠标停一下再拖，应能继续跑
+    // 只停动画,不结束会话:按住鼠标停一下再拖,应能继续跑
     if (idleFor >= DRAG_STOP_MS && isRunningState()) {
       playState('idle', false)
       dragDir = null
     }
-    // 兜底：很久无位移且收不到 pointerup 时结束
+    // 兜底:很久无位移且收不到 pointerup 时结束
     if (idleFor >= DRAG_STALE_MS) {
       endDragSession({ backToIdle: true, swallowClick: true })
     }
   } else if (idleFor >= CLICK_IDLE_MS) {
-    // 按下后几乎没移动：结束会话，保留 click
+    // 按下后几乎没移动:结束会话,保留 click
     endDragSession({ backToIdle: false, swallowClick: false })
   }
 }
@@ -405,8 +408,8 @@ async function ensureDragMovedListener() {
   try {
     unlistenMoved = await appWindow.onMoved(({ payload }) => {
       if (!dragSession) return
-      // 拖动期间不要每个窗口位移事件都异步查询 scaleFactor；复用会话开始时
-      // 缓存的比例，避免事件堆积导致方向判断和动画切换一卡一卡。
+      // 拖动期间不要每个窗口位移事件都异步查询 scaleFactor;复用会话开始时
+      // 缓存的比例,避免事件堆积导致方向判断和动画切换一卡一卡。
       onDragPosition(payload.x / dragScaleFactor)
     })
   } catch (e) {
@@ -419,7 +422,7 @@ async function onCanvasMousedown(e: MouseEvent) {
   if (petMode.value === 'work') return
   if (e.button !== 0) return
 
-  // 新会话：不立刻播奔跑，等窗口真的位移
+  // 新会话:不立刻播奔跑,等窗口真的位移
   endDragSession({ backToIdle: false, swallowClick: false })
   dragSession = true
   dragMoved = false
@@ -436,7 +439,7 @@ async function onCanvasMousedown(e: MouseEvent) {
   startDragWatch()
 
   try {
-    // 不要 await 当结束信号：Windows 上几乎立刻 resolve
+    // 不要 await 当结束信号:Windows 上几乎立刻 resolve
     void appWindow.startDragging()
   } catch (err) {
     console.warn('startDragging failed:', err)
@@ -468,7 +471,7 @@ function getFrames(
 
 function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
   if (!sprite || !baseSource) return
-  // 同一循环动作不要重开，否则拖拽中反复 set textures 会看起来只闪一帧
+  // 同一循环动作不要重开,否则拖拽中反复 set textures 会看起来只闪一帧
   if (state === currentState && isLoopState(state) && sprite.playing) {
     return
   }
@@ -482,10 +485,10 @@ function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
   )
   sprite.animationSpeed = animationSpeedFor(state)
   sprite.loop = isLoopState(state)
-  // 清掉上一个一次性动作的回调，避免旧动作完成时抢先把新动作切回 idle。
+  // 清掉上一个一次性动作的回调,避免旧动作完成时抢先把新动作切回 idle。
   sprite.onComplete = undefined
   // 更换 textures 后显式从第 0 帧开始播放。仅设置 textures 不保证 Pixi
-  // 在所有版本/场景下仍会继续推进帧，尤其是上一个动作刚刚结束时。
+  // 在所有版本/场景下仍会继续推进帧,尤其是上一个动作刚刚结束时。
   sprite.gotoAndPlay(0)
 
   if (returnToIdle && !sprite.loop) {
@@ -576,19 +579,19 @@ function scheduleRandom(delayMs?: number) {
 }
 
 function handlePetClick() {
-  // 拖拽结束后紧随的 click 不触发，避免拖完立刻 jump
+  // 拖拽结束后紧随的 click 不触发,避免拖完立刻 jump
   if (suppressNextClick || dragMoved) {
     suppressNextClick = false
     return
   }
-  // 若仍在会话但未真正拖动：当作点击
+  // 若仍在会话但未真正拖动:当作点击
   if (dragSession && !dragMoved) {
     endDragSession({ backToIdle: false, swallowClick: false })
   }
-  // 工作模式下只播气泡+waving，不做激进交互
+  // 工作模式下只播气泡+waving,不做激进交互
   if (petMode.value === 'work') {
     playState('waving')
-    showBubble('正在工作中…有什么事吗？', 2500)
+    showBubble(t('home.workingDnd'), 2500)
     return
   }
   // 点击时所有动作都可触发,包括 review(思考)
@@ -614,7 +617,7 @@ function showBubble(text: string, duration = 3000) {
   }, duration)
 }
 
-// ---- 后端桌宠事件（emit_pet_action → /pet/events SSE）----
+// ---- 后端桌宠事件(emit_pet_action → /pet/events SSE)----
 const BACKEND_URL = 'http://127.0.0.1:8000'
 const ACTION_ALIASES: Record<string, PetState> = {
   happy: 'jumping',
@@ -652,7 +655,7 @@ function applyRemotePetAction(payload: {
   bubble?: string
   loop?: boolean
 }) {
-  // 工作模式下忽略远程动作（仅接收 bubble 消息）
+  // 工作模式下忽略远程动作(仅接收 bubble 消息)
   if (petMode.value === 'work') {
     if (payload.bubble) showBubble(payload.bubble, 3200)
     return
@@ -660,7 +663,7 @@ function applyRemotePetAction(payload: {
   if (payload.id && payload.id === lastRemoteActionId) return
   if (payload.id) lastRemoteActionId = payload.id
 
-  // 拖爪奔跑优先，避免远程 idle 打断
+  // 拖爪奔跑优先,避免远程 idle 打断
   if (dragSession && dragMoved) return
 
   const state = resolvePetState(payload.action)
@@ -668,7 +671,7 @@ function applyRemotePetAction(payload: {
     console.warn('[pet] unknown action:', payload.action)
     return
   }
-  // 远程循环动作（waiting/running）不要强制回 idle；一次性动作播完回 idle
+  // 远程循环动作(waiting/running)不要强制回 idle;一次性动作播完回 idle
   const returnToIdle = !isLoopState(state)
   playState(state, returnToIdle)
   if (payload.bubble) showBubble(payload.bubble, 3200)
@@ -691,10 +694,10 @@ function applyAgentStatus(payload: { status?: AgentStatus; bubble?: string }) {
   agentThinking = false
   if (status === 'complete') {
     playState('jumping', true)
-    showBubble(payload.bubble || '完成啦!', 2600)
+    showBubble(payload.bubble || t('chat.complete'), 2600)
   } else if (status === 'error') {
     playState('failed', true)
-    showBubble(payload.bubble || '这次没有完成...', 2800)
+    showBubble(payload.bubble || t('chat.errorOccurred'), 2800)
   } else {
     playState('idle', false)
     if (payload.bubble) showBubble(payload.bubble, 2200)
@@ -764,7 +767,7 @@ async function connectPetEvents() {
       if (!signal.aborted) schedulePetReconnect()
     } catch (e: any) {
       if (signal.aborted) return
-      console.warn('[pet] events disconnected, retry…', e?.message || e)
+      console.warn('[pet] events disconnected, retry...', e?.message || e)
       schedulePetReconnect()
     }
   }
@@ -792,13 +795,13 @@ function stopPetEvents() {
 
 async function hangAround()
 {
-  
+
 }
 
 
 async function revealWindow(win: WebviewWindow): Promise<boolean> {
   try {
-    // 强制还原（不依赖 isMinimized 查询结果，避免权限/状态误判）
+    // 强制还原(不依赖 isMinimized 查询结果,避免权限/状态误判)
     try { await win.unminimize() } catch (e) {
       console.warn('unminimize failed:', e)
     }
@@ -808,7 +811,7 @@ async function revealWindow(win: WebviewWindow): Promise<boolean> {
     try { await win.setFocus() } catch (e) {
       console.warn('setFocus failed:', e)
     }
-    // 任务栏闪烁提示（即使前台抢焦点被系统拦截也能看见）
+    // 任务栏闪烁提示(即使前台抢焦点被系统拦截也能看见)
     try {
       const { UserAttentionType } = await import('@tauri-apps/api/window')
       await win.requestUserAttention(UserAttentionType.Informational)
@@ -834,7 +837,7 @@ async function openOrCreateWindow(
     if (existing) {
       const ok = await revealWindow(existing)
       if (ok) return
-      // 旧窗口已失效，尝试关闭后重建
+      // 旧窗口已失效,尝试关闭后重建
       try { await existing.close() } catch {}
     }
     new WebviewWindow(label, {
@@ -848,7 +851,7 @@ async function openOrCreateWindow(
     })
   } catch (e) {
     console.error(`Error opening window '${label}':`, e)
-    // 最后兜底：直接新建
+    // 最后兜底:直接新建
     try {
       new WebviewWindow(label, {
         url: options.url,
@@ -900,19 +903,19 @@ let lastPetSwitchKey = ''
 async function loadPetTexture(spritesheetPath: string) {
   if (!app || !sprite) return
 
-  // 规范化路径（Assets.load 需要 / 开头或完整 URL）
+  // 规范化路径(Assets.load 需要 / 开头或完整 URL)
   let path = spritesheetPath || ''
   if (path && !path.startsWith('http') && !path.startsWith('/')) {
     path = '/' + path
   }
-  // 加 cache-bust，避免同路径换图后 Pixi 命中旧缓存
+  // 加 cache-bust,避免同路径换图后 Pixi 命中旧缓存
   const cacheBust = path.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`
   const loadPath = `${path}${cacheBust}`
 
-  // 卸载旧纹理（失败忽略）
+  // 卸载旧纹理(失败忽略)
   try {
     if (baseSource) {
-      // 尝试按当前 path 卸载；失败也不阻塞新加载
+      // 尝试按当前 path 卸载;失败也不阻塞新加载
       await Assets.unload(path).catch(() => undefined)
     }
   } catch { /* ignore */ }
@@ -936,9 +939,9 @@ async function onPetSwitched(payload: {
   displayName: string
 }) {
   const key = `${payload.petId}|${payload.spritesheetPath}`
-  // 去重：emit + emitTo + storage 可能连发
+  // 去重:emit + emitTo + storage 可能连发
   if (key && key === lastPetSwitchKey) {
-    // 允许短时间后再次切换同一皮肤（用户手动再点）
+    // 允许短时间后再次切换同一皮肤(用户手动再点)
   }
   lastPetSwitchKey = key
   console.log('[pet] pet-switched received:', payload)
@@ -947,10 +950,10 @@ async function onPetSwitched(payload: {
     if (payload.petId) {
       try { localStorage.setItem('currentPetId', payload.petId) } catch { /* ignore */ }
     }
-    showBubble(`已换装「${payload.displayName || payload.petId}」`, 2000)
+    showBubble(t('home.skinSwitched', { name: payload.displayName || payload.petId }), 2000)
   } catch (e: any) {
     console.error('[pet] failed to switch pet texture:', e)
-    showBubble('换装失败，请检查皮肤文件', 2500)
+    showBubble(t('home.skinSwitchFailed'), 2500)
   }
 }
 
@@ -996,7 +999,7 @@ onMounted(async () => {
 
   app.stage.addChild(sprite)
   scheduleRandom()
-  // 订阅后端 emit_pet_action → SSE，驱动远程动作
+  // 订阅后端 emit_pet_action → SSE,驱动远程动作
   void connectPetEvents()
 
   // 聊天窗口通过 Tauri event 广播 Agent 生命周期,避免 thinking 动作只播放一遍。
@@ -1009,7 +1012,7 @@ onMounted(async () => {
     console.warn('[pet] failed to listen agent-status:', e)
   }
 
-  // 订阅皮肤切换事件（Tauri 跨窗口）
+  // 订阅皮肤切换事件(Tauri 跨窗口)
   try {
     const { listen } = await import('@tauri-apps/api/event')
     unlistenPetSwitched = await listen<{
@@ -1024,7 +1027,7 @@ onMounted(async () => {
     console.warn('[pet] failed to listen pet-switched event:', e)
   }
 
-  // 兜底：同源多 webview 的 localStorage 信号（skin 窗写入 petSwitchSignal）
+  // 兜底:同源多 webview 的 localStorage 信号(skin 窗写入 petSwitchSignal)
   onPetStorage = (e: StorageEvent) => {
     if (e.key !== 'petSwitchSignal' || !e.newValue) return
     try {
@@ -1170,7 +1173,7 @@ onUnmounted(() => {
   border-color: rgba(211, 85, 90, 0.4);
 }
 
-/* 模式按钮 — 统一风格，颜色继承 icon-btn 默认 accent 色 */
+/* 模式按钮 - 统一风格,颜色继承 icon-btn 默认 accent 色 */
 .mode-btn {
   transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
