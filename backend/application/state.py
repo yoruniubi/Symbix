@@ -90,6 +90,10 @@ APPROVAL_TOOLS = {
     "create_skill",
 }
 _pending_approvals: dict[str, dict] = {}
+# approval 请求会先从 pending 中取出上下文;在后续 LLM 请求尚未完成时,
+# 重复点击/重复提交不能再看到 pending,否则会被误报为 404。记录处理中 ID,
+# 让路由可以返回明确的“正在处理”状态,避免同一个写文件工具执行两次。
+_processing_approvals: set[str] = set()
 
 # ============ 上下文压缩阈值 ============
 COMPRESS_THRESHOLD = 16

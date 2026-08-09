@@ -288,6 +288,7 @@ function handleTestMcpConnection() {
 }
 .close-btn:hover {
   color: var(--text-secondary) !important;
+  background: var(--surface-hover) !important;
 }
 .mcp-server-card {
   margin-bottom: 10px;

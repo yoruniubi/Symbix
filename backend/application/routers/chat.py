@@ -15,6 +15,7 @@ from application.state import (
     tool_registry,
     APPROVAL_TOOLS,
     _pending_approvals,
+    _processing_approvals,
 )
 from application.memory_ops import (
     maybe_compress_session,
@@ -321,12 +322,19 @@ async def chat(request: ChatRequest):
 @router.post("/chat/approve")
 async def chat_approve(req: ApproveRequest):
     print(f"[APPROVE] Received approval_id={req.approval_id}, pending keys={list(_pending_approvals.keys())}")
+    if req.approval_id in _processing_approvals:
+        print(f"[APPROVE] approval_id {req.approval_id} is already processing")
+        raise HTTPException(status_code=409, detail="approval is already being processed")
     ctx = _pending_approvals.pop(req.approval_id, None)
     if req.system_prompt:
         symbix_client.system_prompt = req.system_prompt
     if not ctx:
         print(f"[APPROVE] approval_id {req.approval_id} not found in pending")
         raise HTTPException(status_code=404, detail="approval not found")
+
+    # pop 后立即加锁,覆盖工具执行与后续模型生成期间的整个窗口。
+    # 必须在第一个 await 之前完成,才能防止并发重复审批。
+    _processing_approvals.add(req.approval_id)
 
     steps = ctx["steps"]
     user_input = ctx["user_input"]
@@ -342,157 +350,62 @@ async def chat_approve(req: ApproveRequest):
     remaining_tcs = ctx["remaining_tcs"]
 
     tool_results = []
-    if req.approve:
-        out = tool_registry.execute(pending_tc["name"], pending_tc["arguments"])
-        if not isinstance(out, str):
-            out = _json.dumps(out, ensure_ascii=False)
-        steps.append({
-            "type": "tool_result",
-            "tool_call_id": pending_tc["id"],
-            "name": pending_tc["name"],
-            "content": out,
-            "approved": True,
-        })
-    else:
-        out = f"[用户拒绝执行工具 {pending_tc['name']}]"
-        steps.append({
-            "type": "tool_result",
-            "tool_call_id": pending_tc["id"],
-            "name": pending_tc["name"],
-            "content": out,
-            "approved": False,
-        })
-    tool_results.append({
-        "tool_call_id": pending_tc["id"],
-        "role": "tool",
-        "name": pending_tc["name"],
-        "content": out,
-        "arguments": pending_tc["arguments"],
-    })
-
-    for tc in remaining_tcs:
-        if tc["id"] == pending_tc["id"]:
-            continue
-        # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
-        if tc["name"] in APPROVAL_TOOLS:
-            # raise warning about multiple approval tools in one step
-            r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
-        else:
-            r_out = tool_registry.execute(tc["name"], tc["arguments"])
-            if not isinstance(r_out, str):
-                r_out = _json.dumps(r_out, ensure_ascii=False)
-        tool_results.append({
-            "tool_call_id": tc["id"],
-            "role": "tool",
-            "name": tc["name"],
-            "content": r_out,
-            "arguments": tc["arguments"],
-        })
-        steps.append({
-            "type": "tool_result",
-            "tool_call_id": tc["id"],
-            "name": tc["name"],
-            "content": r_out,
-        })
-
-    last_reasoning = ctx.get("last_reasoning")
-    max_tool_rounds = 5
     try:
-        response = await symbix_client.chat_with_tool_results(
-            user_input=user_input,
-            history=history,
-            registry=skill_registry,
-            tools=mcp_tools,
-            tool_results=tool_results,
-            override_api_key=api_key,
-            override_api_base=api_base,
-            override_model=model,
-        )
-    except Exception as exc:
-        # 审批工具已经在上面执行过了(例如文件已经写入)。
-        # 后续模型请求失败时不能让整个审批接口返回 500,否则前端会误报
-        # “审批失败”,用户也无法区分“工具失败”和“回复生成失败”。
-        error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
-        assistant_content = error_text
-        memory.add(ctx["session_id"], "assistant", assistant_content)
-        return {
-            "status": "ok",
-            "content": assistant_content,
-            "session_id": ctx["session_id"],
-            "reasoning": last_reasoning,
-            "steps": steps,
-            "act_mode": act_mode,
-            "act_plan": act_plan,
-            "tool_executed": True,
-            "continuation_error": str(exc),
-        }
-    last_reasoning = response.get("reasoning")
-
-    while response.get("tool_calls") and round_count < max_tool_rounds:
-        round_count += 1
-        tool_results = []
-        steps.append({
-            "type": "tool_calls",
-            "reasoning": response.get("reasoning"),
-            "tool_calls": [
-                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
-                for tc in response["tool_calls"]
-            ],
-        })
-        for tc in response["tool_calls"]:
-            fn = tc.function
-            if fn.name in APPROVAL_TOOLS:
-                approval_id = str(uuid.uuid4())
-                _pending_approvals[approval_id] = {
-                    "session_id": ctx["session_id"],
-                    "user_input": user_input,
-                    "history": history,
-                    "mcp_tools": mcp_tools,
-                    "api_key": api_key,
-                    "api_base": api_base,
-                    "model": model,
-                    "steps": steps,
-                    "last_reasoning": last_reasoning,
-                    "round_count": round_count,
-                    "act_mode": act_mode,
-                    "act_plan": act_plan,
-                    "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
-                    "remaining_tcs": [
-                        {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
-                        for r in response["tool_calls"]
-                    ],
-                }
-                return {
-                    "status": "pending_approval",
-                    "approval_id": approval_id,
-                    "session_id": ctx["session_id"],
-                    "content": "",
-                    "reasoning": last_reasoning,
-                    "steps": steps,
-                    "act_mode": act_mode,
-                    "act_plan": act_plan,
-                    "pending_tool": {
-                        "tool_call_id": tc.id,
-                        "name": fn.name,
-                        "arguments": fn.arguments,
-                    },
-                }
-            out = tool_registry.execute(fn.name, fn.arguments)
+        if req.approve:
+            out = tool_registry.execute(pending_tc["name"], pending_tc["arguments"])
             if not isinstance(out, str):
                 out = _json.dumps(out, ensure_ascii=False)
-            tool_results.append({
-                "tool_call_id": tc.id,
-                "role": "tool",
-                "name": fn.name,
+            steps.append({
+                "type": "tool_result",
+                "tool_call_id": pending_tc["id"],
+                "name": pending_tc["name"],
                 "content": out,
-                "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
+                "approved": True,
+            })
+        else:
+            out = f"[用户拒绝执行工具 {pending_tc['name']}]"
+            steps.append({
+                "type": "tool_result",
+                "tool_call_id": pending_tc["id"],
+                "name": pending_tc["name"],
+                "content": out,
+                "approved": False,
+            })
+        tool_results.append({
+            "tool_call_id": pending_tc["id"],
+            "role": "tool",
+            "name": pending_tc["name"],
+            "content": out,
+            "arguments": pending_tc["arguments"],
+        })
+
+        for tc in remaining_tcs:
+            if tc["id"] == pending_tc["id"]:
+                continue
+            # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
+            if tc["name"] in APPROVAL_TOOLS:
+                # raise warning about multiple approval tools in one step
+                r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
+            else:
+                r_out = tool_registry.execute(tc["name"], tc["arguments"])
+                if not isinstance(r_out, str):
+                    r_out = _json.dumps(r_out, ensure_ascii=False)
+            tool_results.append({
+                "tool_call_id": tc["id"],
+                "role": "tool",
+                "name": tc["name"],
+                "content": r_out,
+                "arguments": tc["arguments"],
             })
             steps.append({
                 "type": "tool_result",
-                "tool_call_id": tc.id,
-                "name": fn.name,
-                "content": out,
+                "tool_call_id": tc["id"],
+                "name": tc["name"],
+                "content": r_out,
             })
+
+        last_reasoning = ctx.get("last_reasoning")
+        max_tool_rounds = 5
         try:
             response = await symbix_client.chat_with_tool_results(
                 user_input=user_input,
@@ -505,6 +418,9 @@ async def chat_approve(req: ApproveRequest):
                 override_model=model,
             )
         except Exception as exc:
+            # 审批工具已经在上面执行过了(例如文件已经写入)。
+            # 后续模型请求失败时不能让整个审批接口返回 500,否则前端会误报
+            # “审批失败”,用户也无法区分“工具失败”和“回复生成失败”。
             error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
             assistant_content = error_text
             memory.add(ctx["session_id"], "assistant", assistant_content)
@@ -521,25 +437,120 @@ async def chat_approve(req: ApproveRequest):
             }
         last_reasoning = response.get("reasoning")
 
-    assistant_content = response["content"]
-    memory.add(ctx["session_id"], "assistant", assistant_content)
+        while response.get("tool_calls") and round_count < max_tool_rounds:
+            round_count += 1
+            tool_results = []
+            steps.append({
+                "type": "tool_calls",
+                "reasoning": response.get("reasoning"),
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
+                    for tc in response["tool_calls"]
+                ],
+            })
+            for tc in response["tool_calls"]:
+                fn = tc.function
+                if fn.name in APPROVAL_TOOLS:
+                    approval_id = str(uuid.uuid4())
+                    _pending_approvals[approval_id] = {
+                        "session_id": ctx["session_id"],
+                        "user_input": user_input,
+                        "history": history,
+                        "mcp_tools": mcp_tools,
+                        "api_key": api_key,
+                        "api_base": api_base,
+                        "model": model,
+                        "steps": steps,
+                        "last_reasoning": last_reasoning,
+                        "round_count": round_count,
+                        "act_mode": act_mode,
+                        "act_plan": act_plan,
+                        "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                        "remaining_tcs": [
+                            {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
+                            for r in response["tool_calls"]
+                        ],
+                    }
+                    return {
+                        "status": "pending_approval",
+                        "approval_id": approval_id,
+                        "session_id": ctx["session_id"],
+                        "content": "",
+                        "reasoning": last_reasoning,
+                        "steps": steps,
+                        "act_mode": act_mode,
+                        "act_plan": act_plan,
+                        "pending_tool": {
+                            "tool_call_id": tc.id,
+                            "name": fn.name,
+                            "arguments": fn.arguments,
+                        },
+                    }
+                out = tool_registry.execute(fn.name, fn.arguments)
+                if not isinstance(out, str):
+                    out = _json.dumps(out, ensure_ascii=False)
+                tool_results.append({
+                    "tool_call_id": tc.id,
+                    "role": "tool",
+                    "name": fn.name,
+                    "content": out,
+                    "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
+                })
+                steps.append({
+                    "type": "tool_result",
+                    "tool_call_id": tc.id,
+                    "name": fn.name,
+                    "content": out,
+                })
+            try:
+                response = await symbix_client.chat_with_tool_results(
+                    user_input=user_input,
+                    history=history,
+                    registry=skill_registry,
+                    tools=mcp_tools,
+                    tool_results=tool_results,
+                    override_api_key=api_key,
+                    override_api_base=api_base,
+                    override_model=model,
+                )
+            except Exception as exc:
+                error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
+                assistant_content = error_text
+                memory.add(ctx["session_id"], "assistant", assistant_content)
+                return {
+                    "status": "ok",
+                    "content": assistant_content,
+                    "session_id": ctx["session_id"],
+                    "reasoning": last_reasoning,
+                    "steps": steps,
+                    "act_mode": act_mode,
+                    "act_plan": act_plan,
+                    "tool_executed": True,
+                    "continuation_error": str(exc),
+                }
+            last_reasoning = response.get("reasoning")
 
-    sid = ctx["session_id"]
-    key = ctx.get("api_key", "")
-    base = ctx.get("api_base", "")
-    mdl = ctx.get("model", "")
-    asyncio.create_task(maybe_compress_session(sid, key, base, mdl))
-    asyncio.create_task(maybe_extract_memories(sid, key, base, mdl))
+        assistant_content = response["content"]
+        memory.add(ctx["session_id"], "assistant", assistant_content)
 
-    return {
-        "status": "ok",
-        "content": assistant_content,
-        "session_id": ctx["session_id"],
-        "reasoning": last_reasoning,
-        "steps": steps,
-        "act_mode": act_mode,
-        "act_plan": act_plan,
-    }
+        sid = ctx["session_id"]
+        key = ctx.get("api_key", "")
+        base = ctx.get("api_base", "")
+        mdl = ctx.get("model", "")
+        asyncio.create_task(maybe_compress_session(sid, key, base, mdl))
+        asyncio.create_task(maybe_extract_memories(sid, key, base, mdl))
+
+        return {
+            "status": "ok",
+            "content": assistant_content,
+            "session_id": ctx["session_id"],
+            "reasoning": last_reasoning,
+            "steps": steps,
+            "act_mode": act_mode,
+            "act_plan": act_plan,
+        }
+    finally:
+        _processing_approvals.discard(req.approval_id)
 
 
 @router.post("/chat/stream")

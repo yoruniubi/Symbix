@@ -142,6 +142,7 @@ function handleClose() {
 }
 .close-btn:hover {
   color: var(--text-secondary) !important;
+  background: var(--surface-hover) !important;
 }
 .mcp-tool-item {
   margin-top: 8px;

@@ -26,9 +26,11 @@ pub fn run() {
 
             // 创建托盘菜单
             let hide_item = MenuItemBuilder::with_id("hide", "隐藏").build(app)?;
+            let show_item = MenuItemBuilder::with_id("show", "显示").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&hide_item)
+                .item(&show_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -42,6 +44,12 @@ pub fn run() {
                         "hide" => {
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.hide();
+                            }
+                        }
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
                             }
                         }
                         "quit" => {

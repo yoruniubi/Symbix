@@ -2,11 +2,13 @@
   <transition name="panel-slide">
     <div v-if="activePanel === 'files'" class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }">
       <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
-      <div class="panel-header">
-        <strong>文件浏览器</strong>
-        <button type="button" title="选择电脑上的目录" @click="chooseDirectory">打开目录</button>
-        <button type="button" title="刷新" @click="loadDirectory(currentPath)">↻</button>
-        <button type="button" title="关闭" @click="emit('update:activePanel', null)">×</button>
+      <div class="side-panel-header">
+        <span class="side-panel-title">文件浏览器</span>
+        <div class="side-panel-actions">
+          <button type="button" class="panel-action-btn" title="选择电脑上的目录" @click="chooseDirectory">打开目录</button>
+          <button type="button" class="panel-icon-btn" title="刷新" @click="loadDirectory(currentPath)">↻</button>
+          <button type="button" class="panel-icon-btn close-btn" title="关闭" @click="emit('update:activePanel', null)">×</button>
+        </div>
       </div>
 
       <div class="breadcrumb">
@@ -240,7 +242,6 @@ onMounted(() => {
   opacity: 0.35;
 }
 
-.panel-header,
 .editor-header {
   min-height: 46px;
   display: flex;
@@ -249,6 +250,36 @@ onMounted(() => {
   padding: 0 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text-primary);
+}
+
+.side-panel-header {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.side-panel-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.side-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
 }
 
 .panel-header strong,
@@ -271,6 +302,28 @@ button {
 button:hover {
   color: var(--text-primary);
   background: var(--surface-hover);
+}
+
+.panel-action-btn {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.panel-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.close-btn {
+  color: var(--text-muted) !important;
+}
+
+.close-btn:hover {
+  color: var(--text-secondary) !important;
+  background: var(--surface-hover) !important;
 }
 
 .breadcrumb {

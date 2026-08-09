@@ -82,8 +82,8 @@
         <div v-if="msg.approval_id" class="approval-block">
           <div class="approval-hint">⚠️ Agent 想执行工具，需要你的审批</div>
           <div class="approval-actions">
-            <n-button size="small" type="primary" @click="emit('approve', true)">同意执行</n-button>
-            <n-button size="small" tertiary @click="emit('approve', false)">拒绝</n-button>
+            <n-button size="small" type="primary" :loading="msg.approval_pending === true" :disabled="msg.approval_pending === true" @click="emit('approve', true)">同意执行</n-button>
+            <n-button size="small" tertiary :disabled="msg.approval_pending === true" @click="emit('approve', false)">拒绝</n-button>
           </div>
         </div>
 

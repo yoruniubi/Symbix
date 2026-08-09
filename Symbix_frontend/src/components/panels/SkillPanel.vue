@@ -277,5 +277,6 @@ function handleRefresh() {
 }
 .close-btn:hover {
   color: var(--text-secondary) !important;
+  background: var(--surface-hover) !important;
 }
 </style>

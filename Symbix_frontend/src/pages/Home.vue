@@ -197,6 +197,10 @@ const ROWS = {
 type PetState = keyof typeof ROWS
 const LOOP_STATES: ReadonlySet<PetState> = new Set(['idle', 'waiting', 'running', 'runningRight', 'runningLeft'])
 
+function isLoopState(state: PetState) {
+  return LOOP_STATES.has(state) || (state === 'review' && agentThinking)
+}
+
 // 个别动作的原图帧并非严格按时间顺序排列,允许在不修改素材的情况下重排/重复帧。
 // failed:站立 → 蹲下 → 跪地 → 趴倒,最后重复趴倒作为落地停留。
 const FRAME_SEQUENCES: Partial<Record<PetState, readonly number[]>> = {
@@ -217,6 +221,8 @@ let actionStartTimer: ReturnType<typeof setTimeout> | null = null
 let actionSettleTimer: ReturnType<typeof setTimeout> | null = null
 let actionToken = 0
 let lastRandomAction: PetState | '' = ''
+// Agent 正在处理请求时,review 必须循环播放,直到收到完成/错误/中止状态。
+let agentThinking = false
 
 /**
  * 拖拽奔跑（Windows / Tauri 要点）：
@@ -463,7 +469,7 @@ function getFrames(
 function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
   if (!sprite || !baseSource) return
   // 同一循环动作不要重开，否则拖拽中反复 set textures 会看起来只闪一帧
-  if (state === currentState && LOOP_STATES.has(state) && sprite.playing) {
+  if (state === currentState && isLoopState(state) && sprite.playing) {
     return
   }
   currentState = state
@@ -475,7 +481,7 @@ function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
     FRAME_SEQUENCES[state],
   )
   sprite.animationSpeed = animationSpeedFor(state)
-  sprite.loop = LOOP_STATES.has(state)
+  sprite.loop = isLoopState(state)
   // 清掉上一个一次性动作的回调，避免旧动作完成时抢先把新动作切回 idle。
   sprite.onComplete = undefined
   // 更换 textures 后显式从第 0 帧开始播放。仅设置 textures 不保证 Pixi
@@ -511,7 +517,7 @@ function playState(state: PetState, returnToIdle = true) {
   const delay = ACTION_START_DELAY_MS[state] ?? 0
   if (delay > 0 && state !== currentState) {
     // 思考前保持 idle,但不重置 idle 的当前帧,避免突然闪回第一帧。
-    if (!LOOP_STATES.has(currentState)) {
+    if (!isLoopState(currentState)) {
       currentState = 'idle'
       const idleDef = ROWS.idle
       sprite.textures = getFrames(baseSource as TextureSource, idleDef.row, idleDef.frames)
@@ -663,10 +669,39 @@ function applyRemotePetAction(payload: {
     return
   }
   // 远程循环动作（waiting/running）不要强制回 idle；一次性动作播完回 idle
-  const returnToIdle = !LOOP_STATES.has(state)
+  const returnToIdle = !isLoopState(state)
   playState(state, returnToIdle)
   if (payload.bubble) showBubble(payload.bubble, 3200)
 }
+
+type AgentStatus = 'thinking' | 'complete' | 'error' | 'idle'
+
+function applyAgentStatus(payload: { status?: AgentStatus; bubble?: string }) {
+  const status = payload.status
+  if (!status) return
+
+  if (status === 'thinking') {
+    agentThinking = true
+    // false:不要在 review 播完后回 idle,由后续状态事件结束本次循环。
+    playState('review', false)
+    if (payload.bubble) showBubble(payload.bubble, 2200)
+    return
+  }
+
+  agentThinking = false
+  if (status === 'complete') {
+    playState('jumping', true)
+    showBubble(payload.bubble || '完成啦!', 2600)
+  } else if (status === 'error') {
+    playState('failed', true)
+    showBubble(payload.bubble || '这次没有完成...', 2800)
+  } else {
+    playState('idle', false)
+    if (payload.bubble) showBubble(payload.bubble, 2200)
+  }
+}
+
+let unlistenAgentStatus: UnlistenFn | null = null
 
 function parseSseChunk(buffer: string): { events: Array<{ event: string; data: string }>; rest: string } {
   const events: Array<{ event: string; data: string }> = []
@@ -964,6 +999,16 @@ onMounted(async () => {
   // 订阅后端 emit_pet_action → SSE，驱动远程动作
   void connectPetEvents()
 
+  // 聊天窗口通过 Tauri event 广播 Agent 生命周期,避免 thinking 动作只播放一遍。
+  try {
+    unlistenAgentStatus = await listen<{ status?: AgentStatus; bubble?: string }>(
+      'agent-status',
+      (event) => applyAgentStatus(event.payload),
+    )
+  } catch (e) {
+    console.warn('[pet] failed to listen agent-status:', e)
+  }
+
   // 订阅皮肤切换事件（Tauri 跨窗口）
   try {
     const { listen } = await import('@tauri-apps/api/event')
@@ -1014,6 +1059,10 @@ onUnmounted(() => {
   if (unlistenPetSwitched) {
     unlistenPetSwitched()
     unlistenPetSwitched = null
+  }
+  if (unlistenAgentStatus) {
+    unlistenAgentStatus()
+    unlistenAgentStatus = null
   }
   if (onPetStorage) {
     window.removeEventListener('storage', onPetStorage)

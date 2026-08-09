@@ -155,6 +155,7 @@ const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
+import { emit as emitTauri } from '@tauri-apps/api/event'
 
 const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
 const loading = ref(false)
@@ -432,6 +433,7 @@ function handleStopGeneration() {
     abortController.value = null
   }
   loading.value = false
+  publishAgentStatus('idle', '已暂停')
 }
 
 function handleEditMessage(idx: number, newText: string) {
@@ -529,6 +531,15 @@ function sendQuick(text: string) {
 
 const BACKEND_URL = 'http://127.0.0.1:8000'
 
+type AgentStatus = 'thinking' | 'complete' | 'error' | 'idle'
+
+function publishAgentStatus(status: AgentStatus, bubble?: string) {
+  void emitTauri('agent-status', { status, bubble }).catch((error) => {
+    // 浏览器开发模式没有 Tauri event 总线时,聊天本身仍应正常工作。
+    console.debug('[agent-status] event unavailable:', error)
+  })
+}
+
 async function sendMessage(text: string, files: any[]) {
   console.log('=== sendMessage 开始（SSE 流式）===')
   safeLog('settings:', settings.value)
@@ -561,6 +572,7 @@ async function sendMessage(text: string, files: any[]) {
   const currentSessionId = activeSessionId.value!
 
   loading.value = true
+  publishAgentStatus('thinking', '我来看看...')
   await nextTick()
   scrollToBottom()
   let assistantMsgIndex = -1
@@ -654,6 +666,7 @@ async function sendMessage(text: string, files: any[]) {
     await saveSessionToLocalMarkdown()
     // 流式结束且不在等待审批时，触发任务完成提醒
     if (!assistantMsg.approval_id) {
+      publishAgentStatus('complete')
       const preview = (assistantMsg.content || '').slice(0, 80).replace(/\s+/g, ' ')
       void notifyTaskComplete({
         title: 'Symbix · 任务完成',
@@ -668,12 +681,14 @@ async function sendMessage(text: string, files: any[]) {
     if (e.name === 'AbortError') {
 
       console.log('=== 流被用户中断 ===')
+      publishAgentStatus('idle', '已暂停')
       if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
         messages.value.splice(assistantMsgIndex, 1)
       }
       return
     }
     console.error('=== 流式异常 ===', e)
+    publishAgentStatus('error', '处理时遇到了一点问题')
     if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
       messages.value.splice(assistantMsgIndex, 1)
     } else if (assistantMsgIndex !== -1) {
@@ -1028,7 +1043,13 @@ async function submitInstallMcp() {
 async function approveTool(msgIdx: number, approved: boolean) {
   const msg: any = messages.value[msgIdx]
   if (!msg || !msg.approval_id) return
+  // 后端会在第一次请求开始时移除 pending 记录;双击会导致第二次请求得到
+  // 404,虽然第一次工具实际上已经执行成功。先在前端锁住当前审批卡片。
+  if (msg.approval_pending === true) return
+  const approvalId = msg.approval_id
+  msg.approval_pending = true
   loading.value = true
+  publishAgentStatus('thinking', approved ? '继续处理...' : '正在整理结果...')
   try {
     const res = await fetch(`${BACKEND_URL}/chat/approve`, {
       method: 'POST',
@@ -1051,8 +1072,10 @@ async function approveTool(msgIdx: number, approved: boolean) {
       msg.reasoning = data.reasoning
       msg.steps = steps
       msg.approval_id = data.approval_id
+      msg.approval_pending = false
       msg.content = ''
       loading.value = false
+      // 仍有下一项审批,保持桌宠思考循环,不要提前庆祝。
       return
     }
 
@@ -1060,7 +1083,9 @@ async function approveTool(msgIdx: number, approved: boolean) {
     msg.reasoning = data.reasoning
     msg.steps = steps
     msg.approval_id = undefined
+    msg.approval_pending = false
     loading.value = false
+    publishAgentStatus('complete', approved ? '完成啦!' : '已处理完毕')
     await saveSessionToLocalMarkdown()
     const preview = (msg.content || '').slice(0, 80).replace(/\s+/g, ' ')
     void notifyTaskComplete({
@@ -1070,6 +1095,11 @@ async function approveTool(msgIdx: number, approved: boolean) {
 
   } catch (e: any) {
     loading.value = false
+    // 如果是重复请求,第一次通常已经完成了工具执行;不要让旧审批按钮继续
+    // 可点击并再次提交同一个已经消费的 approval_id。
+    if (msg.approval_id === approvalId) msg.approval_id = undefined
+    msg.approval_pending = false
+    publishAgentStatus('error', '审批处理失败')
     console.error('审批失败:', e)
     messageUi.error(`审批失败：${e.message}`)
   }
