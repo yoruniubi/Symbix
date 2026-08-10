@@ -871,7 +871,7 @@ async function openOrCreateWindow(
 async function openChatWindow() {
   await openOrCreateWindow('chat', {
     url: '/chat_window',
-    title: 'Symbix - 对话',
+    title: t('home.windowChat'),
     width: 900,
     height: 700,
   })
@@ -880,7 +880,7 @@ async function openChatWindow() {
 async function openSkinWindow() {
   await openOrCreateWindow('skin', {
     url: '/skin',
-    title: 'Symbix - 换肤',
+    title: t('home.windowSkin'),
     width: 400,
     height: 500,
   })
@@ -889,7 +889,7 @@ async function openSkinWindow() {
 async function openSettingWindow() {
   await openOrCreateWindow('setting', {
     url: '/setting',
-    title: 'Symbix - 设置',
+    title: t('home.windowSetting'),
     width: 600,
     height: 650,
   })

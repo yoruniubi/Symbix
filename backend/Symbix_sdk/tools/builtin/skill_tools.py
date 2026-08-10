@@ -1,5 +1,3 @@
-# tools/skill_tools.py
-"""Skill 创建工具：create_skill + 辅助函数"""
 from __future__ import annotations
 import json
 import os

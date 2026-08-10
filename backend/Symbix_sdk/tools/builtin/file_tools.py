@@ -1,5 +1,3 @@
-# tools/file_tools.py
-"""文件操作工具：edit_file / list_files / read_file / parse_file / search_files"""
 from __future__ import annotations
 import json
 import os

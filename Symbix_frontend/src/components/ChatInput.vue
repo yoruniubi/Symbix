@@ -11,7 +11,7 @@
             <line x1="16" y1="17" x2="8" y2="17"/>
           </svg>
         </n-icon>
-        <span class="file-chip-name">{{ file.name }}<span v-if="file.status==='uploading'" class="file-chip-status">上传中…</span><span v-else-if="file.status==='error'" class="file-chip-status err">失败</span></span>
+        <span class="file-chip-name">{{ file.name }}<span v-if="file.status==='uploading'" class="file-chip-status">{{ t('chatInput.fileUploading') }}</span><span v-else-if="file.status==='error'" class="file-chip-status err">{{ t('chatInput.fileFailed') }}</span></span>
         <n-button text size="tiny" @click="removeAttachment(idx)" class="file-chip-remove">
           <n-icon size="14"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></n-icon>
         </n-button>
@@ -27,7 +27,7 @@
         v-model:value="inputValue"
         type="textarea"
         :autosize="{ minRows: 1, maxRows: 5 }"
-        :placeholder="$t('chatInput.placeholder')"
+        :placeholder="t('chatInput.placeholder')"
         @keydown="handleInputKeydown"
         :disabled="loading"
         class="chat-input"
@@ -39,7 +39,7 @@
         circle
         @click="emit('stop')"
         class="stop-btn"
-        title="停止生成"
+        :title="t('chatInput.stopGenerate')"
       >
         <template #icon>
           <n-icon size="16">
@@ -80,7 +80,7 @@
         accept="*"
         style="width: auto; flex-shrink: 0;"
       >
-        <n-button text class="tool-btn" title="上传文件">
+        <n-button text class="tool-btn" :title="t('chatInput.uploadFile')">
           <n-icon size="20">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -91,7 +91,7 @@
         </n-button>
       </n-upload>
       <!-- 语音输入按钮 -->
-      <n-button text class="tool-btn voice-btn" :class="{ recording: isRecording }" @click="toggleVoice" title="语音输入">
+      <n-button text class="tool-btn voice-btn" :class="{ recording: isRecording }" @click="toggleVoice" :title="t('chatInput.voiceInput')">
         <n-icon size="20">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -108,7 +108,7 @@
             <n-icon size="14" style="margin-right:3px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
             </n-icon>
-            {{ currentModelLabel }}
+            {{ t('chatInput.selectModel') }}: {{ currentModelLabel }}
           </n-button>
         </template>
         <div class="model-list-scroll">
@@ -124,8 +124,8 @@
           </div>
         </div>
       </n-popover>
-      <span class="footer-hint" v-if="!loading">Enter 发送 · Shift+Enter 换行</span>
-      <span class="footer-hint recording-hint" v-else-if="isRecording">🎤 正在聆听...</span>
+      <span class="footer-hint" v-if="!loading">{{ t('chatInput.enterToSend') }}</span>
+      <span class="footer-hint recording-hint" v-else-if="isRecording">{{ t('chatInput.listening') }}</span>
     </div>
   </div>
 </template>
@@ -133,6 +133,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
 export interface AttachmentItem {
   name: string
@@ -169,6 +170,8 @@ const isRecording = ref(false)
 const showModelPopover = ref(false)
 let recordTimer: any = null
 
+const { t } = useI18n()
+
 const canSend = computed(() => {
   const textOk = !!inputValue.value.trim()
   const readyFiles = attachments.value.filter(a => a.status === 'ok' || (!a.status && a.path))
@@ -178,7 +181,7 @@ const canSend = computed(() => {
 
 const currentModelLabel = computed(() => {
   const opt = props.modelOptions.find(o => o.value === props.currentModel)
-  return opt?.label || props.currentModel || '选择模型'
+  return opt?.label || props.currentModel || t('chatInput.selectModel')
 })
 
 function handleSend() {
@@ -238,7 +241,7 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
         status: 'error',
         error: meta.message || '上传失败',
       }
-      messageUi.error(`上传失败: ${raw.name}`)
+      messageUi.error(t('chatInput.uploadFailed', { name: raw.name }))
     }
     onFinish?.()
   } catch (e: any) {
@@ -247,7 +250,7 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
       status: 'error',
       error: e?.message || String(e),
     }
-    messageUi.error(`上传失败: ${raw.name}`)
+    messageUi.error(t('chatInput.uploadFailed', { name: raw.name }))
     onError?.(e)
   }
 }

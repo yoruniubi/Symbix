@@ -6,8 +6,8 @@
       <!-- Header -->
       <div class="header-row">
         <div class="header-text">
-          <h1 class="title">桌宠皮肤</h1>
-          <p class="subtitle">管理与切换当前桌宠外观</p>
+          <h1 class="title">{{ t('skin.title') }}</h1>
+          <p class="subtitle">{{ t('skin.subtitle') }}</p>
         </div>
         <div class="header-meta">
           <span class="count-badge">{{ availablePets.length }} 套</span>
@@ -157,7 +157,8 @@ import { useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import TitleBar from '@/components/TitleBar.vue'
 import { Assets, Texture } from 'pixi.js'
-
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 const skillList = ref([])
 interface PetSkin {
   id: string

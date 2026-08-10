@@ -1,7 +1,3 @@
-"""
-Web 工具：搜索、抓取网页等
-"""
-
 import logging
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse

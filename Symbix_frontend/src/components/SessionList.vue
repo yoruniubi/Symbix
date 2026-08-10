@@ -1,8 +1,8 @@
 <template>
   <div class="left-panel" :style="{ width: panelWidth + 'px' }">
     <div class="left-panel-header">
-      <n-text strong style="font-size: 16px;">对话历史</n-text>
-      <n-button size="small" quaternary circle @click="emit('new-chat')" title="新建对话">
+      <n-text strong style="font-size: 16px;">{{ t('sessionList.title') }}</n-text>
+      <n-button size="small" quaternary circle @click="emit('new-chat')" :title="t('sessionList.newChat')">
         <template #icon>
           <n-icon>
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 11h-6V5h-2v6H5v2h6v6h2v-6h6z"/></svg>
@@ -41,7 +41,7 @@
             quaternary
             class="panel-icon-btn"
             @click.stop="startRename(session)"
-            title="重命名"
+            :title="t('sessionList.rename')"
           >
             <template #icon>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -56,7 +56,7 @@
             type="error"
             class="panel-icon-btn"
             @click.stop="emit('delete-session', session.id)"
-            title="删除此对话"
+            :title="t('sessionList.delete')"
           >
             <template #icon>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -67,7 +67,7 @@
           </n-button>
         </div>
       </div>
-      <n-empty v-if="sessions.length === 0" description="暂无对话" size="small" style="margin-top: 40px;" />
+      <n-empty v-if="sessions.length === 0" :description="t('sessionList.empty')" size="small" style="margin-top: 40px;" />
     </div>
 
     <!-- VSCode 风格拖拽缩放条 -->
@@ -81,7 +81,8 @@
 
 <script setup lang="ts">
 import { ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
-
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 interface Session {
   id: string
   title: string

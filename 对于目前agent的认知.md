@@ -26,3 +26,7 @@ agent最重要的一个特质就是自主性，可以自行决定通过何种方
    (3): 反驳型的，一般用于大项目的重构，可以大幅度减少幻觉发生的可能性
 8. 评估
 有专门的评估框架，来测试agent的能力，之后可以测试一下
+9. 关于SEO和GEO
+SEO就是搜索引擎优化(search engine optimization),简单来说就是怎样让你的项目排在搜索结果比较前面的位置，然后GEO就是生成引擎优化(generative engine optimization), 主要是就是AI搜索相关的优化，如何让自己的项目能比较容易让AI检索的到，其实这一块跟这个推广有关了，之后再说。
+SEO的文章：https://developers.google.com/search/docs/fundamentals/seo-starter-guide?hl=zh-cn
+GEO，该怎么说，有所风险，看看吧 https://linux.do/t/topic/2596934/24

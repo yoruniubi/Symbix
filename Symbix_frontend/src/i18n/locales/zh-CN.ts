@@ -25,6 +25,9 @@ export default {
     petGreetingList: '又见面了!',
     skinSwitched: '已换装「{name}」',
     skinSwitchFailed: '换装失败,请检查皮肤文件',
+    windowChat: 'Symbix - 对话',
+    windowSkin: 'Symbix - 换肤',
+    windowSetting: 'Symbix - 设置',
   },
 
   // ===== Chat Window =====
@@ -237,6 +240,10 @@ export default {
     builtin: '内置',
     imported: '导入',
     removeBtn: '删除皮肤',
+    empty: '暂无皮肤',
+    namePlaceholder: '例如 my-pet',
+    pickFolderTitle: '选择 Codex 桌宠文件夹（含 pet.json）',
+    skillMessage: '请使用 pet-forge 技能为我生成一个新的桌宠皮肤。\n\n皮肤名称：{name}\n外观描述：{prompt}\n\n请严格按照 pet-forge skill 的流水线流程：generate_rig → validate_rig → generate_states_batch → derive_mirrors → validate_states → pack_theme。',
   },
 
   // ===== Setting Page =====
@@ -248,6 +255,9 @@ export default {
     dark: '深色',
     darkDesc: '暖炭色调,贴近品牌色',
     themeHint: '主题会立即生效,并同步到对话窗口与桌宠界面。',
+    language: '界面语言',
+    languageHint: '切换后立即生效,并同步到对话窗口与桌宠界面。',
+    languageChanged: '界面语言已切换',
     // Notifications
     notification: '任务完成提醒',
     notifyEnabled: '启用提醒',

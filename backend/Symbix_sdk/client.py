@@ -5,8 +5,6 @@ SymbixClient — 核心 AI 对话客户端
 import json
 import httpx
 from typing import AsyncGenerator, Optional
-from .skill import SkillLoader
-from .skill.registry import SkillRegistry
 from .providers import ProviderRegistry
 
 

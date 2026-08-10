@@ -1,8 +1,3 @@
-"""文件浏览器 API。
-
-原生文件工具仍使用项目沙箱;这里是用户主动打开的文件浏览器,允许在
-桌面端选择一个目录后浏览该目录,因此绝对路径会被保留在浏览器会话中。
-"""
 from pathlib import Path
 import shutil
 
@@ -17,13 +12,9 @@ MAX_EDIT_BYTES = 5 * 1024 * 1024
 
 
 def _resolve(path: str = ".") -> Path:
-    # 前端传递的是相对于仓库根目录的路径,而后端进程的 cwd 可能是
-    # `backend/`;因此不能直接让 abspath() 以当前工作目录解析相对路径。
     raw_path = str(path or ".").strip()
     if not Path(raw_path).is_absolute():
         raw_path = str(Path(get_project_root()) / raw_path)
-    # 文件浏览器的目录由用户通过系统 dialog 主动选择,支持项目之外的路径。
-    # native tools 不经过本路由,仍由 file_pipeline 的沙箱保护。
     try:
         return Path(raw_path).expanduser().resolve()
     except OSError as exc:

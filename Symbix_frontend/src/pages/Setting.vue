@@ -58,6 +58,22 @@
           </n-text>
         </n-form>
       </n-card>
+      <!-- 界面语言设置卡片 -->
+      <n-card :title="t('setting.language')" class="setting-card">
+        <n-form label-placement="top">
+          <n-form-item :label="t('setting.language')">
+            <n-select
+              :value="locale"
+              :options="uiLocaleOptions"
+              style="max-width: 260px;"
+              @update:value="onLocaleChange"
+            />
+          </n-form-item>
+        </n-form>
+        <n-text depth="3" style="font-size: 12px;">
+          {{ t('setting.languageHint') }}
+        </n-text>
+      </n-card>
 
       <!-- 任务完成提醒 -->
       <n-card :title="t('setting.notification')" class="setting-card">
@@ -241,6 +257,7 @@ import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
 import { useTheme } from '@/composables/useTheme'
+import { useLocale } from '@/composables/useLocale'
 import {
   useNotify,
   playNotifySound,
@@ -253,6 +270,7 @@ import {
 const message = useMessage()
 const { t } = useI18n()
 const { mode, setMode } = useTheme()
+const { locale, localeOptions: uiLocaleOptions, setLocale } = useLocale()
 const {
   notifySettings,
   loadNotifySettings,
@@ -260,6 +278,11 @@ const {
   resetNotifySettings,
   defaultSettings,
 } = useNotify()
+
+function onLocaleChange(value: string) {
+  setLocale(value)
+  message.success(t('setting.languageChanged'))
+}
 
 
 interface SttSettings {

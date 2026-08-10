@@ -25,6 +25,9 @@ export default {
     petGreetingList: 'Good to see you again!',
     skinSwitched: 'Skin switched to "{name}"',
     skinSwitchFailed: 'Skin switch failed, please check the skin files',
+    windowChat: 'Symbix - Chat',
+    windowSkin: 'Symbix - Skins',
+    windowSetting: 'Symbix - Settings',
   },
 
   // ===== Chat Window =====
@@ -237,6 +240,10 @@ export default {
     builtin: 'Built-in',
     imported: 'Imported',
     removeBtn: 'Delete skin',
+    empty: 'No skins yet',
+    namePlaceholder: 'e.g. my-pet',
+    pickFolderTitle: 'Select Codex pet folder (with pet.json)',
+    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\nFollow the pet-forge skill pipeline strictly: generate_rig → validate_rig → generate_states_batch → derive_mirrors → validate_states → pack_theme.',
   },
 
   // ===== Setting Page =====
@@ -248,6 +255,9 @@ export default {
     dark: 'Dark',
     darkDesc: 'Warm charcoal, matches brand colors',
     themeHint: 'Theme applies immediately and syncs to chat & pet windows.',
+    language: 'Interface language',
+    languageHint: 'Applies immediately and syncs to chat & pet windows.',
+    languageChanged: 'Interface language updated',
     // Notifications
     notification: 'Task Complete Notification',
     notifyEnabled: 'Enable notification',

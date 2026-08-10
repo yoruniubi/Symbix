@@ -1,5 +1,3 @@
-# tools/terminal_tools.py
-"""终端命令执行工具：open_terminal"""
 from __future__ import annotations
 import os
 import subprocess

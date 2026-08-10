@@ -2,9 +2,6 @@
   <div class="titlebar" data-tauri-drag-region>
     <div class="titlebar-title">Symbix</div>
     <div class="titlebar-buttons">
-      <button class="language-button" @click="toggleLocale" :title="locale === 'zh-CN' ? 'English' : '中文'">
-        {{ locale === 'zh-CN' ? 'EN' : '中' }}
-      </button>
       <button class="titlebar-button minimize" @click="minimizeWindow" :title="$t('titleBar.minimize')">
         <svg width="12" height="12" viewBox="0 0 12 12">
           <rect x="0" y="5" width="12" height="1" fill="currentColor"/>
@@ -26,16 +23,8 @@
 
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useI18n } from 'vue-i18n'
 
 const appWindow = getCurrentWindow()
-const { locale } = useI18n()
-
-function toggleLocale() {
-  const nextLocale = locale.value === 'zh-CN' ? 'en' : 'zh-CN'
-  locale.value = nextLocale
-  localStorage.setItem('symbix_locale', nextLocale)
-}
 
 async function minimizeWindow() {
   await appWindow.minimize()
@@ -78,22 +67,6 @@ async function closeWindow() {
   display: flex;
   gap: 4px;
   align-items: center;
-}
-
-.language-button {
-  height: 24px;
-  min-width: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 11px;
-}
-.language-button:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
 }
 
 .titlebar-button {

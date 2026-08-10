@@ -1,5 +1,3 @@
-# tools/pet_tools.py
-"""桌宠控制工具：emit_pet_action"""
 from __future__ import annotations
 import json
 

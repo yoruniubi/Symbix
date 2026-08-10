@@ -30,9 +30,9 @@
                   <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                 </svg>
               </template>
-              保存并发送
+              {{ t('chat.saveAndSend') }}
             </n-button>
-            <n-button size="tiny" text @click="cancelEdit" class="cancel-btn">取消</n-button>
+            <n-button size="tiny" text @click="cancelEdit" class="cancel-btn">{{ t('chat.cancel') }}</n-button>
           </div>
         </div>
       </template>
@@ -43,7 +43,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
             </svg>
-            <span>思维过程</span>
+            <span>{{ t('chat.thinkingProcess') }}</span>
             <svg class="reasoning-arrow" :class="{ expanded: showReasoning }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div v-show="showReasoning" class="reasoning-text">{{ String(msg.reasoning).trim() }}</div>
@@ -67,11 +67,11 @@
             </div>
             <div v-show="expandedSteps[Number(i)]" class="step-details">
               <div v-if="step.arguments" class="step-detail-row">
-                <div class="detail-label">参数</div>
+                <div class="detail-label">{{ t('chat.param') }}</div>
                 <pre class="detail-pre">{{ formatJson(step.arguments) }}</pre>
               </div>
               <div v-if="step.result" class="step-detail-row">
-                <div class="detail-label">结果</div>
+                <div class="detail-label">{{ t('chat.result') }}</div>
                 <pre class="detail-pre">{{ truncateResult(step.result) }}</pre>
               </div>
             </div>
@@ -80,10 +80,10 @@
 
         <!-- 审批按钮 -->
         <div v-if="msg.approval_id" class="approval-block">
-          <div class="approval-hint">⚠️ Agent 想执行工具，需要你的审批</div>
+          <div class="approval-hint">{{ t('chat.awaitingApproval') }}</div>
           <div class="approval-actions">
-            <n-button size="small" type="primary" :loading="msg.approval_pending === true" :disabled="msg.approval_pending === true" @click="emit('approve', true)">同意执行</n-button>
-            <n-button size="small" tertiary :disabled="msg.approval_pending === true" @click="emit('approve', false)">拒绝</n-button>
+            <n-button size="small" type="primary" :loading="msg.approval_pending === true" :disabled="msg.approval_pending === true" @click="emit('approve', true)">{{ t('chat.approve') }}</n-button>
+            <n-button size="small" tertiary :disabled="msg.approval_pending === true" @click="emit('approve', false)">{{ t('chat.reject') }}</n-button>
           </div>
         </div>
 
@@ -111,7 +111,7 @@
 
       <!-- 操作按钮 (仅 assistant: 复制 & 重试) -->
       <div v-if="msg.role === 'assistant' && !isEditing" class="msg-actions">
-        <n-button text size="tiny" @click="copyContent" class="action-btn" title="复制">
+        <n-button text size="tiny" @click="copyContent" class="action-btn" :title="t('chat.copy')">
           <template #icon>
             <svg v-if="!copied" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -122,7 +122,7 @@
             </svg>
           </template>
         </n-button>
-        <n-button text size="tiny" @click="retry" class="action-btn" title="重试">
+        <n-button text size="tiny" @click="retry" class="action-btn" :title="t('chat.retry')">
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10"/>
@@ -134,7 +134,7 @@
 
       <!-- 操作按钮 (仅 user: 编辑) -->
       <div v-if="msg.role === 'user' && !isEditing" class="msg-actions user-actions">
-        <n-button text size="tiny" @click="startEdit" class="action-btn" title="编辑">
+        <n-button text size="tiny" @click="startEdit" class="action-btn" :title="t('chat.edit')">
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -159,6 +159,7 @@
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import { useTheme } from '@/composables/useTheme'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   msg: any
@@ -167,7 +168,6 @@ const props = defineProps<{
 }>()
 
 const { isDark } = useTheme()
-
 
 const emit = defineEmits<{
   edit: [newText: string]
@@ -182,6 +182,8 @@ const editInputRef = ref<any>(null)
 const showReasoning = ref(false)
 const expandedSteps = ref<Record<number, boolean>>({})
 const bubbleRef = ref<HTMLElement | null>(null)
+
+const { t } = useI18n()
 
 /** 为 Markdown 渲染后的代码块注入"复制"按钮 */
 function injectCopyButtons() {
@@ -200,7 +202,7 @@ function injectCopyButtons() {
     btn.className = 'code-copy-btn'
     btn.setAttribute('data-copy-state', 'idle')
     btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
-    btn.title = '复制代码'
+    btn.title = t('chat.copyCode')
     btn.addEventListener('click', async (e) => {
       e.stopPropagation()
       const code = pre.querySelector('code')?.textContent || pre.textContent || ''
@@ -237,21 +239,21 @@ function toggleStep(i: number) {
 }
 
 function formatToolName(name: string): string {
-  if (!name) return '工具调用'
+  if (!name) return t('chat.toolCall')
   // 去掉 snake_case → 可读中文映射
   const map: Record<string, string> = {
-    'create_file': '📄 创建文件',
-    'read_file': '📖 读取文件',
-    'write_file': '✏️ 写入文件',
-    'delete_file': '🗑️ 删除文件',
-    'list_files': '📂 列出目录',
-    'execute_command': '⚡ 执行命令',
-    'search_files': '🔍 搜索文件',
-    'read_multiple_files': '📚 批量读取',
-    'java_class_scanner': '☕ 扫描 Java 类',
-    'file_structure_scanner': '🏗️ 扫描文件结构',
-    'batch_code_modifier': '🔧 批量修改代码',
-    'code_quality_scanner': '✅ 代码质量扫描',
+    'create_file': t('chat.toolCreateFile'),
+    'read_file': t('chat.toolReadFile'),
+    'write_file': t('chat.toolWriteFile'),
+    'delete_file': t('chat.toolDeleteFile'),
+    'list_files': t('chat.toolListFiles'),
+    'execute_command': t('chat.toolExecuteCommand'),
+    'search_files': t('chat.toolSearchFiles'),
+    'read_multiple_files': t('chat.toolReadMultipleFiles'),
+    'java_class_scanner': t('chat.toolJavaClassScanner'),
+    'file_structure_scanner': t('chat.toolFileStructureScanner'),
+    'batch_code_modifier': t('chat.toolBatchCodeModifier'),
+    'code_quality_scanner': t('chat.toolCodeQualityScanner'),
   }
   if (map[name]) return map[name]
   // 通用格式化
@@ -260,12 +262,12 @@ function formatToolName(name: string): string {
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
-    'done': '✓ 完成',
-    'pending': '⏳ 执行中',
-    'running': '⏳ 执行中',
-    'awaiting_approval': '⚠️ 待审批',
-    'rejected': '✗ 已拒绝',
-    'skipped': '⊘ 已跳过',
+    'done': t('chat.statusDone'),
+    'pending': t('chat.statusPending'),
+    'running': t('chat.statusRunning'),
+    'awaiting_approval': t('chat.statusAwaitingApproval'),
+    'rejected': t('chat.statusRejected'),
+    'skipped': t('chat.statusSkipped'),
   }
   return map[status] || status
 }
@@ -280,8 +282,8 @@ function formatJson(raw: string): string {
 }
 
 function truncateResult(raw: string): string {
-  if (!raw) return '(空)'
-  if (raw.length > 800) return raw.slice(0, 800) + '\n\n... (结果已截断，共 ' + raw.length + ' 字符)'
+  if (!raw) return t('chat.emptyResult')
+  if (raw.length > 800) return raw.slice(0, 800) + '\n\n... ' + t('chat.resultTruncated', { count: raw.length })
   return raw
 }
 
@@ -376,7 +378,6 @@ onMounted(() => {
     setTimeout(() => injectCopyButtons(), 50)
   })
 })
-
 </script>
 
 <style scoped>
@@ -564,7 +565,6 @@ onMounted(() => {
 }
 
 
-
 /* ---- Actions ---- */
 .msg-actions {
   display: flex;
@@ -745,7 +745,6 @@ onMounted(() => {
 .step-card.awaiting_approval .step-icon { color: var(--warning, #D89B3C); }
 .step-card.rejected .step-icon { color: var(--error, #D3555A); }
 
-
 .spin {
   animation: spin 1.2s linear infinite;
 }
@@ -808,7 +807,6 @@ onMounted(() => {
   color: var(--text-muted);
   margin-bottom: 4px;
 }
-
 .detail-pre {
   margin: 0;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
