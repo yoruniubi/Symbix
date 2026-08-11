@@ -1,11 +1,11 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import HomePage from '../pages/Home.vue'
 import SettingPage from '../pages/Setting.vue'
 import ChatWindowPage from '../pages/chat_window.vue'
 import SkinWindowPage from '../pages/SkinWindow.vue'
 import ModelSettingPage from '../pages/model_setting.vue'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'Home',
@@ -30,7 +30,7 @@ const routes = [
     path: '/model_setting',
     name: 'ModelSetting',
     component: ModelSettingPage,
-  }
+  },
 ]
 
 const router = createRouter({

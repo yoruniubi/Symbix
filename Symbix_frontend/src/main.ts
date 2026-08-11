@@ -1,10 +1,9 @@
 import { createApp } from "vue";
 import App from "./App.vue";
-import router from "./router/index.js";
+import router from "./router";
 import i18n from "./i18n";
 import { injectCssVariables, injectPanelIconBtnStyle, DEFAULT_THEME_MODE } from "./theme";
 import "markstream-vue/index.css";
-
 
 // Restore persisted theme before first paint (avoid flash)
 function getInitialThemeMode() {
