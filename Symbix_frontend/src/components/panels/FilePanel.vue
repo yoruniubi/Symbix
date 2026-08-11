@@ -1,7 +1,7 @@
 <template>
   <transition name="panel-slide">
     <div v-if="activePanel === 'files'" class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }">
-      <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
+      <div class="panel-resize-handle" :title="$t('common.pullToResize')" @mousedown="startResize" />
       <div class="side-panel-header">
         <span class="side-panel-title">{{ $t('filePanel.title') }}</span>
         <div class="side-panel-actions">

@@ -460,5 +460,6 @@ export default {
     back: '返回',
     noData: '暂无数据',
     symbixtitle: 'Symbix',
+    pullToResize: '拖动调整面板宽度',
   },
 }

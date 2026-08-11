@@ -1,7 +1,7 @@
 <template>
   <transition name="panel-slide">
     <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'mcp'">
-      <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
+      <div class="panel-resize-handle" :title="$t('common.pullToResize')" @mousedown="startResize" />
       <div class="side-panel-header">
         <span class="side-panel-title">{{ $t('mcpPanel.title') }}</span>
         <div class="side-panel-actions">

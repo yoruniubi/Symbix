@@ -460,5 +460,6 @@ export default {
     back: 'Back',
     noData: 'No data',
     symbixtitle: 'Symbix',
+    pullToResize: 'Drag to resize panel',
   },
 }

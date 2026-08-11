@@ -10,13 +10,13 @@
           <p class="subtitle">{{ t('skin.subtitle') }}</p>
         </div>
         <div class="header-meta">
-          <span class="count-badge">{{ availablePets.length }} 套</span>
+          <span class="count-badge">{{ t('skinWindow.count', { count: availablePets.length }) }}</span>
         </div>
       </div>
 
       <!-- 添加方式：两种入口 -->
       <section class="add-section">
-        <div class="section-label">添加皮肤</div>
+        <div class="section-label">{{ t('skinWindow.addSection') }}</div>
         <div class="add-cards">
           <!-- 方式 1：Skill 生成 -->
           <button
@@ -33,11 +33,8 @@
               </svg>
             </div>
             <div class="add-card-body">
-              <div class="add-card-title">
-                Skill 生成
-                <span v-if="!skillReady" class="soon-tag">待接入</span>
-              </div>
-              <div class="add-card-desc">通过 Skill 生成新的桌宠皮肤素材</div>
+              <div class="add-card-title">{{ t('skinWindow.skillGenerate') }}<span v-if="!skillReady" class="soon-tag">{{ t('skinWindow.comingSoon') }}</span></div>
+              <div class="add-card-desc">{{ t('skinWindow.skillGenerateDesc') }}</div>
             </div>
             <svg class="add-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6" />
@@ -54,8 +51,8 @@
               </svg>
             </div>
             <div class="add-card-body">
-              <div class="add-card-title">Codex 导入</div>
-              <div class="add-card-desc">导入 Codex 桌宠文件夹（含 pet.json）</div>
+              <div class="add-card-title">{{ t('skinWindow.codexImport') }}</div>
+              <div class="add-card-desc">{{ t('skinWindow.codexImportDesc') }}</div>
             </div>
             <svg class="add-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6" />
@@ -67,7 +64,7 @@
 
       <!-- 皮肤列表 -->
       <section class="list-section">
-        <div class="section-label">已有皮肤</div>
+        <div class="section-label">{{ t('skinWindow.existingSection') }}</div>
         <div v-if="availablePets.length > 0" class="skin-grid">
           <div
             v-for="pet in availablePets"
@@ -87,7 +84,7 @@
                 v-if="pet.id.startsWith('custom_')"
                 type="button"
                 class="remove-btn"
-                title="删除皮肤"
+                :title="t('skinWindow.removeBtn')"
                 @click.stop="removePet(pet.id)"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -97,10 +94,10 @@
               </button>
             </div>
             <span class="skin-name">{{ pet.displayName }}</span>
-            <span v-if="pet.source" class="skin-source">{{ pet.source }}</span>
+            <span v-if="pet.source" class="skin-source">{{ t('skinWindow.' + pet.source) }}</span>
           </div>
         </div>
-        <n-empty v-else description="暂无皮肤" size="small" style="margin-top: 24px;" />
+        <n-empty v-else :description="t('skinWindow.empty')" size="small" style="margin-top: 24px;" />
       </section>
     </div>
 
@@ -108,7 +105,7 @@
     <n-modal
       v-model:show="showSkillModal"
       preset="card"
-      title="Skill 生成皮肤"
+      :title="t('skinWindow.modalTitle')"
       style="width: 420px; max-width: 94vw;"
       :bordered="false"
       class="skill-modal"
@@ -122,28 +119,28 @@
           </svg>
         </div>
         <p class="skill-placeholder-text">
-          通过 pet-forge Skill<br />使用 AI 生成新桌宠皮肤素材。<br />
-          <span style="font-size: 11px; opacity: 0.7;">可上传参考图供 AI 分析</span>
+          {{ t('skinWindow.skillGenerateDesc') }}<br />
+          <span style="font-size: 11px; opacity: 0.7;">{{ t('skinWindow.modalHint') }}</span>
         </p>
         <n-form label-placement="top" size="small" style="width: 100%;">
-          <n-form-item label="皮肤名称">
-            <n-input v-model:value="skillForm.name" placeholder="例如 my-pet" />
+          <n-form-item :label="t('skinWindow.modalName')">
+            <n-input v-model:value="skillForm.name" :placeholder="t('skinWindow.namePlaceholder')" />
           </n-form-item>
-          <n-form-item label="描述 / 提示词">
+          <n-form-item :label="t('skinWindow.modalPrompt')">
             <n-input
               v-model:value="skillForm.prompt"
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 4 }"
-              placeholder="描述你想要的桌宠外观，比如：「圆润的橙色小猫，有尖耳朵和细尾巴，可爱风格」"
+              :placeholder="t('skinWindow.modalPromptPlaceholder')"
             />
           </n-form-item>
         </n-form>
       </div>
       <template #footer>
         <n-space justify="end">
-          <n-button @click="closeSkillModal">关闭</n-button>
+          <n-button @click="closeSkillModal">{{ t('skinWindow.modalClose') }}</n-button>
           <n-button type="primary" @click="triggerSkillGenerate" :disabled="!canGenerateSkill">
-            前往 ChatWindow 生成
+            {{ t('skinWindow.modalGenerate') }}
           </n-button>
         </n-space>
       </template>
@@ -208,7 +205,7 @@ const skillReady = ref(true)
 
 const currentPetId = ref('02')
 const availablePets = ref<PetSkin[]>([
-  { id: '02', displayName: 'Pet 02', preview: '/pet/02/spritesheet.webp', source: '内置' },
+  { id: '02', displayName: 'Pet 02', preview: '/pet/02/spritesheet.webp', source: 'builtin' },
 ])
 
 const showSkillModal = ref(false)
@@ -233,7 +230,7 @@ async function openSkillGenerate() {
     skillList.value = data.skills
     const petForge = data.skills?.find((s: any) => s.name === 'pet-forge')
     if (!petForge) {
-      message.warning('pet-forge skill 未安装，生成功能不可用')
+      message.warning(t('skinWindow.petForgeMissing'))
       skillReady.value = false
     } else {
       skillReady.value = true
@@ -255,12 +252,7 @@ async function triggerSkillGenerate() {
   if (!petName || !prompt) return
 
   // 构造发送给 AI 的消息
-  const messageText = `请使用 pet-forge 技能为我生成一个新的桌宠皮肤。
-
-皮肤名称：${petName}
-外观描述：${prompt}
-
-请严格按照 pet-forge skill 的流水线流程：generate_rig → validate_rig → generate_states_batch → derive_mirrors → validate_states → pack_theme。`
+  const messageText = t('skinWindow.skillMessage', { name: petName, prompt })
 
   // 关闭弹窗
   closeSkillModal()
@@ -307,7 +299,7 @@ async function importViaTauriDialog() {
 
   const sourcePath = selected
   const folderName = sourcePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'imported_pet'
-  const loadingMsg = message.loading('正在导入皮肤文件夹…', { duration: 0 })
+  const loadingMsg = message.loading(t('skinWindow.uploadConfirm'), { duration: 0 })
 
   try {
     const controller = new AbortController()
@@ -334,17 +326,17 @@ async function importViaTauriDialog() {
       id: `custom_${Date.now()}`,
       displayName,
       preview,
-      source: '导入',
+      source: 'imported',
     })
 
     loadingMsg.destroy()
-    message.success(`皮肤 "${displayName}" 导入成功（${result.files_saved ?? 0} 个文件）`)
+    message.success(t('skinWindow.importSuccess', { name: displayName, count: result.files_saved ?? 0 }))
   } catch (e: any) {
     loadingMsg.destroy()
     if (e?.name === 'AbortError') {
-      message.error('导入超时，请确认后端已启动且目录可访问')
+      message.error(t('skinWindow.importTimeout'))
     } else {
-      message.error(`导入失败：${e.message || e}`)
+      message.error(t('skinWindow.importFail', { msg: e.message || e }))
     }
   }
 }
@@ -395,11 +387,11 @@ async function importViaBrowserFallback() {
   formData.append('folder_name', folderName)
 
   if (!hasPetJson) {
-    message.warning('文件夹内未找到 pet.json')
+    message.warning(t('skinWindow.importNoPetJson'))
     return
   }
 
-  const loadingMsg = message.loading('正在导入皮肤…', { duration: 0 })
+  const loadingMsg = message.loading(t('skinWindow.uploading'), { duration: 0 })
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 30_000)
@@ -421,16 +413,16 @@ async function importViaBrowserFallback() {
       id: `custom_${Date.now()}`,
       displayName,
       preview: `/pet/${folderName}/spritesheet.webp`,
-      source: '导入',
+      source: 'imported',
     })
     loadingMsg.destroy()
-    message.success(`皮肤 "${displayName}" 导入成功！`)
+    message.success(t('skinWindow.importSimpleSuccess', { name: displayName }))
   } catch (e: any) {
     loadingMsg.destroy()
     if (e?.name === 'AbortError') {
-      message.error('导入超时，请确认后端已启动')
+      message.error(t('skinWindow.importTimeout'))
     } else {
-      message.error(`导入失败：${e.message || e}`)
+      message.error(t('skinWindow.importFail', { msg: e.message || e }))
     }
   }
 }
@@ -467,9 +459,9 @@ async function switchPet(pet: PetSkin) {
       displayName: pet.displayName,
     })
 
-    message.success(`已切换到 ${pet.displayName}`)
+    message.success(t('skinWindow.switchSuccess', { name: pet.displayName }))
   } catch (e: any) {
-    message.error(`加载失败：${e.message || e}`)
+    message.error(t('skinWindow.loadFail', { msg: e.message || e }))
   }
 }
 
@@ -486,7 +478,7 @@ function removePet(id: string) {
       displayName: 'Pet 02',
     })
   }
-  message.success('已删除皮肤')
+  message.success(t('skinWindow.deleteSuccess'))
 }
 
 

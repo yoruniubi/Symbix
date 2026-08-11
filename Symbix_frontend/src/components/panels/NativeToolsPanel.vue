@@ -1,7 +1,7 @@
 <template>
   <transition name="panel-slide">
     <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'native_tools'">
-      <div class="panel-resize-handle" title="拖动调整面板宽度" @mousedown="startResize" />
+      <div class="panel-resize-handle" :title="$t('common.pullToResize')" @mousedown="startResize" />
       <div class="side-panel-header">
         <span class="side-panel-title">{{ $t('nativeToolsPanel.title') }}</span>
         <n-button text size="tiny" class="close-btn" @click="handleClose">
