@@ -3,7 +3,6 @@
     <div v-if="activePanel === 'files'" class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }">
       <div class="panel-resize-handle" :title="$t('common.pullToResize')" @mousedown="startResize" />
       <div class="side-panel-header">
-        <span class="side-panel-title">{{ $t('filePanel.title') }}</span>
         <div class="side-panel-actions">
           <button type="button" class="panel-action-btn" :title="$t('filePanel.openDir')" @click="chooseDirectory">{{ $t('filePanel.openDir') }}</button>
           <button type="button" class="panel-icon-btn" :title="$t('filePanel.refresh')" @click="loadDirectory(currentPath)">↻</button>

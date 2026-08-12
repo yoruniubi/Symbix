@@ -39,6 +39,7 @@ export default {
     thinking: 'Let me take a look...',
     complete: 'Done!',
     errorOccurred: 'Something went wrong while processing',
+    requestFail: 'Request failed: {msg}',
     taskComplete: "I'm here, the task is done~",
     taskCompleteTitle: 'Symbix · Task Complete',
     approvalPassed: 'Approval passed, task complete~',
@@ -55,6 +56,15 @@ export default {
     awaitingApproval: '⚠️ Agent wants to run a tool, your approval is required',
     approve: 'Approve',
     reject: 'Reject',
+    generating: 'AI is generating response...',
+    // Risk levels
+    riskLevelSafe: '✓ Safe',
+    riskLevelMedium: '⚠️ Needs approval',
+    riskLevelHigh: '🚨 High risk',
+    riskReason: 'Reason',
+    approvalNotifyTitle: 'Symbix · Approval Required',
+    approvalNotifyBody: 'Agent wants to execute tool “{tool}”, please review and approve',
+    unknownTool: 'Unknown tool',
     param: 'Args',
     result: 'Result',
     emptyResult: '(empty)',
@@ -63,6 +73,7 @@ export default {
     processingResult: 'Organizing results...',
     processedDone: 'Processed',
     approvalFailed: 'Approval failed',
+    approvalFailedDetail: 'Approval failed: {msg}',
     testConnection: 'Test connection',
     testConnectionSuccess: 'Connected!',
     testConnectionFail: 'Connection failed: {msg}',
@@ -141,6 +152,12 @@ export default {
     delete: 'Delete Skill',
     refresh: 'Refresh',
     empty: 'No Skills yet',
+    refreshSuccess: 'Skill list refreshed',
+    deleteSuccess: 'Deleted skill "{name}"',
+    deleteFail: 'Failed to delete skill: {msg}',
+    fetchFail: 'Failed to load Skill list (HTTP {status})',
+    fetchFailDetail: 'Failed to load Skill list: {msg}',
+    fetchFailShort: 'Failed to load Skill list',
   },
 
   // ===== MCP Panel =====
@@ -166,6 +183,7 @@ export default {
     statusError: 'Error',
     statusOffline: 'Not connected',
     error: 'Not connected',
+    fetchConfigFail: 'Failed to load MCP config',
   },
 
   // ===== Native Tools Panel =====
@@ -173,11 +191,11 @@ export default {
     title: 'Native Tools Panel',
     summary: '{count} built-in tools registered',
     empty: 'No built-in tools',
+    fetchFail: 'Failed to load built-in tools',
   },
 
   // ===== File Panel =====
   filePanel: {
-    title: 'File Explorer',
     openDir: 'Open Folder',
     openDirTitle: 'Choose a folder to browse',
     refresh: 'Refresh',
@@ -288,6 +306,7 @@ export default {
     soundMoon: 'Moon',
     soundRain: 'Rain',
     soundNone: 'None',
+    soundHint: 'Played when a task completes',
     // STT
     stt: 'Speech Recognition (STT)',
     sttProvider: 'STT Provider',

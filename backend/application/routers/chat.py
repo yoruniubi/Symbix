@@ -17,6 +17,7 @@ from application.state import (
     _pending_approvals,
     _processing_approvals,
 )
+from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
 from application.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
@@ -228,7 +229,17 @@ async def chat(request: ChatRequest):
 
             for tc in response["tool_calls"]:
                 fn = tc.function
-                if fn.name in APPROVAL_TOOLS:
+                # 解析参数用于风险分级
+                try:
+                    args = _json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
+                except Exception:
+                    args = {}
+                
+                # 使用风险分级器判断是否需要审批
+                risk_level, risk_reason = classify_tool_risk(fn.name, args)
+                
+                # SAFE 工具直接放行，MEDIUM/HIGH 需要审批
+                if risk_level != ToolRiskLevel.SAFE:
                     approval_id = str(uuid.uuid4())
                     _pending_approvals[approval_id] = {
                         "session_id": request.session_id,
@@ -248,6 +259,8 @@ async def chat(request: ChatRequest):
                             {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
                             for r in response["tool_calls"]
                         ],
+                        "risk_level": risk_level,
+                        "risk_reason": risk_reason,
                     }
 
                     return {
@@ -259,6 +272,8 @@ async def chat(request: ChatRequest):
                         "steps": steps,
                         "act_mode": act_mode,
                         "act_plan": act_plan,
+                        "risk_level": risk_level,
+                        "risk_reason": risk_reason,
                         "pending_tool": {
                             "tool_call_id": tc.id,
                             "name": fn.name,
@@ -382,9 +397,15 @@ async def chat_approve(req: ApproveRequest):
         for tc in remaining_tcs:
             if tc["id"] == pending_tc["id"]:
                 continue
-            # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
-            if tc["name"] in APPROVAL_TOOLS:
-                # raise warning about multiple approval tools in one step
+            # 使用风险分级器判断剩余工具是否需要审批
+            try:
+                args = _json.loads(tc["arguments"]) if isinstance(tc["arguments"], str) else tc["arguments"]
+            except Exception:
+                args = {}
+            
+            risk_level, _ = classify_tool_risk(tc["name"], args)
+            if risk_level != ToolRiskLevel.SAFE:
+                # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
                 r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
             else:
                 r_out = tool_registry.execute(tc["name"], tc["arguments"])
@@ -450,7 +471,17 @@ async def chat_approve(req: ApproveRequest):
             })
             for tc in response["tool_calls"]:
                 fn = tc.function
-                if fn.name in APPROVAL_TOOLS:
+                # 解析参数用于风险分级
+                try:
+                    args = _json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
+                except Exception:
+                    args = {}
+                
+                # 使用风险分级器判断是否需要审批
+                risk_level, risk_reason = classify_tool_risk(fn.name, args)
+                
+                # SAFE 工具直接放行，MEDIUM/HIGH 需要审批
+                if risk_level != ToolRiskLevel.SAFE:
                     approval_id = str(uuid.uuid4())
                     _pending_approvals[approval_id] = {
                         "session_id": ctx["session_id"],
@@ -470,6 +501,8 @@ async def chat_approve(req: ApproveRequest):
                             {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
                             for r in response["tool_calls"]
                         ],
+                        "risk_level": risk_level,
+                        "risk_reason": risk_reason,
                     }
                     return {
                         "status": "pending_approval",
@@ -480,6 +513,8 @@ async def chat_approve(req: ApproveRequest):
                         "steps": steps,
                         "act_mode": act_mode,
                         "act_plan": act_plan,
+                        "risk_level": risk_level,
+                        "risk_reason": risk_reason,
                         "pending_tool": {
                             "tool_call_id": tc.id,
                             "name": fn.name,
@@ -709,7 +744,11 @@ async def chat_stream(request: ChatRequest):
                         break
                     attempted_tool_calls.add(call_signature)
 
-                    if tc_name in APPROVAL_TOOLS:
+                    # 动态风险分级：根据工具名和参数判断是否需要审批
+                    risk_level, risk_reason = classify_tool_risk(tc_name, tc_args)
+                    
+                    # SAFE 级别直接放行，MEDIUM 和 HIGH 需要审批
+                    if risk_level in (ToolRiskLevel.MEDIUM, ToolRiskLevel.HIGH):
                         approval_id = str(uuid.uuid4())
                         _pending_approvals[approval_id] = {
                             "session_id": request.session_id,
@@ -744,6 +783,8 @@ async def chat_stream(request: ChatRequest):
                             "type": "await_approval",
                             "approval_id": approval_id,
                             "tool": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                            "risk_level": risk_level,
+                            "risk_reason": risk_reason,
                             "act_mode": act_mode,
                             "act_plan": act_plan,
                         })

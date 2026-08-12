@@ -81,10 +81,29 @@
         <!-- 审批按钮 -->
         <div v-if="msg.approval_id" class="approval-block">
           <div class="approval-hint">{{ t('chat.awaitingApproval') }}</div>
+          
+          <!-- 风险等级显示 -->
+          <div v-if="msg.risk_level" class="risk-info">
+            <span class="risk-badge" :class="'risk-' + msg.risk_level">
+              {{ t('chat.riskLevel' + msg.risk_level.charAt(0).toUpperCase() + msg.risk_level.slice(1)) }}
+            </span>
+            <span v-if="msg.risk_reason" class="risk-reason">
+              {{ t('chat.riskReason') }}: {{ msg.risk_reason }}
+            </span>
+          </div>
+          
           <div class="approval-actions">
             <n-button size="small" type="primary" :loading="msg.approval_pending === true" :disabled="msg.approval_pending === true" @click="emit('approve', true)">{{ t('chat.approve') }}</n-button>
             <n-button size="small" tertiary :disabled="msg.approval_pending === true" @click="emit('approve', false)">{{ t('chat.reject') }}</n-button>
           </div>
+        </div>
+
+        <!-- 生成中状态提示 -->
+        <div v-if="msg.generating" class="generating-block">
+          <svg class="generating-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+          <span class="generating-text">{{ t('chat.generating') }}</span>
         </div>
 
         <div v-if="hasContent" class="message-bubble" :class="msg.role" ref="bubbleRef">
@@ -834,10 +853,77 @@ onMounted(() => {
   background: rgba(216, 155, 60, 0.08);
 }
 
+/* ---- Generating Block ---- */
+.generating-block {
+  max-width: min(72%, 760px);
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generating-icon {
+  color: var(--accent-500, #EF6B6E);
+  flex-shrink: 0;
+  animation: spin 1.2s linear infinite;
+}
+
+.generating-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
 .approval-hint {
   font-size: 13px;
   color: var(--warning, #D89B3C);
   margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.risk-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.risk-badge.risk-safe {
+  background: rgba(110, 231, 183, 0.15);
+  color: #6EE7B7;
+  border: 1px solid rgba(110, 231, 183, 0.3);
+}
+
+.risk-badge.risk-medium {
+  background: rgba(251, 191, 36, 0.15);
+  color: #FBBF24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.risk-badge.risk-high {
+  background: rgba(239, 68, 68, 0.15);
+  color: #EF4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.risk-reason {
+  font-size: 12px;
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 

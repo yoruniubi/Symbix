@@ -783,10 +783,18 @@ function handleSSEEvent(
 
     case 'await_approval':
       msg.approval_id = evt.approval_id
+      msg.risk_level = evt.risk_level  // 新增：保存风险等级
+      msg.risk_reason = evt.risk_reason  // 新增：保存风险原因
       if (msg.steps && msg.steps.length > 0) {
         const pendingStep = msg.steps.find((s: any) => s.name === evt.tool?.name)
         if (pendingStep) pendingStep.status = 'awaiting_approval'
       }
+      // 发送通知提醒用户审批
+      notifyTaskComplete({
+        title: t('chat.approvalNotifyTitle'),
+        body: t('chat.approvalNotifyBody', { tool: evt.tool?.name || t('chat.unknownTool') }),
+        forceDesktop: true,
+      })
       break
 
     case 'done':
@@ -1055,7 +1063,10 @@ async function approveTool(msgIdx: number, approved: boolean) {
   // 404,虽然第一次工具实际上已经执行成功。先在前端锁住当前审批卡片。
   if (msg.approval_pending === true) return
   const approvalId = msg.approval_id
-  msg.approval_pending = true
+  // 乐观更新：立即清除审批状态（工具会瞬间执行完），显示"生成中"状态
+  msg.approval_pending = false
+  msg.approval_id = undefined
+  msg.generating = true
   loading.value = true
   publishAgentStatus('thinking', approved ? t('chat.continueProcessing') : t('chat.processingResult'))
   try {
@@ -1081,6 +1092,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
       msg.steps = steps
       msg.approval_id = data.approval_id
       msg.approval_pending = false
+      msg.generating = false
       msg.content = ''
       loading.value = false
       // 仍有下一项审批,保持桌宠思考循环,不要提前庆祝。
@@ -1092,6 +1104,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
     msg.steps = steps
     msg.approval_id = undefined
     msg.approval_pending = false
+    msg.generating = false
     loading.value = false
     publishAgentStatus('complete', approved ? t('chat.complete') : t('chat.processedDone'))
     await saveSessionToLocalMarkdown()
@@ -1103,6 +1116,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
 
   } catch (e: any) {
     loading.value = false
+    msg.generating = false
     // 如果是重复请求,第一次通常已经完成了工具执行;不要让旧审批按钮继续
     // 可点击并再次提交同一个已经消费的 approval_id。
     if (msg.approval_id === approvalId) msg.approval_id = undefined

@@ -39,6 +39,7 @@ export default {
     thinking: '我来看看...',
     complete: '完成啦!',
     errorOccurred: '处理时遇到了一点问题',
+    requestFail: '请求失败:{msg}',
     taskComplete: '我已在这里,任务已经完成啦~',
     taskCompleteTitle: 'Symbix · 任务完成',
     approvalPassed: '审批已通过,任务完成啦~',
@@ -55,6 +56,15 @@ export default {
     awaitingApproval: '⚠️ Agent 想执行工具,需要你的审批',
     approve: '同意执行',
     reject: '拒绝',
+    generating: 'AI 正在生成回复...',
+    // Risk levels
+    riskLevelSafe: '✓ 安全',
+    riskLevelMedium: '⚠️ 需审批',
+    riskLevelHigh: '🚨 高危操作',
+    riskReason: '原因',
+    approvalNotifyTitle: 'Symbix · 需要审批',
+    approvalNotifyBody: 'Agent 想执行工具「{tool}」，请查看并审批',
+    unknownTool: '未知工具',
     param: '参数',
     result: '结果',
     emptyResult: '(空)',
@@ -63,6 +73,7 @@ export default {
     processingResult: '正在整理结果...',
     processedDone: '已处理完毕',
     approvalFailed: '审批处理失败',
+    approvalFailedDetail: '审批处理失败:{msg}',
     testConnection: '测试连接',
     testConnectionSuccess: '连接成功!',
     testConnectionFail: '连接失败:{msg}',
@@ -141,6 +152,12 @@ export default {
     delete: '删除 Skill',
     refresh: '刷新列表',
     empty: '暂无 Skill',
+    refreshSuccess: 'Skill 列表已刷新',
+    deleteSuccess: '已删除 Skill「{name}」',
+    deleteFail: '删除 Skill 失败:{msg}',
+    fetchFail: '获取 Skill 列表失败 (HTTP {status})',
+    fetchFailDetail: '获取 Skill 列表失败:{msg}',
+    fetchFailShort: '获取 Skill 列表失败',
   },
 
   // ===== MCP Panel =====
@@ -166,6 +183,7 @@ export default {
     statusError: '错误',
     statusOffline: '未连接',
     error: '未连接',
+    fetchConfigFail: '获取 MCP 配置失败',
   },
 
   // ===== Native Tools Panel =====
@@ -173,11 +191,11 @@ export default {
     title: 'Native Tools 面板',
     summary: '已注册 {count} 个内置工具',
     empty: '暂无内置工具',
+    fetchFail: '获取内置工具列表失败',
   },
 
   // ===== File Panel =====
   filePanel: {
-    title: '文件浏览器',
     openDir: '打开目录',
     openDirTitle: '选择要浏览的目录',
     refresh: '刷新',
@@ -288,6 +306,7 @@ export default {
     soundMoon: '月色 Moon',
     soundRain: '细雨 Rain',
     soundNone: '无音效',
+    soundHint: '提示音会在任务完成时播放',
     // STT
     stt: '语音识别 (STT)',
     sttProvider: 'STT 服务商',
