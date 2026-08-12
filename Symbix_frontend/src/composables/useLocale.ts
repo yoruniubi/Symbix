@@ -9,7 +9,6 @@ import { locale as getSystemLocaleTag } from '@tauri-apps/plugin-os'
 import { emit } from '@tauri-apps/api/event'
 export type { AppLocale }
 
-const t  = useI18n().t
 const STORAGE_KEY = 'symbix_locale'
 const supportedLocales: AppLocale[] = ['zh-CN', 'en']
 /** Module-level state so all windows / components share the same locale */
@@ -56,14 +55,12 @@ function bindStorageListener() {
 export function useLocale() {
   bindStorageListener()
 
+  // 必须在 setup 顶层调用，以拿到当前 vue-i18n 实例
+  const i18n = useI18n()
+  const { t } = i18n
   // Keep vue-i18n in sync if this composable is used after i18n boot
-  try {
-    const i18n = useI18n()
-    if (i18n.locale.value !== localeRef.value) {
-      i18n.locale.value = localeRef.value
-    }
-  } catch {
-    // useI18n may be unavailable outside setup; applyI18nLocale still works
+  if (i18n.locale.value !== localeRef.value) {
+    i18n.locale.value = localeRef.value
   }
 
   const localeOptions = computed(() => [
