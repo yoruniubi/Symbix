@@ -6,8 +6,8 @@
       <!-- Header -->
       <div class="header-row">
         <div class="header-text">
-          <h1 class="title">{{ t('skin.title') }}</h1>
-          <p class="subtitle">{{ t('skin.subtitle') }}</p>
+          <h1 class="title">{{ t('skinWindow.title') }}</h1>
+          <p class="subtitle">{{ t('skinWindow.subtitle') }}</p>
         </div>
         <div class="header-meta">
           <span class="count-badge">{{ t('skinWindow.count', { count: availablePets.length }) }}</span>

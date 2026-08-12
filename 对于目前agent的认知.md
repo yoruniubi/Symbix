@@ -30,3 +30,11 @@ agent最重要的一个特质就是自主性，可以自行决定通过何种方
 SEO就是搜索引擎优化(search engine optimization),简单来说就是怎样让你的项目排在搜索结果比较前面的位置，然后GEO就是生成引擎优化(generative engine optimization), 主要是就是AI搜索相关的优化，如何让自己的项目能比较容易让AI检索的到，其实这一块跟这个推广有关了，之后再说。
 SEO的文章：https://developers.google.com/search/docs/fundamentals/seo-starter-guide?hl=zh-cn
 GEO，该怎么说，有所风险，看看吧 https://linux.do/t/topic/2596934/24
+10. 关于Harness
+Harness 具体做什么？
+- 维护对话/任务的循环（loop）：模型输出 → harness 解析出工具调用 → harness 真正执行该工具（跑 bash、改文件、调 HTTP、点浏览器）→ 把执行结果重新塞回给模型 → 模型继续下一步，如此循环
+- 上下文管理：控制窗口大小、做压缩/摘要、决定哪些历史要留哪些要丢
+- 权限与安全：比如危险操作要不要先问用户确认、沙箱隔离
+- 错误处理与重试：工具调用失败了怎么办、要不要换个方式重试
+- 提供"世界"接口：文件系统、终端、浏览器、各种 API 之类的具体工具实现
+- 可观测性：日志、trace，方便调试模型每一步在想什么

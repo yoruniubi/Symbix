@@ -42,6 +42,7 @@
     "core:menu:default",
     "core:app:default",
     "dialog:default",
+    "os:allow-locale",
     {
       "identifier": "dialog:allow-open",
       "allow": [{"directory": true}]

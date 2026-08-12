@@ -30,12 +30,12 @@
         :mcp-tool-list="mcpToolList"
         :expanded-mcp-servers="expandedMcpServers"
         :mcp-status-map="mcpStatusMap"
+        :refreshing="refreshingMcp"
         @update:active-panel="activePanel = $event"
         @open-add-chooser="openAddChooser"
         @toggle-mcp-server="toggleMcpServer"
-        @reconnect-mcp="reconnectMcp"
         @remove-mcp="removeMcp"
-        @test-mcp-connection="testMcpConnection"
+        @refresh="handleMcpRefresh"
       />
 
       <!-- 文件浏览器:浏览本地文件 -->
@@ -123,6 +123,7 @@
       :form="mcpForm"
       @update:show="showAddMcpModal = $event"
       @update:mode="mcpAddMode = $event"
+      @submit="submitInstallMcp"
       />
 
   </div>
@@ -135,7 +136,7 @@ import McpPanel from '@/components/panels/McpPanel.vue'
 import FilePanel from '@/components/panels/FilePanel.vue'
 import NativeToolsPanel from '@/components/panels/NativeToolsPanel.vue'
 import ChatActivityBar from '@/components/ChatActivityBar.vue'
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
 import SessionList from '@/components/SessionList.vue'
@@ -192,6 +193,10 @@ const installingMcp = ref(false)
 const skillAddMode = ref<'github' | 'custom'>('github')
 const mcpAddMode = ref<'remote' | 'npm'>('remote')
 const mcpStatusMap = ref<Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>>({})
+const refreshingMcp = ref(false)
+// MCP 连接状态 5 分钟周期检测定时器（静默刷新；仅在"由 OK 变 OFFLINE"时 toast 一次）
+const MCP_CHECK_INTERVAL = 5 * 60 * 1000
+let mcpCheckTimer: ReturnType<typeof setInterval> | null = null
 const skillForm = ref({
   skill_name: '',
   display_name: '',
@@ -221,26 +226,43 @@ function openAddChooser(kind: 'skill' | 'mcp') {
   }
 }
 
-
-async function refreshMcpStatus() {
+/**
+ * 静默拉取 MCP 连接状态。
+ * - silent=true（定时/手动刷新默认）：不弹 toast，只在"从 connected 变成非 connected"
+ *   时才 toast 一次，避免周期打扰。
+ * - silent=false：复用原 toast 语义，用于首次加载出错时提示开发调试。
+ */
+async function refreshMcpStatus(silent = true) {
+  const prevStatus: Record<string, string> = {}
+  for (const [id, info] of Object.entries(mcpStatusMap.value)) {
+    prevStatus[id] = info?.status || ''
+  }
   try {
     const res = await fetch(`${BACKEND_URL}/mcp/test`)
     if (!res.ok) return
     const data = await res.json()
     mcpStatusMap.value = data.servers || {}
+    if (silent) {
+      // 仅在"由 OK 变 OFFLINE/error"时提示一次
+      for (const [id, info] of Object.entries(mcpStatusMap.value)) {
+        const was = prevStatus[id]
+        const now: string = (info as any)?.status || ''
+        if (was === 'connected' && now && now !== 'connected') {
+          messageUi.warning(t('mcpPanel.silentOffline', { id }))
+        }
+      }
+    }
   } catch {}
 }
 
-async function reconnectMcp(serverId: string) {
+/** MCP 面板刷新按钮处理：转图标，同步刷新 server/tool 列表与状态。 */
+async function handleMcpRefresh() {
+  if (refreshingMcp.value) return
+  refreshingMcp.value = true
   try {
-    const res = await fetch(`${BACKEND_URL}/mcp/servers/${encodeURIComponent(serverId)}/reconnect`, { method: 'POST' })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-    if (data.connected) messageUi.success(data.message || t('mcpPanel.reconnectSuccess'))
-    else messageUi.warning(data.message || '已尝试重连,当前仍未连通')
-    await refreshMcpPanel()
-  } catch (e: any) {
-    messageUi.error(t('mcpPanel.reconnectFail', { msg: e.message || e }))
+    await refreshMcpPanel() // 内部会调 refreshMcpStatus()
+  } finally {
+    refreshingMcp.value = false
   }
 }
 
@@ -315,36 +337,18 @@ onMounted(async () => {
   } catch (e) {
     console.warn('[chat] 读取 pendingSkinGen 失败:', e)
   }
+
+  // 启动 MCP 连接状态周期检测（5 分钟一次，静默刷新）
+  refreshMcpStatus(true)
+  mcpCheckTimer = setInterval(() => refreshMcpStatus(true), MCP_CHECK_INTERVAL)
 })
-async function testMcpConnection() {
-  try {
-    const res = await fetch('http://127.0.0.1:8000/mcp/test', {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    })
-    if (res.ok) {
-      const data = await res.json()
-      mcpStatusMap.value = data.servers || {}
-      const entries = Object.entries(mcpStatusMap.value)
-      const connected = entries.filter(([, v]: any) => v?.status === 'connected').length
-      if (connected > 0) {
-        messageUi.success(t('mcpPanel.testOk', { connected, total: entries.length }))
-      } else if (entries.length === 0) {
-        messageUi.warning(t('mcpPanel.testNoConfig'))
-      } else {
-        messageUi.warning(t('mcpPanel.testWarning'))
-      }
-    } else {
-      messageUi.error(t('mcpPanel.testFail', { status: res.status }))
-    }
-  } catch (err: any) {
-    console.error('MCP测试连接失败:', err)
-    messageUi.error(t('mcpPanel.testFailDetail', { msg: err.message || err }))
+
+onBeforeUnmount(() => {
+  if (mcpCheckTimer) {
+    clearInterval(mcpCheckTimer)
+    mcpCheckTimer = null
   }
-}
-
-
-
+})
 async function refreshSkillList() {
   try {
     const res = await fetch('http://127.0.0.1:8000/skills', {
@@ -886,7 +890,7 @@ async function refreshMcpPanel() {
       const cfgServers = mcpConfigData.value?.mcpServers || {}
       for (const id of Object.keys(cfgServers)) {
         if (!mcpServerGroups.value.find(g => g.server_id === id)) {
-          mcpServerGroups.value.push({ server_id: id, tool_count: 0, tools: [], error: '未连接' })
+          mcpServerGroups.value.push({ server_id: id, tool_count: 0, tools: [], error: t('mcpPanel.statusOffline') })
         }
       }
       expandedMcpServers.value.clear()
@@ -976,7 +980,7 @@ async function submitCreateSkill() {
 async function submitInstallMcp() {
   const serverId = mcpForm.value.server_id.trim()
   if (!serverId) {
-    messageUi.warning('请填写 Server ID')
+    messageUi.warning(t('addMcpModal.needServerId'))
     return
   }
   installingMcp.value = true
@@ -984,7 +988,7 @@ async function submitInstallMcp() {
     if (mcpAddMode.value === 'remote') {
       const url = mcpForm.value.url.trim()
       if (!url) {
-        messageUi.warning('请填写远程 MCP URL')
+        messageUi.warning(t('addMcpModal.needUrl'))
         return
       }
       let headers: Record<string, string> = {}
@@ -993,7 +997,7 @@ async function submitInstallMcp() {
         try {
           headers = JSON.parse(ht)
         } catch {
-          messageUi.warning('Headers 需为合法 JSON,例如 {"Authorization":"Bearer xxx"}')
+          messageUi.warning(t('addMcpModal.needHeadersJson'))
           return
         }
       }
@@ -1009,12 +1013,12 @@ async function submitInstallMcp() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-      if (data.connected) messageUi.success(data.message || '远程 MCP 已连接')
-      else messageUi.warning(data.message || '配置已保存,但当前未连通(可能需要鉴权后重连)')
+      if (data.connected) messageUi.success(data.message || t('mcpPanel.addSuccess'))
+      else messageUi.warning(data.message || t('mcpPanel.addSaved'))
     } else {
       const packageName = mcpForm.value.package_name.trim()
       if (!packageName) {
-        messageUi.warning('请填写 npm 包名')
+        messageUi.warning(t('addMcpModal.needPackage'))
         return
       }
       const args = mcpForm.value.argsText.trim().split(/\s+/).filter(Boolean)
@@ -1029,14 +1033,14 @@ async function submitInstallMcp() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-      if (data.connected) messageUi.success(data.message || `MCP '${serverId}' 已添加`)
-      else messageUi.warning(data.message || '已添加但启动失败')
+      if (data.connected) messageUi.success(data.message || t('mcpPanel.addNpmSuccess', { serverId }))
+      else messageUi.warning(data.message || t('mcpPanel.addNpmWarning'))
     }
     showAddMcpModal.value = false
     mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'sse', headersText: '' }
     await refreshMcpPanel()
   } catch (e: any) {
-    messageUi.error(`添加失败:${e.message || e}`)
+    messageUi.error(t('mcpPanel.addFail', { msg: e.message || e }))
   } finally {
     installingMcp.value = false
   }

@@ -45,20 +45,6 @@
               <n-button
                 size="small"
                 quaternary
-                class="panel-icon-btn"
-                :title="$t('mcpPanel.reconnect')"
-                @click="handleReconnectMcp(group.server_id)"
-              >
-                <template #icon>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                  </svg>
-                </template>
-              </n-button>
-              <n-button
-                size="small"
-                quaternary
                 type="error"
                 class="panel-icon-btn"
                 :title="$t('mcpPanel.delete')"
@@ -90,14 +76,14 @@
         <n-empty v-if="mcpServerGroups.length === 0" :description="$t('mcpPanel.empty')" size="small" style="margin-top:20px;" />
       </div>
       <div class="side-panel-footer">
-        <n-button size="medium" secondary block class="panel-footer-btn" @click="handleTestMcpConnection">
+        <n-button size="medium" secondary block class="panel-footer-btn" @click="handleRefresh">
           <template #icon>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
+            <svg :class="['refresh-icon', { spinning: refreshing }]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
           </template>
-          {{ $t('mcpPanel.testConnection') }}
+          {{ $t('mcpPanel.refresh') }}
         </n-button>
       </div>
     </div>
@@ -108,20 +94,22 @@
 import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | null
   mcpServerGroups: { server_id: string; tool_count: number; tools: any[]; error?: string }[]
   mcpToolList: any[]
   expandedMcpServers: Set<string>
   mcpStatusMap: Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>
-}>()
+  refreshing?: boolean
+}>(), {
+  refreshing: false,
+})
 
 const emit = defineEmits<{
   (e: 'update:activePanel', value:'files'| 'skill' | 'mcp' | 'native_tools' | null): void
   (e: 'toggleMcpServer', serverId: string): void
-  (e: 'reconnectMcp', serverId: string): void
   (e: 'removeMcp', serverId: string): void
-  (e: 'testMcpConnection'): void
+  (e: 'refresh'): void
   (e: 'openAddChooser', kind: 'mcp'): void
 }>()
 
@@ -157,16 +145,12 @@ function handleToggleMcpServer(serverId: string) {
   emit('toggleMcpServer', serverId)
 }
 
-function handleReconnectMcp(serverId: string) {
-  emit('reconnectMcp', serverId)
-}
-
 function handleRemoveMcp(serverId: string) {
   emit('removeMcp', serverId)
 }
 
-function handleTestMcpConnection() {
-  emit('testMcpConnection')
+function handleRefresh() {
+  emit('refresh')
 }
 </script>
 
@@ -401,5 +385,16 @@ function handleTestMcpConnection() {
 }
 .panel-icon-btn :deep(.n-button__icon) {
   margin: 0 !important;
+}
+/* 刷新图标旋转动画 */
+.refresh-icon {
+  transition: transform 0.2s ease;
+}
+.refresh-icon.spinning {
+  animation: panel-refresh-spin 1s linear infinite;
+}
+@keyframes panel-refresh-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 </style>
