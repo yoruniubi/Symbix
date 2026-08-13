@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Pet assets (large image sprites, managed locally)
+public/pet/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
