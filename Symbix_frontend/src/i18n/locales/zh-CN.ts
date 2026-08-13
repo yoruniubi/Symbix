@@ -111,6 +111,7 @@ export default {
     selectModel: '选择模型',
     enterToSend: 'Enter 发送 · Shift+Enter 换行',
     uploadFailed: '上传失败: {name}',
+    imageNoVision: '当前模型「{model}」不支持读图，图片将以文字描述发送（建议使用 GPT-4o / Claude 3+ / Gemini 等多模态模型）',
   },
 
   // ===== Chat Welcome =====
@@ -197,6 +198,7 @@ export default {
 
   // ===== File Panel =====
   filePanel: {
+    title: '文件浏览',
     openDir: '打开目录',
     openDirTitle: '选择要浏览的目录',
     refresh: '刷新',

@@ -111,6 +111,7 @@ export default {
     selectModel: 'Select model',
     enterToSend: 'Enter to send · Shift+Enter newline',
     uploadFailed: 'Upload failed: {name}',
+    imageNoVision: 'Current model "{model}" does not support vision. The image will be sent as a text description. (Use a multimodal model like GPT-4o / Claude 3+ / Gemini)',
   },
 
   // ===== Chat Welcome =====
@@ -197,6 +198,7 @@ export default {
 
   // ===== File Panel =====
   filePanel: {
+    title: 'File Browser',
     openDir: 'Open Folder',
     openDirTitle: 'Choose a folder to browse',
     refresh: 'Refresh',
