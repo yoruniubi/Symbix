@@ -260,9 +260,9 @@ const router = useRouter()
 /** Skill 是否已接入（你指定 skill 后改为 true 并实现 generate） */
 const skillReady = ref(true)
 
-const currentPetId = ref('02')
+const currentPetId = ref('frieren')
 const availablePets = ref<PetSkin[]>([
-  { id: '02', displayName: 'Pet 02', preview: '/pet/02/spritesheet.webp', source: 'builtin' },
+  { id: 'frieren', displayName: 'Frieren', preview: '/pet/frieren/spritesheet.webp', source: 'builtin' },
 ])
 
 const showSkillModal = ref(false)
@@ -522,11 +522,8 @@ async function switchPet(pet: PetSkin) {
     localStorage.setItem('currentPetId', pet.id)
 
     const folderName = pet.preview.replace(/^\/pet\//, '').replace(/\/.*$/, '')
-    // 内置皮肤直接用 id；自定义皮肤从 preview 路径提取文件夹名
-    const petFolder =
-      pet.id === '02' || pet.id === '01' || !pet.id.startsWith('custom_')
-        ? (pet.id.startsWith('custom_') ? folderName : pet.id)
-        : folderName
+    // 内置皮肤（非 custom_）直接用 id 作为文件夹名；自定义皮肤从 preview 路径提取
+    const petFolder = pet.id.startsWith('custom_') ? folderName : pet.id
 
     await notifyPetSwitched({
       petId: pet.id,
@@ -547,12 +544,12 @@ function removePet(id: string) {
   savedPets = migrateOldPetData(savedPets)
   localStorage.setItem('customPets', JSON.stringify(savedPets.filter(p => p.id !== id)))
   if (currentPetId.value === id) {
-    currentPetId.value = '02'
+    currentPetId.value = 'frieren'
     void notifyPetSwitched({
-      petId: '02',
-      petFolder: '02',
-      spritesheetPath: '/pet/02/spritesheet.webp',
-      displayName: 'Pet 02',
+      petId: 'frieren',
+      petFolder: 'frieren',
+      spritesheetPath: '/pet/frieren/spritesheet.webp',
+      displayName: 'Frieren',
     })
   }
   message.success(t('skinWindow.deleteSuccess'))
@@ -560,6 +557,13 @@ function removePet(id: string) {
 
 
 onMounted(() => {
+  // 迁移：旧版默认内置桌宠为 '02'，现改为 'frieren'
+  const savedPetId = localStorage.getItem('currentPetId')
+  if (savedPetId === '02' || savedPetId === '01') {
+    localStorage.setItem('currentPetId', 'frieren')
+    currentPetId.value = 'frieren'
+  }
+
   let savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
   savedPets = migrateOldPetData(savedPets)
   if (savedPets.length > 0) {
@@ -572,8 +576,9 @@ onMounted(() => {
     localStorage.setItem('customPets', JSON.stringify(savedPets))
   }
 
-  const savedPetId = localStorage.getItem('currentPetId')
-  if (savedPetId) currentPetId.value = savedPetId
+  // 重新读取（可能已被迁移逻辑更新）
+  const finalPetId = localStorage.getItem('currentPetId')
+  if (finalPetId) currentPetId.value = finalPetId
 })
 </script>
 

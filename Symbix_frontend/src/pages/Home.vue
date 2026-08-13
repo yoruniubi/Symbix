@@ -972,11 +972,11 @@ onMounted(async () => {
   })
 
   // 读取上次保存的皮肤
-  let spritesheetPath = '/pet/02/spritesheet.webp'
+  let spritesheetPath = '/pet/frieren/spritesheet.webp'
   try {
     const savedPetId = localStorage.getItem('currentPetId')
-    // 查找匹配的自定义皮肤
-    if (savedPetId && savedPetId !== '02') {
+    // 旧版默认内置 '02'/'01' 现已废弃，回退到 frieren
+    if (savedPetId && savedPetId !== '02' && savedPetId !== '01') {
       const savedPetsStr = localStorage.getItem('customPets')
       if (savedPetsStr) {
         const savedPets = JSON.parse(savedPetsStr)

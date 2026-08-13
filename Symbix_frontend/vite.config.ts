@@ -54,7 +54,9 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 4. ignore `public/pet` — 桌宠资源文件常被运行中的 Tauri 应用锁定，
+      //    fs.watch 会抛 EBUSY 导致 dev server 崩溃。静态资源无需 HMR。
+      ignored: ["**/src-tauri/**", "**/public/pet/**"],
     },
   },
 }));
