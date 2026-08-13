@@ -166,6 +166,8 @@ const { messages, sessions, activeSessionId, persistSessions, getActiveSession }
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
+/** 标记是否为用户主动中断（避免 abort 导致的错误被当成真实错误处理） */
+let userAborted = false
 interface Skill {
   name: string
   display_name: string
@@ -436,6 +438,7 @@ function toggleMcpServer(serverId: string) {
   expandedMcpServers.value = s
 }
 function handleStopGeneration() {
+  userAborted = true
   if (abortController.value) {
     abortController.value.abort()
     abortController.value = null
@@ -608,6 +611,7 @@ async function sendMessage(text: string, files: any[]) {
     }
 
     abortController.value = new AbortController()
+    userAborted = false // 开始新请求时重置中断标志
     const response = await fetch(`${BACKEND_URL}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -686,10 +690,10 @@ async function sendMessage(text: string, files: any[]) {
   } catch (e: any) {
     loading.value = false
     abortController.value = null
-    // 检查是否是用户主动中断（AbortError）
-    // 兼容不同浏览器：name === 'AbortError' 或 code === 20（DOMException.ABORT_ERR）
-    if (e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort')) {
+    // 检查是否是用户主动中断（通过标志位或 AbortError 兼容不同浏览器）
+    if (userAborted || e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort') || e.message?.includes('fetch')) {
       console.log('=== 流被用户中断 ===')
+      userAborted = false
       publishAgentStatus('idle', t('chat.stopGenerate'))
       if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
         messages.value.splice(assistantMsgIndex, 1)
@@ -697,6 +701,7 @@ async function sendMessage(text: string, files: any[]) {
       return
     }
     console.error('=== 流式异常 ===', e)
+    userAborted = false
     publishAgentStatus('error', t('chat.errorOccurred'))
     if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
       messages.value.splice(assistantMsgIndex, 1)
@@ -1069,6 +1074,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
   if (msg.approval_pending === true) return
   const approvalId = msg.approval_id
   // 乐观更新：立即清除审批状态（工具会瞬间执行完），显示"生成中"状态
+  userAborted = false // 开始审批请求时重置中断标志
   msg.approval_pending = false
   msg.approval_id = undefined
   msg.generating = true
@@ -1128,10 +1134,10 @@ async function approveTool(msgIdx: number, approved: boolean) {
     if (msg.approval_id === approvalId) msg.approval_id = undefined
     msg.approval_pending = false
     
-    // 检查是否是用户主动中断（AbortError）
-    // 兼容不同浏览器：name === 'AbortError' 或 code === 20（DOMException.ABORT_ERR）
-    if (e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort')) {
+    // 检查是否是用户主动中断（通过标志位或 AbortError 兼容不同浏览器）
+    if (userAborted || e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort') || e.message?.includes('fetch')) {
       console.log('=== 审批请求被用户中断 ===')
+      userAborted = false
       publishAgentStatus('idle', t('chat.stopGenerate'))
       return
     }
