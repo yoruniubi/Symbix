@@ -18,6 +18,7 @@ from application.state import (
     _processing_approvals,
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
+from Symbix_sdk.model_capabilities import check_vision, clear_vision_cache
 from application.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
@@ -81,8 +82,15 @@ def _batch_yield(
         out.append(format_sse(flushed))
     out.append(format_sse(event))
     return out
-def _prepare_user_message(request: ChatRequest) -> tuple[str, list[dict], list[dict]]:
-    """解析 attachments 并注入用户消息；返回 (enriched_text, parsed_list, image_parts)。"""
+def _prepare_user_message(
+    request: ChatRequest,
+) -> tuple[str, list[dict], list[dict]]:
+    """
+    解析 attachments 并注入用户消息；返回 (enriched_text, parsed_list, image_parts)。
+
+    注意：本函数不做视觉能力检测，始终返回 image_parts。
+    视觉能力检测是异步操作，需在调用点用 check_vision() 完成。
+    """
     from Symbix_sdk.tools.file_pipeline import inject_attachments_into_message
 
     atts = []
@@ -93,7 +101,30 @@ def _prepare_user_message(request: ChatRequest) -> tuple[str, list[dict], list[d
             atts.append(a)
         else:
             atts.append(dict(a))
-    return inject_attachments_into_message(request.message, atts)
+
+    enriched, parsed_list, image_parts = inject_attachments_into_message(
+        request.message, atts
+    )
+    return enriched, parsed_list, image_parts
+
+
+async def _filter_image_parts(
+    image_parts: list[dict],
+    model: str,
+    api_key: str,
+    api_base: str,
+) -> list[dict]:
+    """
+    根据模型视觉能力过滤 image_parts。
+    有图片且模型不支持视觉时，异步探测并降级为空列表。
+    """
+    if not image_parts:
+        return image_parts
+    supports = await check_vision(model, api_key, api_base)
+    if not supports:
+        print(f"[chat] 模型 {model} 不支持视觉，{len(image_parts)} 张图片降级为文本描述")
+        return []
+    return image_parts
 
 
 @router.post("/upload")
@@ -150,6 +181,8 @@ async def chat(request: ChatRequest):
         model = request.model or provider_registry.get_active().model
 
         user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
+        # 有图片时，异步探测模型视觉能力并按需降级
+        image_parts = await _filter_image_parts(image_parts, model, api_key, api_base)
         mem_msg = request.message
         if request.attachments:
             names = [
@@ -599,6 +632,8 @@ async def chat_stream(request: ChatRequest):
             model = request.model or provider_registry.get_active().model
 
             user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
+            # 有图片时，异步探测模型视觉能力并按需降级
+            image_parts = await _filter_image_parts(image_parts, model, api_key, api_base)
             mem_msg = request.message
             if request.attachments:
                 names = [

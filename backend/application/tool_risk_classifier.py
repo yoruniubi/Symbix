@@ -25,6 +25,8 @@ class ToolRiskClassifier:
     SAFE_TOOLS = {
         "read_file", "list_files", "search_files", "read_multiple_files",
         "java_class_scanner", "file_structure_scanner", "code_quality_scanner",
+        # 桌宠动画工具：仅触发 UI 动画/表情，无文件或命令副作用
+        "emit_pet_action", "check_agent_status", "play_status_animation",
     }
     
     # 需要审批的中等风险工具

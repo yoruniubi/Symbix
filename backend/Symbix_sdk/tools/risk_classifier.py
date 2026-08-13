@@ -38,10 +38,12 @@ def classify_tool_risk(tool_name: str, arguments: Union[dict, str]) -> Tuple[str
     # 1. 纯读操作 → SAFE
     readonly_tools = {
         "read_file", "list_files", "search_files", "parse_file", 
-        "read_multiple_files", "get_file_info", "search_codebase"
+        "read_multiple_files", "get_file_info", "search_codebase",
+        # 桌宠动画工具：仅触发 UI 动画/表情，无文件或命令副作用
+        "emit_pet_action", "check_agent_status", "play_status_animation",
     }
     if tool_name in readonly_tools:
-        return (ToolRiskLevel.SAFE, "只读操作，安全放行")
+        return (ToolRiskLevel.SAFE, "只读/无副作用操作，安全放行")
     
     # 2. 高危操作 → HIGH
     if tool_name == "delete_file":

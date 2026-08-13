@@ -131,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 
@@ -172,6 +172,49 @@ let recordTimer: any = null
 
 const { t } = useI18n()
 
+const BACKEND_URL = 'http://127.0.0.1:8000'
+
+/** 图片扩展名集合 */
+const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+
+/** 缓存模型视觉能力查询结果，避免重复请求 */
+let _visionCache: { model: string; vision: boolean } | null = null
+
+/** 查询当前模型是否支持视觉（带缓存） */
+async function checkModelVision(): Promise<boolean> {
+  const model = props.currentModel
+  if (!model) return false
+  if (_visionCache && _visionCache.model === model) return _visionCache.vision
+  try {
+    // 调用实时探测接口（后端发起最小请求测试）
+    const res = await fetch(`${BACKEND_URL}/model/probe-vision?model=${encodeURIComponent(model)}`)
+    if (!res.ok) return false
+    const data = await res.json()
+    const vision = !!data.vision
+    _visionCache = { model, vision }
+    return vision
+  } catch {
+    return false
+  }
+}
+
+/** 模型切换时清除缓存（外部可调用） */
+function invalidateVisionCache() {
+  _visionCache = null
+}
+
+// 监听模型变化时清除缓存
+watch(() => props.currentModel, () => {
+  _visionCache = null
+})
+
+/** 判断文件是否为图片 */
+function isImageFile(name: string, mime?: string): boolean {
+  if (mime && mime.startsWith('image/')) return true
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
+  return IMAGE_EXTS.includes(ext)
+}
+
 const canSend = computed(() => {
   const textOk = !!inputValue.value.trim()
   const readyFiles = attachments.value.filter(a => a.status === 'ok' || (!a.status && a.path))
@@ -192,8 +235,6 @@ function handleSend() {
   emit('send', text || '', files)
   inputValue.value = ''
 }
-
-const BACKEND_URL = 'http://127.0.0.1:8000'
 
 async function handleFileUpload({ file, onFinish, onError }: any) {
   const raw: File | undefined = file?.file
@@ -234,6 +275,13 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
         preview: meta.preview,
         status: 'ok',
         file: undefined,
+      }
+      // 如果是图片，检查当前模型是否支持视觉
+      if (isImageFile(raw.name, raw.type)) {
+        const vision = await checkModelVision()
+        if (!vision) {
+          messageUi.warning(t('chatInput.imageNoVision', { model: props.currentModel }))
+        }
       }
     } else {
       attachments.value[idx] = {
