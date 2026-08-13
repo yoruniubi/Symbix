@@ -169,6 +169,7 @@ export default {
     reconnect: '重连',
     delete: '删除',
     refresh: '刷新',
+    refreshSuccess: '刷新成功',
     silentOffline: 'MCP 「{id}」连接已断开',
     empty: '未连接任何 MCP Server',
     removeSuccess: '已删除 {serverId}',

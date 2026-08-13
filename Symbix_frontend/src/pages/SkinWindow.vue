@@ -155,6 +155,7 @@ import { useRouter } from 'vue-router'
 import TitleBar from '@/components/TitleBar.vue'
 import { Assets, Texture } from 'pixi.js'
 import { useI18n } from 'vue-i18n'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 const { t } = useI18n()
 const skillList = ref([])
 interface PetSkin {
@@ -162,6 +163,62 @@ interface PetSkin {
   displayName: string
   preview: string
   source?: string
+}
+
+/** 打开或激活已有窗口 */
+async function revealWindow(win: WebviewWindow): Promise<boolean> {
+  try {
+    await win.unminimize()
+    await win.setFocus()
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function openOrCreateWindow(
+  label: string,
+  options: {
+    url: string
+    title: string
+    width: number
+    height: number
+  },
+) {
+  try {
+    const existing = await WebviewWindow.getByLabel(label)
+    if (existing) {
+      const ok = await revealWindow(existing)
+      if (ok) return
+      // 旧窗口已失效,尝试关闭后重建
+      try { await existing.close() } catch {}
+    }
+    new WebviewWindow(label, {
+      url: options.url,
+      title: options.title,
+      width: options.width,
+      height: options.height,
+      resizable: true,
+      decorations: false,
+      transparent: true,
+    })
+  } catch (e) {
+    console.error(`Error opening window '${label}':`, e)
+    // 最后兜底:直接新建
+    try {
+      new WebviewWindow(label, {
+        url: options.url,
+        title: options.title,
+        width: options.width,
+        height: options.height,
+        resizable: true,
+        decorations: false,
+        transparent: true,
+      })
+    } catch (e2) {
+      console.error(`Failed to create window '${label}':`, e2)
+    }
+  }
 }
 
 /** 跨窗口通知主窗切换皮肤：localStorage + Tauri emit/emitTo 多通道 */
@@ -267,8 +324,13 @@ async function triggerSkillGenerate() {
     console.warn('[skin] 保存 pendingSkinGen 失败:', e)
   }
 
-  // 跳转到聊天页面
-  router.push('/chat')
+  // 打开聊天窗口
+  await openOrCreateWindow('chat', {
+    url: '/chat_window',
+    title: t('home.windowChat'),
+    width: 900,
+    height: 700,
+  })
 }
 
 // ── Codex 桌宠文件夹导入 ─────────────────────────────────────
@@ -282,6 +344,20 @@ function pushImportedPet(pet: PetSkin) {
   const savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
   savedPets.push(pet)
   localStorage.setItem('customPets', JSON.stringify(savedPets))
+}
+
+/** 迁移旧数据：将中文 source 转换为英文 */
+function migrateOldPetData(pets: PetSkin[]): PetSkin[] {
+  return pets.map(pet => {
+    // 将旧的中文 source 值转换为英文
+    if (pet.source === '导入' || pet.source === '已导入') {
+      return { ...pet, source: 'imported' }
+    }
+    if (pet.source === '内置' || pet.source === '系统内置') {
+      return { ...pet, source: 'builtin' }
+    }
+    return pet
+  })
 }
 
 /** 主路径：Tauri 原生选目录 → 只把路径发给后端本地拷贝（无浏览器上传确认、不卡） */
@@ -467,7 +543,8 @@ async function switchPet(pet: PetSkin) {
 
 function removePet(id: string) {
   availablePets.value = availablePets.value.filter(p => p.id !== id)
-  const savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
+  let savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
+  savedPets = migrateOldPetData(savedPets)
   localStorage.setItem('customPets', JSON.stringify(savedPets.filter(p => p.id !== id)))
   if (currentPetId.value === id) {
     currentPetId.value = '02'
@@ -483,13 +560,16 @@ function removePet(id: string) {
 
 
 onMounted(() => {
-  const savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
+  let savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
+  savedPets = migrateOldPetData(savedPets)
   if (savedPets.length > 0) {
     // 避免重复推入内置皮肤
     const existingIds = new Set(availablePets.value.map(p => p.id))
     for (const p of savedPets) {
       if (!existingIds.has(p.id)) availablePets.value.push(p)
     }
+    // 保存迁移后的数据
+    localStorage.setItem('customPets', JSON.stringify(savedPets))
   }
 
   const savedPetId = localStorage.getItem('currentPetId')

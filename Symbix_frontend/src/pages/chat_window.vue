@@ -260,7 +260,7 @@ async function handleMcpRefresh() {
   if (refreshingMcp.value) return
   refreshingMcp.value = true
   try {
-    await refreshMcpPanel() // 内部会调 refreshMcpStatus()
+    await refreshMcpPanel(false) // 手动刷新，显示 toast
   } finally {
     refreshingMcp.value = false
   }
@@ -686,8 +686,9 @@ async function sendMessage(text: string, files: any[]) {
   } catch (e: any) {
     loading.value = false
     abortController.value = null
-    if (e.name === 'AbortError') {
-
+    // 检查是否是用户主动中断（AbortError）
+    // 兼容不同浏览器：name === 'AbortError' 或 code === 20（DOMException.ABORT_ERR）
+    if (e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort')) {
       console.log('=== 流被用户中断 ===')
       publishAgentStatus('idle', t('chat.stopGenerate'))
       if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
@@ -877,7 +878,7 @@ async function installMcpServer(packageName: string, serverId: string, args: str
   return data
 }
 
-async function refreshMcpPanel() {
+async function refreshMcpPanel(silent = true) {
   try {
     const res = await fetch('http://127.0.0.1:8000/mcp/config')
     if (res.ok) mcpConfigData.value = await res.json()
@@ -907,7 +908,11 @@ async function refreshMcpPanel() {
       }
     }
   } catch {}
-  await refreshMcpStatus()
+  await refreshMcpStatus(silent)
+  // 手动刷新时显示成功提示
+  if (!silent) {
+    messageUi.success(t('mcpPanel.refreshSuccess'))
+  }
 }
 
 async function submitCreateSkill() {
@@ -1074,7 +1079,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        approval_id: msg.approval_id,
+        approval_id: approvalId, // 使用保存的 approvalId，而不是已清除的 msg.approval_id
         approve: approved, // 后端 ApproveRequest 字段名为 approve
         session_id: activeSessionId.value || 'default',
         system_prompt: settings.value.systemPrompt || '',
@@ -1082,6 +1087,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
         api_base: settings.value.baseUrl || '',
         model: settings.value.model || currentModel.value,
       }),
+      signal: abortController.value?.signal, // 支持用户中断
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
@@ -1121,6 +1127,15 @@ async function approveTool(msgIdx: number, approved: boolean) {
     // 可点击并再次提交同一个已经消费的 approval_id。
     if (msg.approval_id === approvalId) msg.approval_id = undefined
     msg.approval_pending = false
+    
+    // 检查是否是用户主动中断（AbortError）
+    // 兼容不同浏览器：name === 'AbortError' 或 code === 20（DOMException.ABORT_ERR）
+    if (e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort')) {
+      console.log('=== 审批请求被用户中断 ===')
+      publishAgentStatus('idle', t('chat.stopGenerate'))
+      return
+    }
+    
     publishAgentStatus('error', t('chat.approvalFailed'))
     console.error(t('chat.approvalFailed'), e)
     messageUi.error(t('chat.approvalFailedDetail', { msg: e.message }))

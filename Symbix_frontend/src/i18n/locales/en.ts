@@ -169,6 +169,7 @@ export default {
     reconnect: 'Reconnect',
     delete: 'Delete',
     refresh: 'Refresh',
+    refreshSuccess: 'Refreshed successfully',
     silentOffline: 'MCP "{id}" connection lost',
     empty: 'No MCP servers connected',
     removeSuccess: 'Removed {serverId}',
