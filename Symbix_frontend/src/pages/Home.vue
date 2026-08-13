@@ -953,6 +953,13 @@ async function onPetSwitched(payload: {
     showBubble(t('home.skinSwitched', { name: payload.displayName || payload.petId }), 2000)
   } catch (e: any) {
     console.error('[pet] failed to switch pet texture:', e)
+    // 切换失败时回退到内置 frieren，避免桌宠卡住
+    if (payload.spritesheetPath !== '/pet/frieren/spritesheet.webp') {
+      try {
+        await loadPetTexture('/pet/frieren/spritesheet.webp')
+        try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
+      } catch { /* 彻底失败只能提示 */ }
+    }
     showBubble(t('home.skinSwitchFailed'), 2500)
   }
 }
@@ -971,7 +978,7 @@ onMounted(async () => {
     autoDensity: true,
   })
 
-  // 读取上次保存的皮肤
+  // 读取上次保存的皮肤，默认 frieren
   let spritesheetPath = '/pet/frieren/spritesheet.webp'
   try {
     const savedPetId = localStorage.getItem('currentPetId')
@@ -988,7 +995,16 @@ onMounted(async () => {
     }
   } catch { /* fallback to default */ }
 
-  const texture = await Assets.load<Texture>(spritesheetPath)
+  let texture: Texture
+  try {
+    texture = await Assets.load<Texture>(spritesheetPath)
+  } catch (e) {
+    // 加载失败（如旧导入皮肤损坏/格式不支持），回退到内置 frieren
+    console.warn(`[pet] 加载 ${spritesheetPath} 失败，回退到 frieren`, e)
+    spritesheetPath = '/pet/frieren/spritesheet.webp'
+    try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
+    texture = await Assets.load<Texture>(spritesheetPath)
+  }
   baseSource = texture.source as TextureSource
   const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
   sprite = new AnimatedSprite(frames)
