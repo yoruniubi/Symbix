@@ -25,22 +25,26 @@
       </div>
 
       <div class="breadcrumb">
-        <!-- 项目根目录 -->
-        <button type="button" class="breadcrumb-item" :class="{ active: currentPath === '.' }" @click="loadDirectory('.')">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+        <button
+          v-for="(crumb, index) in crumbs"
+          :key="index"
+          type="button"
+          class="breadcrumb-item"
+          :class="{ active: index === crumbs.length - 1 }"
+          @click="loadDirectory(crumb.path)"
+        >
+          <svg v-if="index === 0 && !isExternalPath" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
             <polyline points="9 22 9 12 15 12 15 22"/>
           </svg>
-          <span>{{ $t('filePanel.project') }}</span>
+          <svg v-else-if="index === 0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span class="breadcrumb-root">{{ crumb.name }}</span>
+          <svg v-if="index < crumbs.length - 1" class="breadcrumb-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
         </button>
-        <template v-if="isExternalPath">
-          <span class="breadcrumb-sep">/</span>
-          <button type="button" class="breadcrumb-item" @click="loadDirectory(externalRoot)">{{ externalRootName }}</button>
-        </template>
-        <template v-for="(part, index) in breadcrumbParts" :key="`${part}-${index}`">
-          <span class="breadcrumb-sep">/</span>
-          <button type="button" class="breadcrumb-item" @click="loadBreadcrumb(index)">{{ part }}</button>
-        </template>
       </div>
 
       <div class="side-panel-body">
@@ -137,16 +141,42 @@ const pathParts = computed(() => currentPath.value === '.' ? [] : currentPath.va
 const isExternalPath = computed(() => /^[a-zA-Z]:[\\/]/.test(currentPath.value) || currentPath.value.startsWith('\\\\'))
 const externalRoot = ref('')
 const externalRootName = computed(() => externalRoot.value.split(/[\\/]/).filter(Boolean).pop() || t('filePanel.computerDir'))
-const breadcrumbParts = computed(() => {
-  if (!isExternalPath.value) return pathParts.value
+
+/** 面包屑段：每段 { name, path }，点击可跳转。首段是根（项目根 / 盘符或外部根）。 */
+const crumbs = computed<{ name: string; path: string }[]>(() => {
+  if (!isExternalPath.value) {
+    // 项目内路径：首段为「项目」，后续为路径层级
+    const parts = pathParts.value
+    const result: { name: string; path: string }[] = [{ name: t('filePanel.project'), path: '.' }]
+    parts.forEach((part, i) => {
+      result.push({ name: part, path: parts.slice(0, i + 1).join('/') })
+    })
+    return result
+  }
+  // 外部绝对路径：以 externalRoot 为根，后续为路径层级
   const root = externalRoot.value.replace(/[\\/]+$/, '')
-  return currentPath.value.replace(root, '').split(/[\\/]/).filter(Boolean)
+  const suffix = currentPath.value.replace(root, '').replace(/^[\\/]+/, '')
+  const suffixParts = suffix ? suffix.split(/[\\/]+/).filter(Boolean) : []
+  const result: { name: string; path: string }[] = [{ name: externalRootName.value, path: root }]
+  let acc = root
+  suffixParts.forEach((part) => {
+    acc = `${acc}/${part}`  // 统一用 / 拼接（后端 _resolve 可处理）
+    result.push({ name: part, path: acc })
+  })
+  return result
 })
-const parentPath = computed(() => (
-  isExternalPath.value
-    ? currentPath.value.replace(/[\\/][^\\/]+$/, '') || externalRoot.value
-    : pathParts.value.length <= 1 ? '.' : pathParts.value.slice(0, -1).join('/')
-))
+
+const parentPath = computed(() => {
+  if (!isExternalPath.value) {
+    return pathParts.value.length <= 1 ? '.' : pathParts.value.slice(0, -1).join('/')
+  }
+  // 外部路径：不能越过 externalRoot（避免跳到 C:\ 后拆出乱段）
+  const root = externalRoot.value.replace(/[\\/]+$/, '')
+  if (currentPath.value === root) return root
+  const parent = currentPath.value.replace(/[\\/][^\\/]+$/, '')
+  // 如果 parent 比 root 还短，说明要越过根了，止于 root
+  return parent.length < root.length ? root : parent
+})
 
 async function request(path: string, options?: RequestInit) {
   const response = await fetch(`${backendUrl}${path}`, options)
@@ -185,15 +215,7 @@ async function chooseDirectory() {
   }
 }
 
-function loadBreadcrumb(index: number) {
-  if (!isExternalPath.value) {
-    loadDirectory(pathParts.value.slice(0, index + 1).join('/'))
-    return
-  }
-  const root = externalRoot.value.replace(/[\\/]+$/, '')
-  const suffix = breadcrumbParts.value.slice(0, index + 1).join('/')
-  loadDirectory(`${root}/${suffix}`)
-}
+
 
 async function openEntry(entry: FileEntry) {
   if (entry.type === 'directory') {
@@ -335,7 +357,7 @@ onMounted(() => {
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   padding: 8px 12px;
   overflow-x: auto;
   white-space: nowrap;
@@ -357,13 +379,13 @@ onMounted(() => {
   gap: 4px;
   border: 0;
   border-radius: 5px;
-  padding: 3px 7px;
+  padding: 3px 6px;
   cursor: pointer;
   color: var(--text-secondary);
   background: transparent;
   font-size: 12px;
   transition: all 0.15s ease;
-  max-width: 140px;
+  max-width: 160px;
   overflow: hidden;
 }
 .breadcrumb-item > span {
@@ -378,11 +400,19 @@ onMounted(() => {
 .breadcrumb-item.active {
   color: var(--accent-300, #F7A85B);
   font-weight: 600;
+  cursor: default;
 }
-.breadcrumb-sep {
+.breadcrumb-item.active:hover {
+  background: transparent;
+}
+.breadcrumb-root {
+  font-weight: 500;
+}
+.breadcrumb-chevron {
   color: var(--text-muted);
   opacity: 0.5;
   flex-shrink: 0;
+  margin: 0 1px;
 }
 
 /* ── 主体 ── */
