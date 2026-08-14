@@ -51,7 +51,7 @@
       <div class="side-panel-footer">
         <n-button size="medium" secondary block class="panel-footer-btn" @click="handleRefresh">
           <template #icon>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg :class="['refresh-icon', { spinning: refreshing }]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
@@ -64,13 +64,16 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 const props = defineProps<{
   activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | null
   skillList: any[]
   skillToolList: any[]
+  refreshing?: boolean
 }>()
+const refreshing = computed(() => props.refreshing ?? false)
 
 const emit = defineEmits<{
   (e: 'update:activePanel', value: 'skill' | 'mcp' | 'native_tools' | null): void
@@ -274,5 +277,12 @@ function handleRefresh() {
 }
 .close-btn:hover {
   color: var(--error, #ef4444) !important;
+}
+.refresh-icon.spinning {
+  animation: panel-refresh-spin 1s linear infinite;
+}
+@keyframes panel-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>

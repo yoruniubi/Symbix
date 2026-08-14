@@ -12,6 +12,7 @@
         :active-panel="activePanel"
         :skill-list="skillList"
         :skill-tool-list="skillToolList"
+        :refreshing="refreshingSkill"
         @update:active-panel="activePanel = $event"
         @open-add-chooser="openAddChooser"
         @remove-skill="removeSkill"
@@ -196,6 +197,7 @@ const skillAddMode = ref<'github' | 'custom'>('github')
 const mcpAddMode = ref<'remote' | 'npm'>('remote')
 const mcpStatusMap = ref<Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>>({})
 const refreshingMcp = ref(false)
+const refreshingSkill = ref(false)
 // MCP 连接状态 5 分钟周期检测定时器（静默刷新；仅在"由 OK 变 OFFLINE"时 toast 一次）
 const MCP_CHECK_INTERVAL = 5 * 60 * 1000
 let mcpCheckTimer: ReturnType<typeof setInterval> | null = null
@@ -352,6 +354,8 @@ onBeforeUnmount(() => {
   }
 })
 async function refreshSkillList() {
+  if (refreshingSkill.value) return
+  refreshingSkill.value = true
   try {
     const res = await fetch('http://127.0.0.1:8000/skills', {
       method: 'GET',
@@ -376,6 +380,7 @@ async function refreshSkillList() {
       skillToolList.value = data.tools || []
     }
   } catch {}
+  refreshingSkill.value = false
 }
 async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools') {
   console.log('🟡 togglePanel called', panel)
