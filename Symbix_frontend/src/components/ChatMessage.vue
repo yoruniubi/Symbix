@@ -55,15 +55,15 @@
 
             <div class="step-header" @click="toggleStep(Number(i))">
               <span class="step-icon">
-                <svg v-if="step.status === 'done'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                <svg v-else-if="step.status === 'running' || step.status === 'pending'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                <svg v-else-if="step.status === 'awaiting_approval'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                <svg v-else-if="step.status === 'rejected'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <svg v-if="step.status === 'done'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                <svg v-else-if="step.status === 'running' || step.status === 'pending'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <svg v-else-if="step.status === 'awaiting_approval'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                <svg v-else-if="step.status === 'rejected'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
               </span>
               <span class="step-name">{{ formatToolName(step.name) }}</span>
               <span class="step-badge" :class="step.status">{{ statusLabel(step.status) }}</span>
-              <svg class="step-expand-arrow" :class="{ expanded: expandedSteps[Number(i)] }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              <svg class="step-expand-arrow" :class="{ expanded: expandedSteps[Number(i)] }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
             <div v-show="expandedSteps[Number(i)]" class="step-details">
               <div v-if="step.arguments" class="step-detail-row">
@@ -700,64 +700,64 @@ onMounted(() => {
   border-left: 2px solid var(--accent-border);
 }
 
-/* ---- Steps Block ---- */
+/* ---- Steps Block — Codex 风格紧凑单行 ---- */
 .steps-block {
   max-width: min(72%, 760px);
   margin-bottom: 8px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace);
 }
 
 .step-card {
-  border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   overflow: hidden;
-  transition: border-color var(--duration-base, 180ms) ease;
+  transition: background 0.12s ease;
+}
+.step-card:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 .step-card.done {
-  border-color: rgba(78, 154, 110, 0.35);
-  background: rgba(78, 154, 110, 0.08);
+  background: transparent;
 }
 .step-card.pending, .step-card.running {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
+  background: transparent;
 }
 .step-card.awaiting_approval {
-  border-color: rgba(216, 155, 60, 0.4);
-  background: rgba(216, 155, 60, 0.08);
-  animation: pulse-approval 2s infinite;
+  background: rgba(216, 155, 60, 0.06);
 }
 .step-card.rejected {
-  border-color: rgba(211, 85, 90, 0.35);
-  background: rgba(211, 85, 90, 0.08);
+  background: rgba(211, 85, 90, 0.05);
 }
 @keyframes pulse-approval {
-  0%, 100% { border-color: rgba(216, 155, 60, 0.35); }
-  50% { border-color: rgba(216, 155, 60, 0.65); }
+  0%, 100% { background: rgba(216, 155, 60, 0.05); }
+  50% { background: rgba(216, 155, 60, 0.12); }
 }
 
 
 .step-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 3px 8px;
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s;
+  transition: background 0.12s;
+  border-radius: 4px;
 }
 .step-header:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .step-icon {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
 }
 .step-card.done .step-icon { color: var(--success, #4E9A6E); }
 .step-card.pending .step-icon, .step-card.running .step-icon { color: var(--accent-500, #EF6B6E); }
@@ -772,43 +772,49 @@ onMounted(() => {
 }
 
 .step-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
   flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.step-card.done .step-name { color: var(--text-muted); }
+.step-card.running .step-name, .step-card.pending .step-name { color: var(--text-primary); }
 
 .step-badge {
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: var(--radius-full, 999px);
-  line-height: 20px;
+  font-size: 10px;
+  padding: 0;
+  border-radius: 0;
+  line-height: 16px;
   flex-shrink: 0;
-  color: var(--text-secondary);
-  background: var(--surface-hover);
+  color: var(--text-muted);
+  background: transparent;
 }
-.step-badge.done { color: var(--success, #4E9A6E); background: rgba(78, 154, 110, 0.12); }
-.step-badge.pending, .step-badge.running { color: var(--accent-500, #EF6B6E); background: var(--accent-soft); }
-.step-badge.awaiting_approval { color: var(--warning, #D89B3C); background: rgba(216, 155, 60, 0.12); }
-.step-badge.rejected { color: var(--error, #D3555A); background: rgba(211, 85, 90, 0.12); }
+.step-badge.done { color: var(--success, #4E9A6E); background: transparent; }
+.step-badge.pending, .step-badge.running { color: var(--accent-500, #EF6B6E); background: transparent; }
+.step-badge.awaiting_approval { color: var(--warning, #D89B3C); background: transparent; }
+.step-badge.rejected { color: var(--error, #D3555A); background: transparent; }
 
 .step-expand-arrow {
   color: var(--text-muted);
+  opacity: 0.4;
   flex-shrink: 0;
-  transition: transform var(--duration-base, 180ms) ease;
+  transition: transform var(--duration-base, 180ms) ease, opacity 0.12s;
 }
-
+.step-card:hover .step-expand-arrow {
+  opacity: 0.8;
+}
 .step-expand-arrow.expanded {
   transform: rotate(180deg);
 }
 
 .step-details {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding: 10px 12px;
+  padding: 6px 8px 8px 28px;
+  margin-top: 2px;
 }
 
 .step-detail-row {

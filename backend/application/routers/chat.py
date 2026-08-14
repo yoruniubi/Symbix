@@ -245,7 +245,7 @@ async def chat(request: ChatRequest):
 
         last_reasoning = response.get("reasoning")
 
-        max_tool_rounds = 5
+        max_tool_rounds = 25
         round_count = 0
         while response.get("tool_calls") and round_count < max_tool_rounds:
             round_count += 1
@@ -459,7 +459,7 @@ async def chat_approve(req: ApproveRequest):
             })
 
         last_reasoning = ctx.get("last_reasoning")
-        max_tool_rounds = 5
+        max_tool_rounds = 25
         try:
             response = await symbix_client.chat_with_tool_results(
                 user_input=user_input,
@@ -721,7 +721,7 @@ async def chat_stream(request: ChatRequest):
             if flushed is not None:
                 yield format_sse(flushed)
 
-            max_rounds = 5
+            max_rounds = 25
             round_count = 0
             last_reasoning = None
             attempted_tool_calls = set()
@@ -937,6 +937,14 @@ async def chat_stream(request: ChatRequest):
 
                 if full_text_round:
                     full_text = full_text_round
+
+            # 工具轮次用尽或不再有 tool_calls 后，若模型未给出最终文本，
+            # 给出兑底提示，避免前端看起来“卡住/空回复”。
+            if not full_text:
+                full_text = (
+                    f"[已完成 {round_count} 轮工具调用，但模型未返回最终文本。"
+                    "可能已达到工具调用上限，请继续提问以推进。]"
+                )
 
             memory.add(request.session_id, "assistant", full_text)
             yield format_sse({
