@@ -3,7 +3,6 @@
     <div v-if="activePanel === 'files'" class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }">
       <div class="panel-resize-handle" :title="$t('common.pullToResize')" @mousedown="startResize" />
       <div class="side-panel-header">
-        <span class="side-panel-title">{{ $t('filePanel.title') }}</span>
         <div class="side-panel-actions">
           <n-button size="tiny" type="primary" class="add-entry-btn" :title="$t('filePanel.openDir')" @click="chooseDirectory">
             <template #icon>
@@ -19,7 +18,7 @@
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
           </n-button>
-          <n-button text size="tiny" class="close-btn" :title="$t('filePanel.close')" @click="emit('update:activePanel', null)">
+          <n-button quaternary size="tiny" class="panel-icon-btn close-btn" :title="$t('filePanel.close')" @click="emit('update:activePanel', null)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </n-button>
         </div>
@@ -304,17 +303,10 @@ onMounted(() => {
 .side-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
-}
-.side-panel-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 .side-panel-actions {
   display: flex;
@@ -335,12 +327,8 @@ onMounted(() => {
 .panel-icon-btn :deep(.n-button__icon) {
   margin: 0 !important;
 }
-.close-btn {
-  color: var(--text-muted) !important;
-}
 .close-btn:hover {
-  color: var(--text-secondary) !important;
-  background: var(--surface-hover) !important;
+  color: var(--error, #ef4444) !important;
 }
 
 /* ── 面包屑 ── */

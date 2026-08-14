@@ -13,7 +13,7 @@
             </template>
             {{ $t('mcpPanel.add') }}
           </n-button>
-          <n-button text size="tiny" class="close-btn" @click="handleClose">
+          <n-button quaternary size="tiny" class="panel-icon-btn close-btn" @click="handleClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </n-button>
         </div>
@@ -269,12 +269,8 @@ function handleRefresh() {
 .panel-footer-btn :deep(.n-button__content) {
   white-space: nowrap;
 }
-.close-btn {
-  color: var(--text-muted) !important;
-}
 .close-btn:hover {
-  color: var(--text-secondary) !important;
-  background: var(--surface-hover) !important;
+  color: var(--error, #ef4444) !important;
 }
 .mcp-server-card {
   margin-bottom: 10px;

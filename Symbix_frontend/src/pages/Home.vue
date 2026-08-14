@@ -848,6 +848,7 @@ async function openOrCreateWindow(
       resizable: true,
       decorations: false,
       transparent: true,
+      center: true,
     })
   } catch (e) {
     console.error(`Error opening window '${label}':`, e)
@@ -861,6 +862,7 @@ async function openOrCreateWindow(
         resizable: true,
         decorations: false,
         transparent: true,
+        center: true,
       })
     } catch (e2) {
       console.error(`Failed to create window '${label}':`, e2)
