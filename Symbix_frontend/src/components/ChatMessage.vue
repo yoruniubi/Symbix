@@ -700,56 +700,56 @@ onMounted(() => {
   border-left: 2px solid var(--accent-border);
 }
 
-/* ---- Steps Block — Codex 风格紧凑单行 ---- */
+/* ---- Steps Block — 紧凑卡片 ---- */
 .steps-block {
   max-width: min(72%, 760px);
   margin-bottom: 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace);
+  gap: 4px;
 }
 
 .step-card {
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
   overflow: hidden;
-  transition: background 0.12s ease;
-}
-.step-card:hover {
-  background: rgba(255, 255, 255, 0.03);
+  transition: border-color var(--duration-base, 180ms) ease;
 }
 .step-card.done {
-  background: transparent;
+  border-color: rgba(78, 154, 110, 0.35);
+  background: rgba(78, 154, 110, 0.08);
 }
 .step-card.pending, .step-card.running {
-  background: transparent;
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }
 .step-card.awaiting_approval {
-  background: rgba(216, 155, 60, 0.06);
+  border-color: rgba(216, 155, 60, 0.4);
+  background: rgba(216, 155, 60, 0.08);
+  animation: pulse-approval 2s infinite;
 }
 .step-card.rejected {
-  background: rgba(211, 85, 90, 0.05);
+  border-color: rgba(211, 85, 90, 0.35);
+  background: rgba(211, 85, 90, 0.08);
 }
 @keyframes pulse-approval {
-  0%, 100% { background: rgba(216, 155, 60, 0.05); }
-  50% { background: rgba(216, 155, 60, 0.12); }
+  0%, 100% { border-color: rgba(216, 155, 60, 0.35); }
+  50% { border-color: rgba(216, 155, 60, 0.65); }
 }
 
 
 .step-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
+  gap: 7px;
+  padding: 5px 10px;
   cursor: pointer;
   user-select: none;
   transition: background 0.12s;
-  border-radius: 4px;
 }
 .step-header:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .step-icon {
@@ -773,30 +773,30 @@ onMounted(() => {
 
 .step-name {
   font-size: 12px;
-  font-weight: 400;
-  color: var(--text-secondary);
+  font-weight: 500;
+  color: var(--text-primary);
   flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.step-card.done .step-name { color: var(--text-muted); }
+.step-card.done .step-name { color: var(--text-secondary); }
 .step-card.running .step-name, .step-card.pending .step-name { color: var(--text-primary); }
 
 .step-badge {
   font-size: 10px;
-  padding: 0;
-  border-radius: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-full, 999px);
   line-height: 16px;
   flex-shrink: 0;
   color: var(--text-muted);
-  background: transparent;
+  background: var(--surface-hover);
 }
-.step-badge.done { color: var(--success, #4E9A6E); background: transparent; }
-.step-badge.pending, .step-badge.running { color: var(--accent-500, #EF6B6E); background: transparent; }
-.step-badge.awaiting_approval { color: var(--warning, #D89B3C); background: transparent; }
-.step-badge.rejected { color: var(--error, #D3555A); background: transparent; }
+.step-badge.done { color: var(--success, #4E9A6E); background: rgba(78, 154, 110, 0.12); }
+.step-badge.pending, .step-badge.running { color: var(--accent-500, #EF6B6E); background: var(--accent-soft); }
+.step-badge.awaiting_approval { color: var(--warning, #D89B3C); background: rgba(216, 155, 60, 0.12); }
+.step-badge.rejected { color: var(--error, #D3555A); background: rgba(211, 85, 90, 0.12); }
 
 .step-expand-arrow {
   color: var(--text-muted);
@@ -813,7 +813,7 @@ onMounted(() => {
 
 .step-details {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding: 6px 8px 8px 28px;
+  padding: 8px 10px 10px 28px;
   margin-top: 2px;
 }
 

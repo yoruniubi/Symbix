@@ -97,7 +97,7 @@ def emit_pet_action(action: str, bubble: str = "") -> str:
 
     try:
         # application 层事件总线（backend 进程内可用）
-        from application.pet_action import pet_action, normalize_pet_action
+        from application.services.pet_action import pet_action, normalize_pet_action
 
         event = pet_action.emit(
             action,

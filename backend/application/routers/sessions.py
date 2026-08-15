@@ -3,7 +3,7 @@ import os
 import json as _json
 from fastapi import APIRouter, HTTPException
 
-from application.models import (
+from application.schemas import (
     SessionPayload,
     DeleteMarkdownRequest,
     RenameSessionRequest,

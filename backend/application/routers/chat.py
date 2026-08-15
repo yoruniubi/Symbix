@@ -2,10 +2,11 @@
 import asyncio
 import uuid
 import json as _json
+import httpx
 from fastapi import APIRouter, HTTPException, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 
-from application.models import ChatRequest, ChatResponse, ApproveRequest
+from application.schemas import ChatRequest, ChatResponse, ApproveRequest
 from application.state import (
     memory,
     provider_registry,
@@ -19,7 +20,7 @@ from application.state import (
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
 from Symbix_sdk.model_capabilities import check_vision, clear_vision_cache
-from application.memory_ops import (
+from application.services.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
     format_sse,
@@ -32,7 +33,9 @@ router = APIRouter(tags=["chat"])
 # 为避免上游 模型逐 token 推 delta 导致前端 高频解析/rAF 重绘，这里将连续 delta 事件批量合并
 class _DeltaBatcher:
     """攒批 delta 事件：相邻 delta 合并到默认 彈；遇非 delta 或达上限立即 flush。"""
-    def __init__(self, max_chunks: int = 8, max_chars: int = 512) -> None:
+    def __init__(self, max_chunks: int = 1, max_chars: int = 8) -> None:
+        # 阈值已降至近实时转发（来一个 delta 即 flush），
+        # 仅保留结构以备极端高频场景下做轻度节流。
         self.max_chunks = max_chunks
         self.max_chars = max_chars
         self._buf = ""
@@ -460,165 +463,289 @@ async def chat_approve(req: ApproveRequest):
 
         last_reasoning = ctx.get("last_reasoning")
         max_tool_rounds = 25
-        try:
-            response = await symbix_client.chat_with_tool_results(
-                user_input=user_input,
-                history=history,
-                registry=skill_registry,
-                tools=mcp_tools,
-                tool_results=tool_results,
-                override_api_key=api_key,
-                override_api_base=api_base,
-                override_model=model,
-            )
-        except Exception as exc:
-            # 审批工具已经在上面执行过了(例如文件已经写入)。
-            # 后续模型请求失败时不能让整个审批接口返回 500,否则前端会误报
-            # “审批失败”,用户也无法区分“工具失败”和“回复生成失败”。
-            error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
-            assistant_content = error_text
-            memory.add(ctx["session_id"], "assistant", assistant_content)
-            return {
-                "status": "ok",
-                "content": assistant_content,
-                "session_id": ctx["session_id"],
-                "reasoning": last_reasoning,
-                "steps": steps,
-                "act_mode": act_mode,
-                "act_plan": act_plan,
-                "tool_executed": True,
-                "continuation_error": str(exc),
-            }
-        last_reasoning = response.get("reasoning")
+        session_id = ctx["session_id"]
 
-        while response.get("tool_calls") and round_count < max_tool_rounds:
-            round_count += 1
-            tool_results = []
-            steps.append({
-                "type": "tool_calls",
-                "reasoning": response.get("reasoning"),
-                "tool_calls": [
-                    {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
-                    for tc in response["tool_calls"]
-                ],
-            })
-            for tc in response["tool_calls"]:
-                fn = tc.function
-                # 解析参数用于风险分级
-                try:
-                    args = _json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
-                except Exception:
-                    args = {}
-                
-                # 使用风险分级器判断是否需要审批
-                risk_level, risk_reason = classify_tool_risk(fn.name, args)
-                
-                # SAFE 工具直接放行，MEDIUM/HIGH 需要审批
-                if risk_level != ToolRiskLevel.SAFE:
-                    approval_id = str(uuid.uuid4())
-                    _pending_approvals[approval_id] = {
-                        "session_id": ctx["session_id"],
-                        "user_input": user_input,
-                        "history": history,
-                        "mcp_tools": mcp_tools,
-                        "api_key": api_key,
-                        "api_base": api_base,
-                        "model": model,
-                        "steps": steps,
-                        "last_reasoning": last_reasoning,
-                        "round_count": round_count,
-                        "act_mode": act_mode,
-                        "act_plan": act_plan,
-                        "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
-                        "remaining_tcs": [
-                            {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
-                            for r in response["tool_calls"]
-                        ],
-                        "risk_level": risk_level,
-                        "risk_reason": risk_reason,
-                    }
-                    return {
-                        "status": "pending_approval",
-                        "approval_id": approval_id,
-                        "session_id": ctx["session_id"],
-                        "content": "",
-                        "reasoning": last_reasoning,
-                        "steps": steps,
-                        "act_mode": act_mode,
-                        "act_plan": act_plan,
-                        "risk_level": risk_level,
-                        "risk_reason": risk_reason,
-                        "pending_tool": {
-                            "tool_call_id": tc.id,
-                            "name": fn.name,
-                            "arguments": fn.arguments,
-                        },
-                    }
-                out = tool_registry.execute(fn.name, fn.arguments)
-                if not isinstance(out, str):
-                    out = _json.dumps(out, ensure_ascii=False)
-                tool_results.append({
-                    "tool_call_id": tc.id,
-                    "role": "tool",
-                    "name": fn.name,
-                    "content": out,
-                    "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
-                })
-                steps.append({
-                    "type": "tool_result",
-                    "tool_call_id": tc.id,
-                    "name": fn.name,
-                    "content": out,
-                })
+        # ---- 流式生成后续回复（SSE） ----
+        # 审批工具已执行完，把 tool_results 作为 assistant tool_calls + tool 消息
+        # 追加到 messages，然后用流式 SSE 输出，避免前端干等。
+        async def _stream_approve():
+            nonlocal last_reasoning
             try:
-                response = await symbix_client.chat_with_tool_results(
-                    user_input=user_input,
-                    history=history,
+                # 先把已执行的步骤发给前端
+                yield format_sse({"type": "steps", "steps": steps})
+
+                # 构建含 tool_results 的 messages
+                msgs = symbix_client._build_messages(
+                    history,
+                    user_input,
                     registry=skill_registry,
                     tools=mcp_tools,
-                    tool_results=tool_results,
-                    override_api_key=api_key,
-                    override_api_base=api_base,
-                    override_model=model,
+                    image_parts=None,
                 )
-            except Exception as exc:
-                error_text = f"工具已执行成功,但生成后续回复失败: {exc}"
-                assistant_content = error_text
-                memory.add(ctx["session_id"], "assistant", assistant_content)
-                return {
-                    "status": "ok",
-                    "content": assistant_content,
-                    "session_id": ctx["session_id"],
-                    "reasoning": last_reasoning,
-                    "steps": steps,
-                    "act_mode": act_mode,
-                    "act_plan": act_plan,
-                    "tool_executed": True,
-                    "continuation_error": str(exc),
-                }
-            last_reasoning = response.get("reasoning")
+                msgs.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {"id": tr["tool_call_id"], "type": "function",
+                         "function": {"name": tr["name"], "arguments": tr.get("arguments", "{}") or "{}"}}
+                        for tr in tool_results
+                    ],
+                })
+                for tr in tool_results:
+                    msgs.append({
+                        "role": "tool",
+                        "tool_call_id": tr["tool_call_id"],
+                        "name": tr["name"],
+                        "content": tr["content"],
+                    })
 
-        assistant_content = response["content"]
-        memory.add(ctx["session_id"], "assistant", assistant_content)
+                full_text = ""
+                tool_calls_raw = None
+                _batcher = _DeltaBatcher()
 
-        sid = ctx["session_id"]
-        key = ctx.get("api_key", "")
-        base = ctx.get("api_base", "")
-        mdl = ctx.get("model", "")
-        asyncio.create_task(maybe_compress_session(sid, key, base, mdl))
-        asyncio.create_task(maybe_extract_memories(sid, key, base, mdl))
+                provider = provider_registry.get_active()
+                raw_model = model or provider.model
+                raw_base = api_base or provider.api_base
+                api_key_val = api_key or provider.api_key
+                url, ptype, headers, model_name = symbix_client._resolve_endpoint(
+                    raw_model, raw_base, api_key_val
+                )
 
+                # 第一轮流式输出（审批后继续生成）
+                if ptype == "anthropic":
+                    async for e in symbix_client._stream_anthropic(url, headers, model_name, msgs, mcp_tools):
+                        if e["type"] == "stream_reset":
+                            full_text = ""
+                            _batcher = _DeltaBatcher()
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
+                        for _sse in _batch_yield(e, _batcher):
+                            yield _sse
+                        if e["type"] == "delta":
+                            full_text += e["content"]
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                            if e.get("error"):
+                                print(f"[_stream_approve] 内容不完整: {e['error']}")
+                elif ptype == "gemini":
+                    async for e in symbix_client._stream_gemini(url, headers, msgs, mcp_tools):
+                        if e["type"] == "stream_reset":
+                            full_text = ""
+                            _batcher = _DeltaBatcher()
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
+                        for _sse in _batch_yield(e, _batcher):
+                            yield _sse
+                        if e["type"] == "delta":
+                            full_text += e["content"]
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                            if e.get("error"):
+                                print(f"[_stream_approve] 内容不完整: {e['error']}")
+                else:
+                    async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools):
+                        if e["type"] == "stream_reset":
+                            full_text = ""
+                            _batcher = _DeltaBatcher()
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
+                        for _sse in _batch_yield(e, _batcher):
+                            yield _sse
+                        if e["type"] == "delta":
+                            full_text += e["content"]
+                        elif e["type"] == "reasoning":
+                            last_reasoning = e.get("content")
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                            if e.get("reasoning"):
+                                last_reasoning = e.get("reasoning")
+                            if e.get("error"):
+                                print(f"[_stream_approve] 内容不完整: {e['error']}")
+
+                flushed = _batcher.flush()
+                if flushed is not None:
+                    yield flushed
+
+                # 后续 tool_calls 循环（复用 chat_stream 主循环逻辑）
+                round_count_local = ctx["round_count"]
+                attempted = set()
+                while tool_calls_raw and round_count_local < max_tool_rounds:
+                    round_count_local += 1
+                    steps.append({
+                        "type": "tool_calls",
+                        "reasoning": last_reasoning,
+                        "tool_calls": [
+                            {"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]}
+                            for tc in tool_calls_raw
+                        ],
+                    })
+                    yield format_sse({"type": "steps", "steps": steps})
+
+                    new_results = []
+                    for tc in tool_calls_raw:
+                        tc_id = tc["id"]
+                        tc_name = tc["name"]
+                        tc_args = tc.get("arguments", "{}")
+
+                        # 去重检测
+                        try:
+                            parsed = _json.loads(tc_args) if isinstance(tc_args, str) else tc_args
+                            sig = (tc_name, _json.dumps(parsed, ensure_ascii=False, sort_keys=True))
+                        except (TypeError, _json.JSONDecodeError):
+                            sig = (tc_name, str(tc_args))
+                        if sig in attempted:
+                            err = f"[Error] Tool '{tc_name}' 重复调用相同参数，已阻止。"
+                            steps.append({"type": "tool_result", "tool_call_id": tc_id, "name": tc_name, "content": err})
+                            yield format_sse({"type": "tool_result", "id": tc_id, "name": tc_name, "content": err})
+                            tool_calls_raw = None
+                            full_text = full_text or err
+                            break
+                        attempted.add(sig)
+
+                        risk_level, risk_reason = classify_tool_risk(tc_name, tc_args)
+                        if risk_level in (ToolRiskLevel.MEDIUM, ToolRiskLevel.HIGH):
+                            approval_id = str(uuid.uuid4())
+                            _pending_approvals[approval_id] = {
+                                "session_id": session_id,
+                                "user_input": user_input,
+                                "history": history,
+                                "mcp_tools": mcp_tools,
+                                "api_key": api_key,
+                                "api_base": api_base,
+                                "model": model,
+                                "steps": steps,
+                                "last_reasoning": last_reasoning,
+                                "round_count": round_count_local,
+                                "full_text": full_text,
+                                "act_mode": act_mode,
+                                "act_plan": act_plan,
+                                "pending_tc": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                                "remaining_tcs": [{"id": r["id"], "name": r["name"], "arguments": r.get("arguments", "{}")} for r in tool_calls_raw],
+                                "risk_level": risk_level,
+                                "risk_reason": risk_reason,
+                            }
+                            yield format_sse({
+                                "type": "await_approval",
+                                "approval_id": approval_id,
+                                "tool": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                                "risk_level": risk_level,
+                                "risk_reason": risk_reason,
+                                "act_mode": act_mode,
+                                "act_plan": act_plan,
+                            })
+                            yield format_sse({"type": "done", "content": full_text})
+                            return
+
+                        out = tool_registry.execute(tc_name, tc_args)
+                        if not isinstance(out, str):
+                            out = _json.dumps(out, ensure_ascii=False)
+                        steps.append({"type": "tool_result", "tool_call_id": tc_id, "name": tc_name, "content": out})
+                        yield format_sse({"type": "tool_result", "id": tc_id, "name": tc_name, "content": out})
+                        new_results.append({"tool_call_id": tc_id, "role": "tool", "name": tc_name, "content": out, "arguments": tc_args})
+
+                    if not tool_calls_raw:
+                        break
+
+                    # 构建下一轮请求
+                    msgs = symbix_client._build_messages(history, user_input, registry=skill_registry, tools=mcp_tools, image_parts=None)
+                    msgs.append({"role": "assistant", "content": full_text or None,
+                                 "tool_calls": [{"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t.get("arguments", "{}")}} for t in tool_calls_raw]})
+                    for tr in new_results:
+                        msgs.append({"role": "tool", "tool_call_id": tr["tool_call_id"], "name": tr["name"], "content": tr["content"]})
+
+                    tool_calls_raw = None
+                    full_text_round = ""
+                    _batcher2 = _DeltaBatcher()
+                    if ptype == "anthropic":
+                        async for e in symbix_client._stream_anthropic(url, headers, model_name, msgs, mcp_tools):
+                            if e["type"] == "stream_reset":
+                                full_text_round = ""
+                                _batcher2 = _DeltaBatcher()
+                                yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                                continue
+                            for _sse in _batch_yield(e, _batcher2):
+                                yield _sse
+                            if e["type"] == "delta":
+                                full_text_round += e["content"]
+                            elif e["type"] == "done":
+                                tool_calls_raw = e.get("tool_calls")
+                                if e.get("error"):
+                                    print(f"[_stream_approve] 内容不完整: {e['error']}")
+                    elif ptype == "gemini":
+                        async for e in symbix_client._stream_gemini(url, headers, msgs, mcp_tools):
+                            if e["type"] == "stream_reset":
+                                full_text_round = ""
+                                _batcher2 = _DeltaBatcher()
+                                yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                                continue
+                            for _sse in _batch_yield(e, _batcher2):
+                                yield _sse
+                            if e["type"] == "delta":
+                                full_text_round += e["content"]
+                            elif e["type"] == "done":
+                                tool_calls_raw = e.get("tool_calls")
+                                if e.get("error"):
+                                    print(f"[_stream_approve] 内容不完整: {e['error']}")
+                    else:
+                        async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools):
+                            if e["type"] == "stream_reset":
+                                full_text_round = ""
+                                _batcher2 = _DeltaBatcher()
+                                yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                                continue
+                            for _sse in _batch_yield(e, _batcher2):
+                                yield _sse
+                            if e["type"] == "delta":
+                                full_text_round += e["content"]
+                            elif e["type"] == "reasoning":
+                                last_reasoning = e.get("content")
+                            elif e["type"] == "done":
+                                tool_calls_raw = e.get("tool_calls")
+                                if e.get("reasoning"):
+                                    last_reasoning = e.get("reasoning")
+                                if e.get("error"):
+                                    print(f"[_stream_approve] 内容不完整: {e['error']}")
+                    flushed2 = _batcher2.flush()
+                    if flushed2 is not None:
+                        yield flushed2
+                    if full_text_round:
+                        full_text = full_text_round
+
+                if not full_text:
+                    full_text = "[已完成工具调用，但模型未返回最终文本。]"
+                memory.add(session_id, "assistant", full_text)
+                yield format_sse({"type": "done", "content": full_text, "act_mode": act_mode, "act_plan": act_plan})
+                yield "\n"
+
+                asyncio.create_task(maybe_compress_session(session_id, api_key or "", api_base or "", model or ""))
+                asyncio.create_task(maybe_extract_memories(session_id, api_key or "", api_base or "", model or ""))
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                yield format_sse({"type": "error", "content": str(e)})
+                yield "datan"
+            finally:
+                _processing_approvals.discard(req.approval_id)
+
+    except Exception as exc:
+        # 工具执行或生成器构建阶段失败
+        error_text = f"审批处理失败: {exc}"
+        memory.add(ctx["session_id"], "assistant", error_text)
         return {
             "status": "ok",
-            "content": assistant_content,
+            "content": error_text,
             "session_id": ctx["session_id"],
-            "reasoning": last_reasoning,
+            "reasoning": ctx.get("last_reasoning"),
             "steps": steps,
             "act_mode": act_mode,
             "act_plan": act_plan,
+            "continuation_error": str(exc),
         }
-    finally:
-        _processing_approvals.discard(req.approval_id)
+
+    return StreamingResponse(_stream_approve(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("/chat/stream")
@@ -709,6 +836,13 @@ async def chat_stream(request: ChatRequest):
                 override_model=model or None,
                 image_parts=image_parts or None,
             ):
+                if event["type"] == "stream_reset":
+                    # 上游连接中断，前端已渲染的这部分内容作废，通知其清空重新开始
+                    full_text = ""
+                    _batcher = _DeltaBatcher()
+                    yield format_sse({"type": "content_reset", "reason": event.get("reason")})
+                    continue
+
                 for _sse in _batch_yield(event, _batcher):
                     yield _sse
                 if event["type"] == "delta":
@@ -716,6 +850,8 @@ async def chat_stream(request: ChatRequest):
                 elif event["type"] == "done":
                     full_text = event.get("content") or full_text
                     tool_calls_raw = event.get("tool_calls")
+                    if event.get("error"):
+                        print(f"[chat_stream] 内容不完整: {event['error']}")
 
             flushed = _batcher.flush()
             if flushed is not None:
@@ -907,6 +1043,10 @@ async def chat_stream(request: ChatRequest):
                     async for e in symbix_client._stream_anthropic(
                         url, headers, model_name, msgs, mcp_tools
                     ):
+                        if e["type"] == "stream_reset":
+                            full_text_round = ""
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
                         yield format_sse(e)
                         if e["type"] == "delta":
                             full_text_round += e["content"]
@@ -916,6 +1056,10 @@ async def chat_stream(request: ChatRequest):
                     async for e in symbix_client._stream_gemini(
                         url, headers, msgs, mcp_tools
                     ):
+                        if e["type"] == "stream_reset":
+                            full_text_round = ""
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
                         yield format_sse(e)
                         if e["type"] == "delta":
                             full_text_round += e["content"]
@@ -925,6 +1069,10 @@ async def chat_stream(request: ChatRequest):
                     async for e in symbix_client._stream_openai_compat(
                         url, headers, model_name, msgs, mcp_tools
                     ):
+                        if e["type"] == "stream_reset":
+                            full_text_round = ""
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
                         yield format_sse(e)
                         if e["type"] == "delta":
                             full_text_round += e["content"]
@@ -934,6 +1082,8 @@ async def chat_stream(request: ChatRequest):
                             tool_calls_raw = e.get("tool_calls")
                             if e.get("reasoning"):
                                 last_reasoning = e.get("reasoning")
+                            if e.get("error"):
+                                print(f"[chat_stream 轮次] 内容不完整: {e['error']}")
 
                 if full_text_round:
                     full_text = full_text_round

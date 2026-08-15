@@ -813,6 +813,13 @@ function handleSSEEvent(
       if (evt.reasoning) msg.reasoning = evt.reasoning
       break
 
+    case 'content_reset':
+      // 上游连接中断重试：清空已渲染的文本与推理内容，等待重新生成
+      msg.content = ''
+      msg.reasoning = ''
+      nextTick(() => scrollToBottom())
+      break
+
     case 'error':
       msg.content += `\n\n[错误] ${evt.content || ''}`
       break
@@ -1090,46 +1097,66 @@ async function approveTool(msgIdx: number, approved: boolean) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        approval_id: approvalId, // 使用保存的 approvalId，而不是已清除的 msg.approval_id
-        approve: approved, // 后端 ApproveRequest 字段名为 approve
+        approval_id: approvalId,
+        approve: approved,
         session_id: activeSessionId.value || 'default',
         system_prompt: settings.value.systemPrompt || '',
         api_key: settings.value.apiKey || '',
         api_base: settings.value.baseUrl || '',
         model: settings.value.model || currentModel.value,
       }),
-      signal: abortController.value?.signal, // 支持用户中断
+      signal: abortController.value?.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    const steps = mapBackendSteps(data.steps || [], data.pending_tool)
 
-    if (data.status === 'pending_approval') {
-      msg.reasoning = data.reasoning
-      msg.steps = steps
-      msg.approval_id = data.approval_id
-      msg.approval_pending = false
-      msg.generating = false
-      msg.content = ''
-      loading.value = false
-      // 仍有下一项审批,保持桌宠思考循环,不要提前庆祝。
-      return
+    // 后端现在返回 SSE 流，逐字渲染回复（避免审批后干等）
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let done = false
+    const steps = msg.steps ? [...msg.steps] : []
+    const toolCallAcc: Record<string, string> = {}
+
+    while (!done) {
+      const { value, done: readerDone } = await reader.read()
+      if (readerDone) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      let currentEventType = ''
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEventType = line.slice(7).trim()
+          continue
+        }
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6)
+          if (dataStr === '[DONE]') { done = true; break }
+          try {
+            const evt = JSON.parse(dataStr)
+            handleSSEEvent(evt, currentEventType, msg, steps, toolCallAcc)
+          } catch { /* skip */ }
+          currentEventType = ''
+        }
+      }
     }
 
-    msg.content = data.content || data.response || data.message || data.text || ''
-    msg.reasoning = data.reasoning
-    msg.steps = steps
-    msg.approval_id = undefined
-    msg.approval_pending = false
-    msg.generating = false
     loading.value = false
-    publishAgentStatus('complete', approved ? t('chat.complete') : t('chat.processedDone'))
-    await saveSessionToLocalMarkdown()
-    const preview = (msg.content || '').slice(0, 80).replace(/\s+/g, ' ')
-    void notifyTaskComplete({
-      title: 'Symbix · 任务完成',
-      body: preview || '审批已通过,任务完成啦~',
-    })
+    abortController.value = null
+    msg.generating = false
+    msg.approval_pending = false
+    if (!msg.approval_id) {
+      publishAgentStatus('complete', approved ? t('chat.complete') : t('chat.processedDone'))
+      await saveSessionToLocalMarkdown()
+      const preview = (msg.content || '').slice(0, 80).replace(/\s+/g, ' ')
+      void notifyTaskComplete({
+        title: 'Symbix · 任务完成',
+        body: preview || '审批已通过,任务完成啦~',
+      })
+    } else {
+      // 又出现新的审批请求，保持生成中状态
+      msg.generating = false
+    }
 
   } catch (e: any) {
     loading.value = false

@@ -2,7 +2,7 @@
 import os
 from fastapi import APIRouter, HTTPException
 
-from application.models import CreateSkillRequest, InstallSkillGithubRequest
+from application.schemas import CreateSkillRequest, InstallSkillGithubRequest
 from application.state import BASE_DIR, skill_registry, tool_registry
 
 router = APIRouter(tags=["skills"])

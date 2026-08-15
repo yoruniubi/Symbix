@@ -3,6 +3,7 @@ SymbixClient — 核心 AI 对话客户端
 流式路径绕过 litellm，直接用 HTTP SSE 请求上游 API
 """
 import json
+import asyncio
 import httpx
 from typing import AsyncGenerator, Optional
 from .providers import ProviderRegistry
@@ -467,9 +468,10 @@ class SymbixClient:
 
     # ── OpenAI 兼容 SSE 解析 ──────────────────────────────────
     async def _stream_openai_compat(
-        self, url: str, headers: dict, model: str, messages: list, tools: Optional[list] = None
+        self, url: str, headers: dict, model: str, messages: list,
+        tools: Optional[list] = None, max_retries: int = 2,
     ) -> AsyncGenerator[dict, None]:
-        """OpenAI /v1/chat/completions 及兼容接口 SSE 流"""
+        """OpenAI /v1/chat/completions 及兼容接口 SSE 流（带断线重试）"""
         body = {
             "model": model,
             "messages": messages,
@@ -481,78 +483,103 @@ class SymbixClient:
                 body["tools"] = clean_tools
                 body["tool_choice"] = "auto"
 
-        full_text = ""
-        full_reasoning = ""
-        tool_calls_acc: dict[int, dict] = {}   # index → {id, name, arguments}
+        # 分开设置各阶段超时，而不是一个数字打天下
+        timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream("POST", url, headers=headers, json=body) as resp:
-                if resp.status_code != 200:
-                    error_text = await resp.aread()
-                    print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode()[:500]}")
-                    yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                    yield {"type": "done", "content": ""}
+        for attempt in range(max_retries + 1):
+            full_text = ""
+            full_reasoning = ""
+            tool_calls_acc: dict[int, dict] = {}   # index → {id, name, arguments}
+
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", url, headers=headers, json=body) as resp:
+                        if resp.status_code != 200:
+                            error_text = await resp.aread()
+                            print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode()[:500]}")
+                            yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
+                            yield {"type": "done", "content": ""}
+                            return
+
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                evt = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+
+                            choices = evt.get("choices", [])
+                            if not choices:
+                                continue
+                            choice = choices[0]
+                            delta = choice.get("delta", {})
+
+                            # 文本增量
+                            content = delta.get("content")
+                            if content:
+                                full_text += content
+                                yield {"type": "delta", "content": content}
+
+                            # 推理增量（DeepSeek / Groq thinking）
+                            reasoning_chunk = delta.get("reasoning_content")
+                            if reasoning_chunk:
+                                full_reasoning += reasoning_chunk
+                                yield {"type": "reasoning", "content": reasoning_chunk}
+
+                            # 工具调用增量
+                            tc_deltas = delta.get("tool_calls")
+                            if tc_deltas:
+                                for tc in tc_deltas:
+                                    idx = tc.get("index", 0)
+                                    if idx not in tool_calls_acc:
+                                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                                    entry = tool_calls_acc[idx]
+                                    if tc.get("id"):
+                                        entry["id"] = tc["id"]
+                                    func = tc.get("function", {})
+                                    if func.get("name"):
+                                        entry["name"] = func["name"]
+                                    if func.get("arguments"):
+                                        entry["arguments"] += func["arguments"]
+                                        yield {"type": "tool_call", "id": entry["id"], "name": entry["name"], "arguments": func["arguments"]}
+
+                # 正常读完整个流，直接 done 并退出（不再继续重试循环）
+                tool_calls = [
+                    {"id": e["id"], "name": e["name"], "arguments": e["arguments"]}
+                    for e in tool_calls_acc.values() if e["id"]
+                ]
+                yield {
+                    "type": "done",
+                    "content": full_text,
+                    "reasoning": full_reasoning if full_reasoning else None,
+                    "tool_calls": tool_calls if tool_calls else None,
+                }
+                return
+
+            except (httpx.RemoteProtocolError, httpx.ReadError,
+                    httpx.ReadTimeout, httpx.ConnectError) as e:
+                print(f"[OpenAI] 流式连接第 {attempt + 1} 次中断: {e}")
+                if attempt < max_retries:
+                    # 已吐给前端的这部分内容作废，通知前端清空后重新开始
+                    yield {"type": "stream_reset", "reason": str(e), "attempt": attempt + 1}
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                else:
+                    # 重试次数用尽，把已生成内容也带出去，标记为不完整
+                    yield {
+                        "type": "done",
+                        "content": full_text or "",
+                        "reasoning": full_reasoning or None,
+                        "tool_calls": None,
+                        "error": f"连接多次中断（{e}），内容可能不完整",
+                    }
                     return
-
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        evt = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-
-                    choices = evt.get("choices", [])
-                    if not choices:
-                        continue
-                    choice = choices[0]
-                    delta = choice.get("delta", {})
-
-                    # 文本增量
-                    content = delta.get("content")
-                    if content:
-                        full_text += content
-                        yield {"type": "delta", "content": content}
-
-                    # 推理增量（DeepSeek / Groq thinking）
-                    reasoning_chunk = delta.get("reasoning_content")
-                    if reasoning_chunk:
-                        full_reasoning += reasoning_chunk
-                        yield {"type": "reasoning", "content": reasoning_chunk}
-
-                    # 工具调用增量
-                    tc_deltas = delta.get("tool_calls")
-                    if tc_deltas:
-                        for tc in tc_deltas:
-                            idx = tc.get("index", 0)
-                            if idx not in tool_calls_acc:
-                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                            entry = tool_calls_acc[idx]
-                            if tc.get("id"):
-                                entry["id"] = tc["id"]
-                            func = tc.get("function", {})
-                            if func.get("name"):
-                                entry["name"] = func["name"]
-                            if func.get("arguments"):
-                                entry["arguments"] += func["arguments"]
-                                yield {"type": "tool_call", "id": entry["id"], "name": entry["name"], "arguments": func["arguments"]}
-
-        tool_calls = [
-            {"id": e["id"], "name": e["name"], "arguments": e["arguments"]}
-            for e in tool_calls_acc.values() if e["id"]
-        ]
-
-        yield {
-            "type": "done",
-            "content": full_text,
-            "reasoning": full_reasoning if full_reasoning else None,
-            "tool_calls": tool_calls if tool_calls else None,
-        }
 
     # ── Gemini SSE 解析 ───────────────────────────────────────
     async def _stream_gemini(

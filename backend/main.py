@@ -3,7 +3,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.server import Server as UvicornServer
-from application.pet_action import pet_action
+from application.services.pet_action import pet_action
 from application.state import mcp_manager
 from application.routers import chat, providers, mcp, skills, sessions, pet, files
 
