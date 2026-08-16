@@ -6,7 +6,7 @@ import json
 import asyncio
 import httpx
 from typing import AsyncGenerator, Optional
-from .providers import ProviderRegistry
+from .providers import ProviderRegistry, ProviderConfig, resolve_capabilities
 
 
 def _sanitize_tools(tools: list[dict]) -> list[dict]:
@@ -105,20 +105,41 @@ class SymbixClient:
             headers = {"Content-Type": "application/json"}
             return url, "gemini", headers, model_name
 
-        # Groq / Mistral / DeepSeek 等 — OpenAI 兼容
-        if model.startswith("groq/"):
-            model_name = model[len("groq/"):]
-            url = "https://api.groq.com/openai/v1/chat/completions"
-        elif model.startswith("mistral/"):
-            model_name = model[len("mistral/"):]
-            url = "https://api.mistral.ai/v1/chat/completions"
-        elif model.startswith("openai/"):
-            model_name = model[len("openai/"):]
-            url = "https://api.openai.com/v1/chat/completions"
-        else:
-            # 默认当 OpenAI 兼容
-            model_name = model
-            url = "https://api.openai.com/v1/chat/completions"
+        # 根据 litellm 前缀路由各 OpenAI 兼容 provider。
+        # 这里是需要频繁补全的表：新增 provider 时补一个 elif 即可。
+        _PROVIDER_URLS = {
+            "openai":   "https://api.openai.com/v1/chat/completions",
+            "groq":     "https://api.groq.com/openai/v1/chat/completions",
+            "mistral":  "https://api.mistral.ai/v1/chat/completions",
+            "moonshot": "https://api.moonshot.cn/v1/chat/completions",  # Kimi
+            "xai":      "https://api.x.ai/v1/chat/completions",          # Grok
+            # 通灵千问 / 阿里云百川通过 DashScope 提供 OpenAI 兼容接口
+            "qwen":     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            # 智谱 GLM 通过 open.bigmodel 提供 OpenAI 兼容接口
+            "zhipu":    "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            # OpenRouter 作为统一中转
+            "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+            # Together / Fireworks / Anyscale 等可同此补充
+            "together":  "https://api.together.xyz/v1/chat/completions",
+            "fireworks": "https://api.fireworks.ai/inference/v1/chat/completions",
+        }
+        prefix = None
+        model_name = model
+        for p in _PROVIDER_URLS.keys():
+            if model.startswith(p + "/"):
+                prefix = p
+                model_name = model[len(p) + 1:]
+                break
+        if prefix is None:
+            # 未知前缀：不要默认发到 openai.com、那只是制造诡异的 401。
+            # 转为openai/ 路由但不期待它成功；调用方会拿到上游错误。
+            # 这比“默默路由错地」安全得多。
+            raise RuntimeError(
+                f"未知 provider 前缀: {model!r}。请在 backend/Symbix_sdk/client.py "
+                f"_PROVIDER_URLS 里补上対应的 OpenAI 兼容接口 URL，"
+                f"或在 providers.json 里设 api_base 走自定义中转。"
+            )
+        url = _PROVIDER_URLS[prefix]
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -127,13 +148,27 @@ class SymbixClient:
         }
         return url, "openai_compat", headers, model_name
 
-    def _build_messages(self, history, user_input, registry=None, tools=None, image_parts=None):
+    def _build_messages(self, history, user_input, registry=None, tools=None, image_parts=None,
+                         supports_vision: Optional[bool] = None):
         messages = []
         system = self.system_prompt or ""
+        # 如果调用方未显式指定，则从 active provider 推断视觉能力
+        if image_parts and supports_vision is None:
+            try:
+                p = self.registry.get_active()
+                caps = resolve_capabilities(p.model, p)
+                supports_vision = caps.get("supports_vision", False)
+            except RuntimeError:
+                supports_vision = False
 
         # Skill 创建路径规则：始终注入，确保 agent 写入正确目录
         system += (
-            "\n\n## Skill 创建规则（必须遵守）\n"
+            "\n\n## 工具调用循环纪律（必须遵守）\n"
+            "- 每个任务最多调用 ├同名的写入类工具（edit_file/create_skill/...) 2 次。若第二次结果变不了，不要持续重复。\n"
+            "- 收到任何工具执行成功的结果后（如 `File saved:` ），下一步应直接向用户总结，不要继续重复创建/写同一批文件。\n"
+            "- 禁止在同一轮对话内连续 创建/写入 不同名称但内容实质近似的文件超过 2 个；若需批量同类生成，先向用户说明并征得同意。\n"
+            "- 反复调用相同或近似工具而不产生新进展算运行故障，必须停止并清晰说明已完成的实际进度、未能完成的处与原因。\n\n"
+            "## Skill 创建规则（必须遵守）\n"
             "- 创建新 skill 时,**必须**写入目录:`backend/Symbix_sdk/skill/installed_skills/<skill-name>/`\n"
             "- **优先使用 `create_skill` 工具**生成完整骨架（SKILL.md + agents/scripts/references/assets），"
             "不要在其他路径手动建目录\n"
@@ -172,6 +207,17 @@ class SymbixClient:
             messages.append({"role": "system", "content": system})
         messages.extend(history)
         if image_parts:
+            if not supports_vision:
+                # 模型不支持视觉 → 降级为文字描述，避免 multimodal payload 被 400。
+                image_summary = ", ".join(
+                    f"[图片: {p.get('filename') or p.get('mime') or 'unknown'}]"
+                    for p in image_parts if isinstance(p, dict)
+                )
+                messages.append({
+                    "role": "user",
+                    "content": f"{user_input or ''}\n{image_summary}".strip(),
+                })
+                return messages
             content_parts = [{"type": "text", "text": user_input or ""}]
             for part in image_parts:
                 if not isinstance(part, dict):
@@ -251,10 +297,24 @@ class SymbixClient:
             kwargs["api_base"] = api_base_val
         if custom_provider:
             kwargs["custom_llm_provider"] = custom_provider
-        if tools:
+        # 能力位驱动的发送策略：不支持的坚决不发，避免 422/400。
+        caps = resolve_capabilities(raw_model, provider)
+        if tools and caps["supports_tools"]:
             kwargs["tools"] = tools
+        if caps.get("supports_prompt_cache"):
+            # litellm/OpenAI 兼容接口可以让上游缓存前缀；此 key 在 OpenAI 与部分兼容服务可用。
+            kwargs["prompt_cache_key"] = (override_api_base or "symbix")
+        # 不支持视觉模型时，主动到光文本（防止 multimodal 不支持的端点 400）。
+        if image_parts and not caps["supports_vision"]:
+            # 过滵 image_parts 到文字描述，这里让 _build_messages 重传一次。
+            # 简单处理：直接删除最后一条 user 多模态 content，改为纯文本。
+            for m in messages:
+                if isinstance(m.get("content"), list):
+                    m["content"] = "".join(
+                        p.get("text", "") for p in m["content"] if p.get("type") == "text"
+                    ) or "[user message]"
 
-        print(">>> [chat] model:", model, "api_base:", api_base_val)
+        print(">>> [chat] model:", model, "api_base:", api_base_val, "caps:", caps)
         response = await litellm.acompletion(**kwargs)
         message = response.choices[0].message
         return {
@@ -310,10 +370,14 @@ class SymbixClient:
             kwargs["api_base"] = api_base_val
         if custom_provider:
             kwargs["custom_llm_provider"] = custom_provider
-        if tools:
+        # 能力位驱动（避免不支持 tool 的 provider 期诈发 tools 被拒）
+        caps = resolve_capabilities(raw_model, provider)
+        if tools and caps["supports_tools"]:
             kwargs["tools"] = tools
+        if caps.get("supports_prompt_cache"):
+            kwargs["prompt_cache_key"] = (override_api_base or "symbix")
 
-        print(">>> [tool_results] model:", model)
+        print(">>> [tool_results] model:", model, "caps:", caps)
         response = await litellm.acompletion(**kwargs)
         message = response.choices[0].message
         return {
@@ -470,18 +534,38 @@ class SymbixClient:
     async def _stream_openai_compat(
         self, url: str, headers: dict, model: str, messages: list,
         tools: Optional[list] = None, max_retries: int = 2,
+        caps: Optional[dict] = None,
     ) -> AsyncGenerator[dict, None]:
-        """OpenAI /v1/chat/completions 及兼容接口 SSE 流（带断线重试）"""
+        """OpenAI /v1/chat/completions 及兼容接口 SSE 流（带断线重试）。
+
+        caps 来自 provider capability 解析；若为 None 则从 active provider 推断。
+        不支持工具 / 提示缓存的 provider 将被默默降级，避免上游 422/400。
+        """
+        # 能力位解析（让上游 422 的可能性尽可能低）
+        if caps is None:
+            try:
+                p = self.registry.get_active()
+                # 用 p.model（保留前缀）推断能力，比裸析更准。
+                caps = resolve_capabilities(p.model, p)
+            except RuntimeError:
+                caps = dict(supports_tools=True, supports_prompt_cache=False,
+                            supports_vision=False, supports_reasoning=False,
+                            supports_streaming=True, api_kind="openai_compat")
+
         body = {
             "model": model,
             "messages": messages,
             "stream": True,
         }
-        if tools:
+        # 仅在 provider 支持工具时才下发。
+        if tools and caps.get("supports_tools", True):
             clean_tools = _sanitize_tools(tools)
             if clean_tools:
                 body["tools"] = clean_tools
                 body["tool_choice"] = "auto"
+        # 提示缓存：OpenAI / DeepSeek 都支持 prompt_cache_key 来重启前缀缓存
+        if caps.get("supports_prompt_cache"):
+            body["prompt_cache_key"] = "symbix-session"
 
         # 分开设置各阶段超时，而不是一个数字打天下
         timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)

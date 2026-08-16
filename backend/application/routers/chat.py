@@ -250,6 +250,12 @@ async def chat(request: ChatRequest):
 
         max_tool_rounds = 25
         round_count = 0
+        nonstream_name_counts: dict[str, int] = {}
+        NONSTREAM_WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",
+                                 "delete_file", "create_skill", "run_command",
+                                 "open_terminal"}
+        MAX_NS_WRITE = 3
+
         while response.get("tool_calls") and round_count < max_tool_rounds:
             round_count += 1
             tool_results = []
@@ -270,7 +276,33 @@ async def chat(request: ChatRequest):
                     args = _json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
                 except Exception:
                     args = {}
-                
+
+                # 频次反循环：多次同一写入工具 → 直接跳出循环并记录停止原因
+                if fn.name in NONSTREAM_WRITE_TOOLS:
+                    nonstream_name_counts[fn.name] = nonstream_name_counts.get(fn.name, 0) + 1
+                    if nonstream_name_counts[fn.name] > MAX_NS_WRITE:
+                        stop_hint = (
+                            f"[System] 工具 `{fn.name}` 已被调用 "
+                            f"{nonstream_name_counts[fn.name] - 1} 次。"
+                            "请停止重复调用，直接向用户总结已完成的工作与原因，不要继续调用任何写入类工具。"
+                        )
+                        tool_results.append({
+                            "tool_call_id": tc.id,
+                            "role": "tool",
+                            "name": fn.name,
+                            "content": stop_hint,
+                            "arguments": fn.arguments,
+                        })
+                        steps.append({
+                            "type": "tool_result",
+                            "tool_call_id": tc.id,
+                            "name": fn.name,
+                            "content": stop_hint,
+                        })
+                        # 强制跳出 while 循环
+                        response = {"content": stop_hint, "tool_calls": None, "reasoning": last_reasoning}
+                        break
+
                 # 使用风险分级器判断是否需要审批
                 risk_level, risk_reason = classify_tool_risk(fn.name, args)
                 
@@ -569,6 +601,12 @@ async def chat_approve(req: ApproveRequest):
                 # 后续 tool_calls 循环（复用 chat_stream 主循环逻辑）
                 round_count_local = ctx["round_count"]
                 attempted = set()
+                # 频次检测：同一写入类工具名不得超过 MAX_WRITE_CALLS_PER_NAME 次
+                name_counts_local: dict[str, int] = {}
+                LOCAL_WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",
+                                     "delete_file", "create_skill", "run_command",
+                                     "open_terminal"}
+                MAX_WRITE_NAME = 3
                 while tool_calls_raw and round_count_local < max_tool_rounds:
                     round_count_local += 1
                     steps.append({
@@ -601,6 +639,26 @@ async def chat_approve(req: ApproveRequest):
                             full_text = full_text or err
                             break
                         attempted.add(sig)
+
+                        # 频次检测：多次同一写入工具 → 强制终止循环，要求总结
+                        if tc_name in LOCAL_WRITE_TOOLS:
+                            name_counts_local[tc_name] = name_counts_local.get(tc_name, 0) + 1
+                            if name_counts_local[tc_name] > MAX_WRITE_NAME:
+                                stop_hint = (
+                                    f"[System] 工具 `{tc_name}` 已被调用 "
+                                    f"{name_counts_local[tc_name] - 1} 次。看起来你在重复/近似调用同一写入工具。"
+                                    "请立即停下来，向用户总结已完成的工作，不要再调用任何写入工具。"
+                                )
+                                steps.append({
+                                    "type": "tool_result",
+                                    "tool_call_id": tc_id,
+                                    "name": tc_name,
+                                    "content": stop_hint,
+                                })
+                                yield format_sse({"type": "tool_result", "id": tc_id, "name": tc_name, "content": stop_hint})
+                                tool_calls_raw = None
+                                full_text = full_text or stop_hint
+                                break
 
                         risk_level, risk_reason = classify_tool_risk(tc_name, tc_args)
                         if risk_level in (ToolRiskLevel.MEDIUM, ToolRiskLevel.HIGH):
@@ -861,6 +919,13 @@ async def chat_stream(request: ChatRequest):
             round_count = 0
             last_reasoning = None
             attempted_tool_calls = set()
+            # 按工具名统计调用频次，防止模型“以不同参数反复调同一写入工具”陷入死循环
+            tool_name_counts: dict[str, int] = {}
+            # 写入/创建类工具（对同一会话重复运行是不正常的）
+            WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",
+                           "delete_file", "create_skill", "run_command",
+                           "open_terminal"}
+            MAX_WRITE_CALLS_PER_NAME = 3
 
             while tool_calls_raw and round_count < max_rounds:
                 round_count += 1
@@ -914,6 +979,32 @@ async def chat_stream(request: ChatRequest):
                         full_text = full_text or repeated_error
                         break
                     attempted_tool_calls.add(call_signature)
+
+                    # 额外频次检测：同一写入类工具名若被调用超过 MAX 则强制终止循环。
+                    if tc_name in WRITE_TOOLS:
+                        tool_name_counts[tc_name] = tool_name_counts.get(tc_name, 0) + 1
+                        if tool_name_counts[tc_name] > MAX_WRITE_CALLS_PER_NAME:
+                            stop_hint = (
+                                f"[System] 工具 `{tc_name}` 已被调用 "
+                                f"{tool_name_counts[tc_name] - 1} 次。看起来你在重复/近似调用同一写入工具。"
+                                "请立即停下来，向用户总结已完成的工作、实际结果、未完成项与原因，"
+                                "不要再调用任何写入/创建类工具。"
+                            )
+                            steps.append({
+                                "type": "tool_result",
+                                "tool_call_id": tc_id,
+                                "name": tc_name,
+                                "content": stop_hint,
+                            })
+                            yield format_sse({
+                                "type": "tool_result",
+                                "id": tc_id,
+                                "name": tc_name,
+                                "content": stop_hint,
+                            })
+                            tool_calls_raw = None
+                            full_text = full_text or stop_hint
+                            break
 
                     # 动态风险分级：根据工具名和参数判断是否需要审批
                     risk_level, risk_reason = classify_tool_risk(tc_name, tc_args)

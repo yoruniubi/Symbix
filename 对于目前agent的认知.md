@@ -31,13 +31,33 @@ SEO就是搜索引擎优化(search engine optimization),简单来说就是怎样
 SEO的文章：https://developers.google.com/search/docs/fundamentals/seo-starter-guide?hl=zh-cn
 GEO，该怎么说，有所风险，看看吧 https://linux.do/t/topic/2596934/24
 10. 关于Harness
-Harness 具体做什么？
+**Harness 具体做什么**
 - 维护对话/任务的循环（loop）：模型输出 → harness 解析出工具调用 → harness 真正执行该工具（跑 bash、改文件、调 HTTP、点浏览器）→ 把执行结果重新塞回给模型 → 模型继续下一步，如此循环
 - 上下文管理：控制窗口大小、做压缩/摘要、决定哪些历史要留哪些要丢
 - 权限与安全：比如危险操作要不要先问用户确认、沙箱隔离
 - 错误处理与重试：工具调用失败了怎么办、要不要换个方式重试
-- 提供"世界"接口：文件系统、终端、浏览器、各种 API 之类的具体工具实现
-- 可观测性：日志、trace，方便调试模型每一步在想什么
-然后现在似乎没有完全能够控制model的Harness，要么就是干一般就不干了，要么就是永无止境地做事情
+-  提供"世界"接口：文件系统、终端、浏览器、各种 API 之类的具体工具实现
+-  可观测性：日志、trace，方便调试模型每一步在想什么
+然后现在似乎没有完全能够控制model的Harness，要么就是干一般就不干了，要么就是永无止境地做事情。
+然后上面是Harness的基本概念，接下来就是设计架构：
+**Harness 的设计架构**
+- Provider abstraction layer：一个统一的接口，用于连接不同的 LLM 应用程序接口（如 Anthropic、OpenAI、Google 等）。该接口能够规范化流媒体事件的传输方式、工具调用的格式、思维逻辑块的表达方式以及使用情况的记录方式，这样系统的其他部分就无需关心具体使用的是哪个模型了。
+- Agent loop： 实际的“轮转”机制：发送上下文信息→生成响应流→解析工具调用→执行工具功能→添加结果→重复上述过程，直到达到终止状态。 tool_execution_start/end 、 message_update （流式差异数据）、 turn_end 、 agent_end 等事件就发生在这里。
+- AgentHarness（编排层）：位于循环层的上方，负责处理各种功能，包括持久性、资源解析（文件、技能、MCP 服务器）、操作锁定，以及钩子系统的实现。
+- Context/session management：包括压缩操作、分支/分叉功能，以及（在 Pi 的情况下）一个基于 JSON 的只读会话存储，以确保数据的持久性。
+- Surface layer：TUI/CLI/RPC、扩展功能、斜杠命令——这些正是用户实际可以操作的组件。
+**其他值得提的小概念**
+- Thinking levels/budgets — providers expose reasoning effort as either a discrete level (minimal/low/medium/high) or a raw token budget. Higher budgets improve quality on hard steps but cost latency+tokens on every turn, so a harness usually wants to vary this per-task rather than fixing it globally (e.g. low for simple tool-routing turns, high for planning turns).
+考虑等级/预算问题——提供方将推理的投入表现为不同的等级，例如 minimal 、 low 、 medium 、 high 等，或者以原始代币数量来表示。较高的预算可以提高复杂步骤的运算质量，但每轮游戏都会增加延迟和代币消耗。因此，系统通常希望根据任务需求来调整这些参数，而不是全局性地固定数值（例如，在简单的工具调度回合中可以使用较低的预算，在规划回合中则可以使用较高的预算）。
+Thinking signatures / redacted thinking — some providers require you to pass back a signature or opaque blob alongside thinking content in the next turn to validate/reuse that reasoning; dropping it can break continuity. If you support multiple providers, you need to store this per-message rather than assume it round-trips.
+思维签名/已编辑的思维内容——一些服务供应商要求在下一轮对话中提供签名或不透明的标记，以验证并重复使用该推理过程；如果省略这一步骤，就会破坏连贯性。如果你支持多个服务供应商，就需要为每条消息分别存储这些信息，而不是假设它们会自动包含在其中。
+Tool execution mode (parallel vs sequential) — parallel tool execution is a real latency win when the model calls multiple independent tools in one turn, but results still need to be reassembled in the original requested order for the transcript to make sense to the model.
+工具执行模式（并行与顺序）——当模型在一条指令中调用多个独立工具时，并行工具执行确实能显著降低延迟。不过，这些结果仍需按照原始的顺序重新组合，才能让模型能够理解这些输出结果。
+Steering vs. follow-up messages — worth distinguishing if you ever want to support "the user types while the agent is mid-tool-call": steering messages get injected before the next LLM call within the current run, follow-up messages get injected after the run would otherwise have ended. Different queues, different semantics.
+引导性消息与跟进消息——如果希望支持“用户在代理进行工具调用期间仍能继续输入”的功能，那么区分这两种消息是很有必要的。引导性消息会在当前会话中的下一次 LLM 调用之前被注入，而跟进消息则会在会话结束之后被注入。这两种消息的处理顺序是不同的，它们的含义也有所不同。
+Context overflow detection — normalizing provider-specific "prompt too long" errors into one internal signal, so your compaction/retry logic doesn't need provider-specific error parsing.
+上下文溢出检测——将各提供商特有的“提示字符串过长”错误统一处理为一种内部信号，这样你的压缩/重试逻辑就无需再处理各提供商特定的错误解析了。
+Total token accounting across providers — input + output + cacheRead + cacheWrite, computed uniformly, is what lets you do context-window management independent of which provider you're currently on — relevant if you ever do cross-provider handoff mid-session.
+所有提供商的代币总量统计结果—— input + output + cacheRead + cacheWrite ——是统一计算得出的。这一功能使得你可以独立于当前使用的提供商会进行上下文管理。如果你在会话过程中需要跨提供商进行切换，这一点就非常有用。
 11. 关于Sandbox
 沙盒简单来说有点像是隔离室，Agent在其中做的任何修改，都不会影响到真实的环境，所以说之前有很多AI公司说自己的模型太强大了，突破了沙盒，攻击了外部服务器

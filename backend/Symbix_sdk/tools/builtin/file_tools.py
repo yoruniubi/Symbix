@@ -211,6 +211,100 @@ def search_and_replace(
         }
     except Exception as e:
         return {"success": False, "error_msg": f"替换失败: {e}", "results": []}
+
+# 根据文件名查找文件,输入文件名，返回路径
+def search_file_with_name(
+    file_name: str,
+    root_path: str = ".",
+    max_results: int = 50,
+    timeout: int = 30,
+) -> dict:
+    """根据文件名在指定根目录下递归查找文件，返回匹配的路径列表。
+
+    用于用户只提供了文件名、需要定位完整路径的场景（如查看某配置、引用文件实际位置）。
+    底层用 ripgrep --files + 过滤，比 os.walk 快很多；ripgrep 不存在时回退到 os.walk。
+    """
+    if not file_name:
+        return {"success": False, "error_msg": "file_name 不能为空", "results": []}
+
+    # 校验沙箱并拿到绝对路径
+    try:
+        root = assert_path_allowed(root_path)
+    except Exception as e:
+        return {"success": False, "error_msg": f"根路径不被允许: {e}", "results": []}
+    if not os.path.isdir(root):
+        return {"success": False, "error_msg": f"不是目录或不存在: {root}", "results": []}
+
+    # 用 ripgrep --files 列出所有文件，然后客户端模糊匹配文件名（包含）。
+    # 这样能复用 ripgrep 的 .gitignore / 隐藏文件过滤逻辑，避免扫到 node_modules。
+    results: list[dict] = []
+    use_walk = False
+    try:
+        # -S 让 rg 输出用 NUL 分隔，避免文件名含空格/quoting 问题
+        proc = subprocess.run(
+            ["rg", "--files", "-S", "--hidden", root],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if proc.returncode not in (0, 1):  # 1 = 无匹配，是正常
+            use_walk = True
+        else:
+            needle = file_name.lower()
+            for line in proc.stdout.splitlines():
+                if not line:
+                    continue
+                base = os.path.basename(line)
+                if needle in base.lower():
+                    results.append({
+                        "file": line,                              # 完整相对/绝对路径
+                        "name": base,                            # 文件名本身
+                    })
+                    if len(results) >= max_results:
+                        break
+    except FileNotFoundError:
+        use_walk = True
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error_msg": f"查找超时(超过 {timeout} 秒)，请缩小 root_path 或减少 node_modules",
+            "results": [],
+        }
+    except Exception as e:
+        use_walk = True
+
+    # 回退：ripgrep 不可用时用 os.walk
+    if use_walk:
+        needle = file_name.lower()
+        # 跳过常见大目录，避免扫死项目
+        _SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".next", "dist", "build", ".venv", "venv"}
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for name in files:
+                if needle in name.lower():
+                    results.append({
+                        "file": os.path.join(dirpath, name),
+                        "name": name,
+                    })
+                    if len(results) >= max_results:
+                        break
+            if len(results) >= max_results:
+                break
+
+    truncated = len(results) >= max_results
+    if not results:
+        return {
+            "success": True,
+            "error_msg": None,
+            "results": [],
+            "truncated": False,
+            "message": f"未找到匹配 {file_name!r} 的文件",
+        }
+    return {
+        "success": True,
+        "error_msg": None,
+        "results": results,
+        "truncated": truncated,
+        "message": f"找到 {len(results)} 个匹配文件",
+    }
 # ---------------------------------------------------------------------------
 # 工具 schema 注册表（供 tool_setup.py 统一注册）
 # ---------------------------------------------------------------------------
@@ -357,6 +451,39 @@ FILE_TOOLS_SCHEMAS = {
                 },
             },
             "required": ["query", "path"],
+        },
+    },
+    "search_file_with_name": {
+        "func": search_file_with_name,
+        "description": (
+            "根据文件名（或文件名片段）在指定根目录下递归查找文件并返回完整路径。"
+            "用于只知道文件名、需要定位文件完整路径的场景（如查找某配置、引用、上传文件的位置）。"
+            "与 search_files 区别：后者按内容找行；本工具按文件名找文件。底层优先用 ripgrep，找不到时回退到 os.walk。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_name": {
+                    "type": "string",
+                    "description": "要查找的文件名或文件名片段（大小写不敏感），如 'providers.json' 或 'README'",
+                },
+                "root_path": {
+                    "type": "string",
+                    "description": "查找的根目录，默认当前工作目录",
+                    "default": ".",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "最大返回结果数，默认 50",
+                    "default": 50,
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "查找超时时间（秒），默认 30",
+                    "default": 30,
+                },
+            },
+            "required": ["file_name"],
         },
     },
 }

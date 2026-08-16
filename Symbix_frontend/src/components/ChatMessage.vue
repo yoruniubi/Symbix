@@ -449,14 +449,14 @@ onMounted(() => {
 
 /* ---- Bubble ---- */
 .message-bubble {
-  max-width: min(72%, 760px);
-  padding: 12px 18px;
+  max-width: min(78%, 640px);     /* 原本 72%/760, 凑窄 unicode 内容仍造氣 */
+  padding: 8px 12px;              /* 原 12 18，减少内边距 */
   border-radius: var(--radius-md, 8px);
   color: var(--text-primary);
   word-break: break-word;
   overflow-wrap: anywhere;
-  line-height: 1.65;
-  font-size: 14px;
+  line-height: 1.5;               /* 原 1.65，收紧多行间隙 */
+  font-size: 13px;               /* 原 14，微缩信息密度 */
   position: relative;
 }
 .message-bubble.user {
@@ -504,21 +504,21 @@ onMounted(() => {
 .msg-markdown :deep(h2),
 .msg-markdown :deep(h3),
 .msg-markdown :deep(h4) {
-  margin: 0.75em 0 0.4em;
-  line-height: 1.35;
+  margin: 0.5em 0 0.3em;          /* 原 0.75 0 0.4，更紧凑 */
+  line-height: 1.3;
   font-weight: 600;
   color: var(--text-primary);
 }
-.msg-markdown :deep(h1) { font-size: 1.25em; }
-.msg-markdown :deep(h2) { font-size: 1.15em; }
-.msg-markdown :deep(h3) { font-size: 1.05em; }
+.msg-markdown :deep(h1) { font-size: 1.2em; }  /* 原 1.25 */
+.msg-markdown :deep(h2) { font-size: 1.1em; }  /* 原 1.15 */
+.msg-markdown :deep(h3) { font-size: 1.0em; }  /* 原 1.05 */
 .msg-markdown :deep(ul),
 .msg-markdown :deep(ol) {
-  margin: 0.4em 0;
-  padding-left: 1.35em;
+  margin: 0.25em 0;              /* 原 0.4 */
+  padding-left: 1.2em;            /* 原 1.35 */
 }
 .msg-markdown :deep(li) {
-  margin: 0.15em 0;
+  margin: 0.1em 0;                /* 原 0.15 */
 }
 .msg-markdown :deep(blockquote) {
   margin: 0.5em 0;
@@ -552,11 +552,13 @@ onMounted(() => {
   background: var(--bg-app);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
-  padding: 12px 14px;
-  margin: 8px 0;
-  overflow-x: auto;
-  font-size: 13px;
-  line-height: 1.55;
+  padding: 10px 12px;            /* 原 12 14，代码块更显紧凑 */
+  margin: 6px 0;
+  overflow-x: auto;             /* 长代码仍可横滑但不拉宽bubble外层 */
+  white-space: pre-wrap;        /* 超长行自动换行，避免出现需要拖才能看全 */
+  word-break: break-word;
+  font-size: 12.5px;             /* 原 13px */
+  line-height: 1.5;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 .msg-markdown :deep(pre code) {
