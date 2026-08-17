@@ -61,3 +61,25 @@ Total token accounting across providers — input + output + cacheRead + cacheWr
 所有提供商的代币总量统计结果—— input + output + cacheRead + cacheWrite ——是统一计算得出的。这一功能使得你可以独立于当前使用的提供商会进行上下文管理。如果你在会话过程中需要跨提供商进行切换，这一点就非常有用。
 11. 关于Sandbox
 沙盒简单来说有点像是隔离室，Agent在其中做的任何修改，都不会影响到真实的环境，所以说之前有很多AI公司说自己的模型太强大了，突破了沙盒，攻击了外部服务器
+12. 关于supervisor模式
+是multi Agent的一种方式，简单来说就是一个模块，一个主Agent作为supervisor，然后子Agent负责每一个模块，就比如说下面的结构
+Root Router Agent（鉴权/角色识别，决定路由到哪条线）
+├── 报告助手 Supervisor（插件包）
+│   ├── 子Agent: 报告书写/集成
+│   ├── 子Agent: 质控（报告+影像）
+│   └── 子Agent: 影像分析
+├── 岗位助理 Supervisor
+│   ├── 子Agent: 登记台
+│   ├── 子Agent: 预约
+│   └── 子Agent: 科室秘书（排班/绩效/统计）
+├── 科研助手 Supervisor
+│   ├── 子Agent: 课题管理
+│   ├── 子Agent: 论文协作
+│   └── 子Agent: 数据挖掘
+└── 科室客服 Supervisor
+    ├── 子Agent: 智能客服
+    └── 子Agent: 随访客服
+**关于设计原则**
+每个 Supervisor 对应 harness 的一个插件包，各自持有独立的 tool 集合、权限 scope、system prompt/skills。Root Agent 只做路由+鉴权，不碰业务逻辑——这样权限边界清晰，出问题也好审计定位到具体插件。
+
+关键设计原则：子 Agent 不是越多越好。子 Agent 的存在理由应该是"职责边界+权限边界不同"，而不是"功能点不同"。比如"报告质控"和"影像质控"完全可以是同一个子 Agent 下的两个 tool，而不必拆成两个子 Agent——拆分过细会增加路由损耗和上下文丢失的风险。

@@ -26,9 +26,15 @@ class McpInstaller:
         # 用 npx -y 直接跑，npx 会自动处理首次下载
         # 这里只做"预热"验证包能正常拉取，不需要真的 npm install 到全局
         try:
+            # Windows 下 npx 是 .cmd 脚本，subprocess 默认 shell=False 找不到，
+            # 必须用 shell=True（或显式 .cmd 路径）才能跑到 npm 家装见的命令。
+            import sys
+            use_shell = sys.platform == "win32"
+            cmd = ["npx", "-y", package_name, "--help"]
             result = subprocess.run(
-                ["npx", "-y", package_name, "--help"],
-                capture_output=True, text=True, timeout=60
+                cmd if not use_shell else " ".join(cmd),
+                capture_output=True, text=True, timeout=60,
+                shell=use_shell,
             )
             # 即使 help 失败（有些 MCP server 没有 --help），也继续尝试注册
         except Exception as e:

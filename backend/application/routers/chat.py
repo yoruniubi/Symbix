@@ -3,7 +3,7 @@ import asyncio
 import uuid
 import json as _json
 import httpx
-from fastapi import APIRouter, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, HTTPException, File, UploadFile, Form, Request
 from fastapi.responses import StreamingResponse
 
 from application.schemas import ChatRequest, ChatResponse, ApproveRequest
@@ -177,7 +177,7 @@ async def parse_file_api(body: dict):
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_request: Request):
     try:
         api_key = request.api_key or provider_registry.get_active().api_key
         api_base = request.api_base or provider_registry.get_active().api_base
@@ -257,6 +257,9 @@ async def chat(request: ChatRequest):
         MAX_NS_WRITE = 3
 
         while response.get("tool_calls") and round_count < max_tool_rounds:
+            # 客户端断连检测：前端 abort / 删 session 会断 SSE 连接。当前是 /chat（非 SSE）路径，但仍终止以免堆跑无效 tool_calls。
+            if await http_request.is_disconnected():
+                break
             round_count += 1
             tool_results = []
 
@@ -403,7 +406,7 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/approve")
-async def chat_approve(req: ApproveRequest):
+async def chat_approve(req: ApproveRequest, http_request: Request):
     print(f"[APPROVE] Received approval_id={req.approval_id}, pending keys={list(_pending_approvals.keys())}")
     if req.approval_id in _processing_approvals:
         print(f"[APPROVE] approval_id {req.approval_id} is already processing")
@@ -608,6 +611,10 @@ async def chat_approve(req: ApproveRequest):
                                      "open_terminal"}
                 MAX_WRITE_NAME = 3
                 while tool_calls_raw and round_count_local < max_tool_rounds:
+                    # 客户端断连检测：前端 abort / 删 session 会断 SSE 连接，后端需主动停。
+                    if await http_request.is_disconnected():
+                        print(f"[approve] client disconnected at round {round_count_local}, stopping")
+                        break
                     round_count_local += 1
                     steps.append({
                         "type": "tool_calls",
@@ -807,7 +814,7 @@ async def chat_approve(req: ApproveRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, http_request: Request):
     """AI 流式对话接口 (SSE) - 支持完整的 tool_calls 循环和审批"""
 
     async def generate():
@@ -928,6 +935,10 @@ async def chat_stream(request: ChatRequest):
             MAX_WRITE_CALLS_PER_NAME = 3
 
             while tool_calls_raw and round_count < max_rounds:
+                # 客户端断连检测：前端 abort / 删 session 会断 SSE 连接，后端需主动停、避免后端继续跑 tool。
+                if await http_request.is_disconnected():
+                    print(f"[stream] client disconnected at round {round_count}, stopping generation")
+                    break
                 round_count += 1
 
                 steps.append({

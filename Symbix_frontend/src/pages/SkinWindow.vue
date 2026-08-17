@@ -134,6 +134,22 @@
               :placeholder="t('skinWindow.modalPromptPlaceholder')"
             />
           </n-form-item>
+          <n-form-item :label="t('skinWindow.modalRefImage')">
+            <n-upload
+              :max="1"
+              accept="image/*"
+              :default-upload="false"
+              :show-file-list="true"
+              @change="handleRefImageChange"
+            >
+              <n-button quaternary size="small">{{ t('skinWindow.modalRefImagePick') }}</n-button>
+            </n-upload>
+            <div v-if="skillForm.refImage" class="ref-image-preview">
+              <img :src="skillForm.refImage.dataUrl" alt="ref" />
+              <n-button quaternary size="tiny" @click="skillForm.refImage = null">{{ t('skinWindow.modalRefImageClear') }}</n-button>
+            </div>
+            <div class="ref-image-hint">{{ t('skinWindow.modalRefImageHint') }}</div>
+          </n-form-item>
         </n-form>
       </div>
       <template #footer>
@@ -268,9 +284,14 @@ const availablePets = ref<PetSkin[]>([
 ])
 
 const showSkillModal = ref(false)
-const skillForm = ref({
+const skillForm = ref<{
+  name: string
+  prompt: string
+  refImage: { dataUrl: string; name: string; mime: string } | null
+}>({
   name: '',
   prompt: '',
+  refImage: null,
 })
 
 // ── Skill 生成 ──────────────────────────────────────────────
@@ -303,6 +324,29 @@ function closeSkillModal() {
   showSkillModal.value = false
 }
 
+async function handleRefImageChange(options: any) {
+  // options.fileList 是 naive-ui 的文件列表
+  const list = options?.fileList || []
+  const item = list[list.length - 1]
+  const raw: File | undefined = item?.file
+  if (!raw) return
+  // 限制到 5MB 避免过大
+  if (raw.size > 5 * 1024 * 1024) {
+    message.warning(t('skinWindow.modalRefImageTooLarge'))
+    return
+  }
+  // 读为 dataURL 给后续传入 chat 窗口的上传逻辑用
+  const reader = new FileReader()
+  reader.onload = () => {
+    skillForm.value.refImage = {
+      dataUrl: String(reader.result || ''),
+      name: raw.name,
+      mime: raw.type || 'image/png',
+    }
+  }
+  reader.readAsDataURL(raw)
+}
+
 async function triggerSkillGenerate() {
   if (!canGenerateSkill.value) return
 
@@ -310,23 +354,34 @@ async function triggerSkillGenerate() {
   const prompt = skillForm.value.prompt.trim()
   if (!petName || !prompt) return
 
+  // 可选参考图：以 base64 dataURL 形式带到消息中,后端 /upload 路径会接走
+  const refImage = skillForm.value.refImage?.dataUrl || null
+
   // 构造发送给 AI 的消息
   const messageText = t('skinWindow.skillMessage', { name: petName, prompt })
 
   // 关闭弹窗
   closeSkillModal()
 
-  // 通过 localStorage 传递消息给聊天窗口
+  const payload = { message: messageText, ts: Date.now(), refImage }
+
+  // 通过 localStorage 传递消息给聊天窗口（给新窗口的 onMounted 读）
   try {
-    localStorage.setItem('pendingSkinGen', JSON.stringify({
-      message: messageText,
-      ts: Date.now(),
-    }))
+    localStorage.setItem('pendingSkinGen', JSON.stringify(payload))
   } catch (e) {
     console.warn('[skin] 保存 pendingSkinGen 失败:', e)
   }
 
-  // 打开聊天窗口
+  // 同时发出 Tauri 事件：如果聊天窗口已存在，它的监听器能直接收到、发起新对话
+  // （旧路径只 revealWindow 不会触发 onMounted，靠事件才能补发）
+  try {
+    const { emit } = await import('@tauri-apps/api/event')
+    await emit('skin-gen-request', payload)
+  } catch (e) {
+    console.warn('[skin] emit skin-gen-request 失败:', e)
+  }
+
+  // 打开聊天窗口（复用或新建都依赖于 event/listener）
   await openOrCreateWindow('chat', {
     url: '/chat_window',
     title: t('home.windowChat'),
@@ -899,6 +954,25 @@ onMounted(() => {
   font-size: 13px;
   line-height: 1.55;
   color: var(--text-secondary);
+}
+
+.ref-image-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ref-image-preview img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+}
+.ref-image-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 /* ---- Scrollbar ---- */

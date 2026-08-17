@@ -1,4 +1,5 @@
 # tools/registry.py
+import json as _json
 from .native_tools import NativeToolkit
 from Symbix_sdk.mcp.connector import McpServerManager
 
@@ -33,6 +34,18 @@ class ToolRegistry:
         return self.native.get_skill_tools()
 
     def execute(self, tool_name: str, arguments) -> str:
+        # 统一标准化 arguments：可能是 str(JSON) 或 dict，远端 MCP server 要 dict。
+        # 模型有时把 arguments 当字符串传，则先解析。
+        if isinstance(arguments, str):
+            try:
+                arguments = _json.loads(arguments) if arguments else {}
+            except _json.JSONDecodeError:
+                return f"[Error] Invalid JSON arguments for tool '{tool_name}': {arguments!r}"
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return f"[Error] arguments must be an object/JSON string, got {type(arguments).__name__}"
+
         # 优先在 native 工具中查找
         if tool_name in self.native.tools:
             return self.native.execute_tool(tool_name, arguments)

@@ -162,6 +162,7 @@ import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
 import { emit as emitTauri } from '@tauri-apps/api/event'
+import { listen as listenTauri } from '@tauri-apps/api/event'
 
 const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
 const loading = ref(false)
@@ -194,7 +195,7 @@ const showAddMcpModal = ref(false)
 const creatingSkill = ref(false)
 const installingMcp = ref(false)
 const skillAddMode = ref<'github' | 'custom'>('github')
-const mcpAddMode = ref<'remote' | 'npm'>('remote')
+const mcpAddMode = ref<'raw' | 'remote' | 'npm'>('raw')
 const mcpStatusMap = ref<Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>>({})
 const refreshingMcp = ref(false)
 const refreshingSkill = ref(false)
@@ -218,6 +219,7 @@ const mcpForm = ref({
   url: '',
   transport: 'sse',
   headersText: '',
+  rawJson: '',
 })
 
 function openAddChooser(kind: 'skill' | 'mcp') {
@@ -225,7 +227,7 @@ function openAddChooser(kind: 'skill' | 'mcp') {
     skillAddMode.value = 'github'
     showAddSkillModal.value = true
   } else {
-    mcpAddMode.value = 'remote'
+    mcpAddMode.value = 'raw'
     showAddMcpModal.value = true
   }
 }
@@ -321,26 +323,16 @@ onMounted(async () => {
   }
 
   // 检测是否有从 SkinWindow 传来的预设皮肤生成消息
-  try {
-    const raw = localStorage.getItem('pendingSkinGen')
-    if (raw) {
-      const pending = JSON.parse(raw)
-      // 5 分钟内有效,防止过期消息被重复发送
-      if (pending.message && pending.ts && (Date.now() - pending.ts < 5 * 60 * 1000)) {
-        localStorage.removeItem('pendingSkinGen')
-        // 延迟一帧确保 ChatInput 等子组件已挂载
-        setTimeout(() => {
-          sendMessage(pending.message, [])
-        }, 300)
-      } else {
-        // 过期,清理
-        localStorage.removeItem('pendingSkinGen')
-      }
+  // 新窗口：从 localStorage 反序列化读取；老已开窗口：Tauri 事件補发
+  consumeSkinGenFromLS()
 
-    }
-  } catch (e) {
-    console.warn('[chat] 读取 pendingSkinGen 失败:', e)
-  }
+  // Tauri 事件监听：现有窗口收不到 onMounted，需事件補发
+  // listen 一次：handler 立即生效，Promise 返回值 = UnlistenFn
+  listenTauri<any>('skin-gen-request', (event: any) => {
+    handleSkinGenPayload(event.payload)
+  }).then((un) => {
+    unlistenSkinGen = un
+  }).catch(() => {})
 
   // 启动 MCP 连接状态周期检测（5 分钟一次，静默刷新）
   refreshMcpStatus(true)
@@ -351,6 +343,10 @@ onBeforeUnmount(() => {
   if (mcpCheckTimer) {
     clearInterval(mcpCheckTimer)
     mcpCheckTimer = null
+  }
+  if (unlistenSkinGen) {
+    unlistenSkinGen()
+    unlistenSkinGen = null
   }
 })
 async function refreshSkillList() {
@@ -505,9 +501,16 @@ async function deleteSession(id: string) {
   const idx = sessions.value.findIndex(s => s.id === id)
   if (idx < 0) return
   const session = sessions.value[idx]
+  const isActive = activeSessionId.value === id
+
+  // 关键：如果正在删的是当前活动会话且后台仍在上一次请求中，必须先终止该请求。
+  // 否则后端 SSE 还在跑，前端 message 删了但流式回调还在 push message，造成“看到鬼”现象。
+  if (isActive && loading.value) {
+    handleStopGeneration()
+  }
 
   sessions.value.splice(idx, 1)
-  if (activeSessionId.value === id) {
+  if (isActive) {
     messages.value = []
     activeSessionId.value = null
   }
@@ -543,6 +546,57 @@ async function renameSession(id: string, newTitle: string) {
 
 function sendQuick(text: string) {
   sendMessage(text, [])
+}
+
+// ── SkinWindow 跨窗口生成桌宠──────────────────────────────────
+/** 将 base64 dataURL 转成 File，上传 /upload，返回 attachments 所需的 {path, name} 数组 */
+async function uploadRefImage(ref: { dataUrl: string; name: string; mime: string }): Promise<any[]> {
+  const res = await fetch(ref.dataUrl)
+  const blob = await res.blob()
+  const file = new File([blob], ref.name || 'ref.png', { type: ref.mime || blob.type })
+  const form = new FormData()
+  form.append('files', file, file.name)
+  form.append('session_id', activeSessionId.value || 'pending')
+  const resp = await fetch(`${BACKEND_URL}/upload`, { method: 'POST', body: form })
+  if (!resp.ok) throw new Error(`upload HTTP ${resp.status}`)
+  const data = await resp.json()
+  const meta = data?.uploaded?.[0]
+  if (!meta || meta.status !== 'ok') throw new Error(meta?.message || 'upload failed')
+  return [{ path: meta.path, name: meta.filename || file.name, mime: meta.mime || file.type }]
+}
+
+// 用于跨窗口事件取消订阅
+let unlistenSkinGen: (() => void) | null = null
+
+
+/** 处理 SkinWindow 传过来的皮肤生成请求 payload（发一条预设消息给 AI） */
+async function handleSkinGenPayload(payload: any) {
+  if (!payload || !payload.message) return
+  // 超过 5 分钟丢弃，防陈旧请求随事件重放
+  if (payload.ts && Date.now() - payload.ts > 5 * 60 * 1000) return
+  let files: any[] = []
+  if (payload.refImage?.dataUrl) {
+    try {
+      files = await uploadRefImage(payload.refImage)
+    } catch (e) {
+      console.warn('[chat] 上传参考图失败，仅发送文本:', e)
+    }
+  }
+  // 延迟一帧保证 ChatInput 等子组件已挂载
+  setTimeout(() => sendMessage(payload.message, files), 300)
+}
+
+/** 新窗口路径：从 localStorage 读 pendingSkinGen 并清空。老窗口不走这条，走 Tauri事件。 */
+function consumeSkinGenFromLS() {
+  try {
+    const raw = localStorage.getItem('pendingSkinGen')
+    if (!raw) return
+    localStorage.removeItem('pendingSkinGen')
+    const payload = JSON.parse(raw)
+    if (payload?.message) handleSkinGenPayload(payload)
+  } catch (e) {
+    console.warn('[chat] 读取 pendingSkinGen 失败:', e)
+  }
 }
 
 const BACKEND_URL = 'http://127.0.0.1:8000'
@@ -878,22 +932,6 @@ async function tryGenerateTitle(sessionId: string) {
     console.error('生成标题失败:', err)
   }
 }
-async function installMcpServer(packageName: string, serverId: string, args: string[] = []) {
-  const res = await fetch('http://127.0.0.1:8000/mcp/install/npm', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ package_name: packageName, server_id: serverId, args })
-  })
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(errText || `HTTP ${res.status}`)
-  }
-  const data = await res.json()
-  if (data.status && data.status !== 'ok') {
-    throw new Error(data.message || data.detail || '安装失败')
-  }
-  return data
-}
 
 async function refreshMcpPanel(silent = true) {
   try {
@@ -1008,66 +1046,111 @@ async function submitCreateSkill() {
 }
 
 async function submitInstallMcp() {
-  const serverId = mcpForm.value.server_id.trim()
-  if (!serverId) {
-    messageUi.warning(t('addMcpModal.needServerId'))
-    return
-  }
   installingMcp.value = true
   try {
-    if (mcpAddMode.value === 'remote') {
-      const url = mcpForm.value.url.trim()
-      if (!url) {
-        messageUi.warning(t('addMcpModal.needUrl'))
+    if (mcpAddMode.value === 'raw') {
+      // 粘贴 JSON 模式：配置 JSON 本身含 server_id，外层 server_id 输入框不必填
+      const rawText = mcpForm.value.rawJson.trim()
+      if (!rawText) {
+        messageUi.warning(t('addMcpModal.needRawJson'))
         return
       }
-      let headers: Record<string, string> = {}
-      const ht = mcpForm.value.headersText.trim()
-      if (ht) {
-        try {
-          headers = JSON.parse(ht)
-        } catch {
-          messageUi.warning(t('addMcpModal.needHeadersJson'))
+      let parsed: any
+      try {
+        parsed = JSON.parse(rawText)
+      } catch (e: any) {
+        messageUi.warning(t('addMcpModal.invalidJson', { msg: e.message || e }))
+        return
+      }
+      // 接受两种写法：
+      // (1) 直接 {"server_xxx": {"command": ...}}
+      // (2) {"mcpServers": {"server_xxx": {...}}}
+      const servers = parsed?.mcpServers && typeof parsed.mcpServers === 'object'
+        ? parsed.mcpServers
+        : parsed
+      if (!servers || typeof servers !== 'object' || Array.isArray(servers) || Object.keys(servers).length === 0) {
+        messageUi.warning(t('addMcpModal.needServers'))
+        return
+      }
+      const res = await fetch(`${BACKEND_URL}/mcp/servers/raw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ servers }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+      // 后端返回 {results: [{server_id, status, connected, message}, ...]}
+      const results = data?.results || []
+      const okCount = results.filter((r: any) => r.status === 'ok').length
+      const savedCount = results.filter((r: any) => r.status === 'saved').length
+      const errCount = results.filter((r: any) => r.status === 'error').length
+      if (errCount === results.length) {
+        throw new Error(results.map((r: any) => `${r.server_id}: ${r.message}`).join('; '))
+      }
+      if (okCount && !errCount) messageUi.success(t('addMcpModal.addedN', { n: okCount }))
+      else if (errCount) messageUi.warning(t('addMcpModal.partialWarn', { ok: okCount, saved: savedCount, err: errCount }))
+      else messageUi.warning(t('addMcpModal.allSavedWarn') )
+    } else {
+      const serverId = mcpForm.value.server_id.trim()
+      if (!serverId) {
+        messageUi.warning(t('addMcpModal.needServerId'))
+        return
+      }
+      if (mcpAddMode.value === 'remote') {
+        const url = mcpForm.value.url.trim()
+        if (!url) {
+          messageUi.warning(t('addMcpModal.needUrl'))
           return
         }
+        let headers: Record<string, string> = {}
+        const ht = mcpForm.value.headersText.trim()
+        if (ht) {
+          try {
+            headers = JSON.parse(ht)
+          } catch {
+            messageUi.warning(t('addMcpModal.needHeadersJson'))
+            return
+          }
+        }
+        const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            server_id: serverId,
+            url,
+            transport: mcpForm.value.transport || 'sse',
+            headers,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+        if (data.connected) messageUi.success(data.message || t('mcpPanel.addSuccess'))
+        else messageUi.warning(data.message || t('mcpPanel.addSaved'))
+      } else {
+        // npm 模式：npx -y <pkg> [args...]
+        const packageName = mcpForm.value.package_name.trim()
+        if (!packageName) {
+          messageUi.warning(t('addMcpModal.needPackage'))
+          return
+        }
+        const args = mcpForm.value.argsText.trim().split(/\s+/).filter(Boolean)
+        const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            server_id: serverId,
+            package_name: packageName,
+            args,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+        if (data.connected) messageUi.success(data.message || t('mcpPanel.addNpmSuccess', { serverId }))
+        else messageUi.warning(data.message || t('mcpPanel.addNpmWarning'))
       }
-      const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          server_id: serverId,
-          url,
-          transport: mcpForm.value.transport || 'sse',
-          headers,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-      if (data.connected) messageUi.success(data.message || t('mcpPanel.addSuccess'))
-      else messageUi.warning(data.message || t('mcpPanel.addSaved'))
-    } else {
-      const packageName = mcpForm.value.package_name.trim()
-      if (!packageName) {
-        messageUi.warning(t('addMcpModal.needPackage'))
-        return
-      }
-      const args = mcpForm.value.argsText.trim().split(/\s+/).filter(Boolean)
-      const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          server_id: serverId,
-          package_name: packageName,
-          args,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-      if (data.connected) messageUi.success(data.message || t('mcpPanel.addNpmSuccess', { serverId }))
-      else messageUi.warning(data.message || t('mcpPanel.addNpmWarning'))
     }
     showAddMcpModal.value = false
-    mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'sse', headersText: '' }
+    mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'sse', headersText: '', rawJson: '' }
     await refreshMcpPanel()
   } catch (e: any) {
     messageUi.error(t('mcpPanel.addFail', { msg: e.message || e }))

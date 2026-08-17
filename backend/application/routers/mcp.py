@@ -1,7 +1,7 @@
 """MCP 管理路由。"""
 from fastapi import APIRouter, HTTPException
 
-from application.schemas import InstallNpmRequest, AddMcpServerRequest
+from application.schemas import InstallNpmRequest, AddMcpServerRequest, AddMcpServersRawRequest
 from application.state import (
     mcp_config,
     mcp_installer,
@@ -109,6 +109,51 @@ async def add_mcp_server(req: AddMcpServerRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/mcp/servers/raw")
+async def add_mcp_servers_raw(req: AddMcpServersRawRequest):
+    """直接接收一段 mcpServers JSON 片段，合并写入 mcp_config 并启动。
+
+    适合任意本地 MCP（python -m xxx / node ./srv.js / 自定义 command），
+    不需要 UI 针对 stdio/http/npx 各开一茒。上游需保证每个 server 配置至少包含
+    启动所需字段（对于 stdio：command + args；对于 remote：url）。同名覆盖。
+    """
+    if not req.servers or not isinstance(req.servers, dict):
+        raise HTTPException(status_code=400, detail="servers 不能为空且必须是 object")
+
+    results = []
+    for server_id, cfg in req.servers.items():
+        server_id = (server_id or "").strip()
+        if not server_id:
+            results.append({"server_id": "(empty)", "status": "error", "message": "server_id 为空"})
+            continue
+        if not isinstance(cfg, dict):
+            results.append({"server_id": server_id, "status": "error", "message": "配置必须是 object"})
+            continue
+        cfg_norm = {k: v for k, v in cfg.items() if v is not None}
+        # 基本字段校验：远程需 url；本地需 command。
+        if not cfg_norm.get("url") and not cfg_norm.get("command"):
+            results.append({
+                "server_id": server_id,
+                "status": "error",
+                "message": "配置必须含 url（远程）或 command（本地）",
+            })
+            continue
+        try:
+            mcp_config.add_server(server_id, cfg_norm)
+            ok = mcp_manager.add_from_config(server_id, cfg_norm)
+            results.append({
+                "server_id": server_id,
+                "status": "ok" if ok else "saved",
+                "connected": bool(ok),
+                "message": ("已连接" if ok else "配置已保存但启动失败，请检查后端日志"),
+            })
+        except Exception as e:
+            results.append({"server_id": server_id, "status": "error", "message": str(e)})
+
+    all_ok = all(r.get("status") == "ok" for r in results)
+    return {"status": "ok" if all_ok else "partial", "results": results}
 
 
 @router.delete("/mcp/servers/{server_id}")

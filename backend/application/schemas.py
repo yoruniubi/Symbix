@@ -101,6 +101,21 @@ class AddMcpServerRequest(BaseModel):
     command: str = ""
 
 
+class AddMcpServersRawRequest(BaseModel):
+    """直接粘贴一段 mcpServers JSON 片段，后端 merge 进 mcp_config.json。
+
+    客户端传形如:
+    {
+      "servers": {
+        "my_local": {"command": "python", "args": ["-m", "my_server"]},
+        "another":  {"command": "node", "args": ["./srv.js"]}
+      }
+    }
+    覆盖同名 server_id。
+    """
+    servers: dict[str, dict]
+
+
 class CreateSkillRequest(BaseModel):
     skill_name: str
     display_name: str = ""

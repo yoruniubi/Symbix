@@ -156,6 +156,15 @@ class McpServerClient:
     
     def call_tool(self, tool_name: str, arguments: dict) -> str:
         """调用工具"""
+        # 兼容上游传入字符串（模型有时把 arguments 当字符串下）。
+        # @modelcontextprotocol/sdk 用 zod 校验时"expected record received string"。
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments) if arguments else {}
+            except json.JSONDecodeError:
+                return f"[Error] Invalid JSON arguments for tool '{tool_name}': {arguments!r}"
+        if arguments is None:
+            arguments = {}
         try:
             response = self._send_request({
                 "jsonrpc": "2.0",
@@ -452,6 +461,14 @@ class McpRemoteClient:
             return []
 
     def call_tool(self, tool_name: str, arguments: dict) -> str:
+        # 与 stdio 客户端一样：上游仍可能传 string，给 MCP server 之前先转 dict。
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments) if arguments else {}
+            except json.JSONDecodeError:
+                return f"[Error] Invalid JSON arguments for tool '{tool_name}': {arguments!r}"
+        if arguments is None:
+            arguments = {}
         try:
             response = self._send_request({
                 "jsonrpc": "2.0",
