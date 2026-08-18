@@ -234,72 +234,278 @@ function handleClose() {
 </script>
 
 <style scoped>
+/* 与 McpPanel / SkillPanel / FilePanel 通用的面板骨架，严格保持一致。   */
 .side-panel {
-  position: absolute; left: 0; top: 0; bottom: 0;
-  display: flex; flex-direction: column;
-  background: var(--panel-bg, #fff);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  min-width: var(--panel-min-width);
+  max-width: min(var(--panel-max-width), 70vw);
+  height: 100%;
+  min-height: 0;
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
   border-right: 1px solid var(--border);
-  overflow: hidden; z-index: 10;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 20;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
-.side-panel.is-resizing { user-select: none; }
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  right: calc(var(--panel-resize-handle-width) / -2);
+  width: var(--panel-resize-handle-width);
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+.panel-resize-handle:hover,
+.is-resizing .panel-resize-handle {
+  background: var(--accent-500);
+  opacity: 0.35;
+}
+.panel-slide-enter-active {
+  transition: all var(--duration-base, 180ms) var(--ease-standard, ease);
+}
+.panel-slide-leave-active {
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+.panel-slide-enter-from {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+.panel-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
+}
 .side-panel-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.side-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.side-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel-icon-btn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
   flex-shrink: 0;
 }
-.side-panel-title { font-size: 14px; font-weight: 600; }
-.side-panel-actions { display: flex; gap: 4px; align-items: center; }
-.panel-icon-btn { width: 28px; height: 28px; padding: 0; border-radius: 6px; }
-.close-btn { cursor: pointer; }
-.refresh-icon.spinning { animation: cp-rot 0.9s linear infinite; }
-@keyframes cp-rot { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+.panel-icon-btn :deep(.n-button__icon) {
+  margin: 0 !important;
+}
+.close-btn:hover {
+  color: var(--error, #ef4444) !important;
+}
+.refresh-icon.spinning {
+  animation: panel-refresh-spin 1s linear infinite;
+}
+@keyframes panel-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.side-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px 16px 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.side-panel-body:hover {
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.side-panel-body::-webkit-scrollbar {
+  width: 4px;
+}
+.side-panel-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.side-panel-body::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+.side-panel-body:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+}
+.side-panel-body::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
 
-.side-panel-body { flex: 1; overflow-y: auto; padding: 10px 12px 16px; }
+/* checkpoint 专属业务样式                          */
 
-.cp-summary { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-.cp-summary-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.cp-summary-row.sub { margin-top: 4px; font-size: 11px; color: var(--text-secondary); }
-.cp-pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; background: rgba(127,127,127,0.08); }
-.cp-pill.chip-ok { color: #34d399; background: rgba(52,211,153,0.12); }
-.cp-pill.chip-err { color: #c0392b; background: rgba(239,107,110,0.12); }
-.cp-pill.chip-info { color: #3b82f6; background: rgba(59,130,246,0.12); }
+/* 头部统计 */
+.cp-summary {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.cp-summary-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.cp-summary-row.sub {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cp-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+}
+.cp-pill.chip-ok { color: var(--success, #34d399); background: rgba(52, 211, 153, 0.12); }
+.cp-pill.chip-err { color: var(--error, #ef4444); background: rgba(239, 68, 68, 0.12); }
+.cp-pill.chip-info { color: var(--accent-300, #F7A85B); background: var(--accent-soft); }
 .cp-pill.chip-mini { font-size: 10px; padding: 1px 6px; }
-.cp-pill.st-ok-pill { color: #34d399; }
-.cp-pill.st-err-pill { color: #ef4444; }
+.cp-pill.st-ok-pill { color: var(--success, #34d399); }
+.cp-pill.st-err-pill { color: var(--error, #ef4444); }
 .cp-tag-mini { white-space: nowrap; }
 
-.cp-timeline { display: flex; flex-direction: column; gap: 6px; }
-.cp-round { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.cp-round-header { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; background: var(--surface-soft, rgba(127,127,127,0.04)); }
-.cp-round-header:hover { background: var(--surface-hover); }
-.cp-round-marker { color: var(--text-secondary); transition: transform 0.15s ease; font-size: 10px; width: 10px; }
+/* 时间线（按 round 折叠） */
+.cp-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cp-round {
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-hover);
+  border: 1px solid transparent;
+  overflow: hidden;
+  transition: border-color var(--duration-fast, 120ms) ease, background var(--duration-fast, 120ms) ease;
+}
+.cp-round:hover {
+  border-color: var(--border);
+}
+.cp-round-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--duration-fast, 120ms) ease;
+}
+.cp-round-header:hover {
+  background: var(--accent-soft-hover);
+}
+.cp-round-marker {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  width: 10px;
+  transition: transform 0.15s ease;
+}
 .cp-round-marker.expanded { transform: rotate(90deg); }
-.cp-round-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.cp-round-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
 .cp-round-user { color: var(--text-primary); }
-.cp-round-id { color: var(--text-secondary); font-family: ui-monospace, monospace; font-size: 11px; }
+.cp-round-id {
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
 
-.cp-round-body { padding: 4px 10px 6px 14px; display: flex; flex-direction: column; gap: 0; }
-.cp-event { display: flex; gap: 6px; align-items: flex-start; padding: 4px 0; font-size: 12px; border-bottom: 1px solid rgba(127,127,127,0.08); }
+.cp-round-body {
+  padding: 6px 12px 8px 14px;
+  display: flex;
+  flex-direction: column;
+}
+.cp-event {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
 .cp-event:last-child { border-bottom: none; }
 .cp-event-icon { padding-top: 2px; font-size: 8px; }
 .dot { font-size: 10px; }
-.dot-safe { color: #34d399; }
-.dot-mid { color: #f59e0b; }
-.dot-high { color: #ef4444; }
-.dot-err { color: #ef4444; }
-.dot-round { color: #8b5cf6; }
+.dot-safe  { color: var(--success, #34d399); }
+.dot-mid   { color: var(--warning, #f59e0b); }
+.dot-high  { color: var(--error, #ef4444); }
+.dot-err   { color: var(--error, #ef4444); }
+.dot-round { color: var(--accent-300, #8b5cf6); }
 .cp-event-main { flex: 1; min-width: 0; }
-.cp-event-line1 { display: flex; gap: 6px; align-items: baseline; }
-.cp-ev-kind { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; }
-.cp-ev-name { font-weight: 600; }
-.cp-ev-status { font-size: 9px; padding: 0 4px; border-radius: 6px; }
-.st-ok { color: #34d399; }
-.st-error { color: #ef4444; }
-.st-skipped { color: #f59e0b; }
-.cp-ev-detail { font-size: 11px; color: var(--text-secondary); margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.cp-path { font-family: ui-monospace, monospace; font-size: 11px; background: rgba(127,127,127,0.08); padding: 0 4px; border-radius: 3px; color: var(--text-primary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-event-line1 {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.cp-ev-kind {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.cp-ev-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cp-ev-status {
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+.st-ok      { color: var(--success, #34d399); }
+.st-error   { color: var(--error, #ef4444); }
+.st-skipped { color: var(--warning, #f59e0b); }
+.cp-ev-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cp-path {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--accent-soft);
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--text-primary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cp-delta { font-size: 10px; }
-.cp-delta.plus { color: #34d399; }
-.cp-delta.minus { color: #ef4444; }
+.cp-delta.plus  { color: var(--success, #34d399); }
+.cp-delta.minus { color: var(--error, #ef4444); }
 .cp-snippet { opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
