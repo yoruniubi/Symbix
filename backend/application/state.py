@@ -85,17 +85,6 @@ initialize_mcp_servers()
 # ============ 工具注册 ============
 tool_registry = ToolRegistry(mcp_manager=mcp_manager)
 tool_registry.set_skill_registry(skill_registry)
-
-# ============ 审批白名单 & 待审批任务 ============
-APPROVAL_TOOLS = {
-    "edit_file",
-    "write_to_file",
-    "replace_in_file",
-    "delete_file",
-    "run_command",
-    "open_terminal",
-    "create_skill",
-}
 _pending_approvals: dict[str, dict] = {}
 # approval 请求会先从 pending 中取出上下文;在后续 LLM 请求尚未完成时,
 # 重复点击/重复提交不能再看到 pending,否则会被误报为 404。记录处理中 ID,

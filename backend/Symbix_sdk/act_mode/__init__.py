@@ -26,12 +26,15 @@ class ActModeController:
         )
         return ActDecision(judgment=judgment, plan=plan)
 
-    def respond(self, user_input: str, history: list = None) -> str:
-        """兼容旧调用方;新聊天链应使用 decide 后交给主模型执行。"""
+    async def respond(self, user_input: str, history: list = None) -> str:
+        """兼容旧调用方；新聊天链应使用 decide 后交给主模型执行。
+
+        reactive.act 现为异步（走 llm_client.chat），故此处也需为 async。
+        """
         history = history or []
         decision = self.decide(user_input, history)
         if decision.judgment.mode == Mode.REACTIVE:
-            return self.reactive.act(user_input, decision.judgment, history)
+            return await self.reactive.act(user_input, decision.judgment, history)
         return self.planner.solve(decision.plan, user_input)
 
 __all__ = [

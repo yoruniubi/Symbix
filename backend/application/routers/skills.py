@@ -91,31 +91,28 @@ async def delete_skill(skill_name: str):
 @router.post("/skills/create")
 async def create_skill(req: CreateSkillRequest):
     """创建 skill 骨架目录"""
-    try:
-        from Symbix_sdk.skill.installed_skills.skill_creator_scripts import (  # type: ignore
-            create_skill_skeleton,
-        )
-    except Exception:
-        import importlib.util
+    # skill-creator 目录取名含连字符（不是合法 Python 包名），且 init_skill.py 位于其中。
+    # 因此走 importlib 按文件路径加载，避免 import 语句拼包名时被逐字识别。
+    import importlib.util
 
-        init_path = os.path.join(
-            BASE_DIR,
-            "Symbix_sdk",
-            "skill",
-            "installed_skills",
-            "skill-creator",
-            "scripts",
-            "init_skill.py",
+    init_path = os.path.join(
+        BASE_DIR,
+        "Symbix_sdk",
+        "skill",
+        "installed_skills",
+        "skill-creator",
+        "scripts",
+        "init_skill.py",
+    )
+    if not os.path.exists(init_path):
+        raise HTTPException(
+            status_code=500, detail=f"init_skill.py 不存在: {init_path}"
         )
-        if not os.path.exists(init_path):
-            raise HTTPException(
-                status_code=500, detail=f"init_skill.py 不存在: {init_path}"
-            )
-        spec = importlib.util.spec_from_file_location("init_skill", init_path)
-        mod = importlib.util.module_from_spec(spec)
-        assert spec and spec.loader
-        spec.loader.exec_module(mod)
-        create_skill_skeleton = mod.create_skill_skeleton
+    spec = importlib.util.spec_from_file_location("symbix_init_skill", init_path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(mod)
+    create_skill_skeleton = mod.create_skill_skeleton
 
     result = create_skill_skeleton(
         skill_name=req.skill_name,

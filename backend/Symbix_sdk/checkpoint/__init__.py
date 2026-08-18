@@ -6,7 +6,7 @@
 - 单 session 一份隐式时间线，按 (round_id, seq) 顺序追加。
 - 用户开 UI 时通过 `/sessions/{id}/timeline` 回溯。
 """
-from .recorder import CheckpointRecorder, get_recorder
+from .recorder import CheckpointRecorder, get_recorder, init_recorder
 from .schema import (
     CheckpointRecord,
     ToolCallRecord,

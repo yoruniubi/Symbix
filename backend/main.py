@@ -59,8 +59,7 @@ app.add_middleware(
 )
 
 # ============ 挂载路由 ============
-# app.include_router(chat.router)  # 替换为手动添加，确保路由注册
-app.router.routes.extend(chat.router.routes)
+app.include_router(chat.router)
 app.include_router(providers.router)
 app.include_router(mcp.router)
 app.include_router(skills.router)

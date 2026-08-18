@@ -67,9 +67,9 @@ class SymbixClient:
         self.system_prompt = system_prompt
 
     # ── helper ─────────────────────────────────────────────────
-    def _resolve_endpoint(self, model: str, api_base: str, api_key: str) -> tuple[str, str, dict]:
-        """返回 (url, provider_type, headers)。
-        provider_type ∈ {'anthropic', 'openai', 'custom_openai'}
+    def _resolve_endpoint(self, model: str, api_base: str, api_key: str) -> tuple[str, str, dict, str]:
+        """返回 (url, provider_type, headers, model_name)。
+        provider_type ∈ {'anthropic', 'gemini', 'openai_compat', 'custom_openai'}
         """
         if api_base:
             base = api_base.rstrip('/')
@@ -164,7 +164,7 @@ class SymbixClient:
         # Skill 创建路径规则：始终注入，确保 agent 写入正确目录
         system += (
             "\n\n## 工具调用循环纪律（必须遵守）\n"
-            "- 每个任务最多调用 ├同名的写入类工具（edit_file/create_skill/...) 2 次。若第二次结果变不了，不要持续重复。\n"
+            "- 每个任务最多调用同名的写入类工具（edit_file/create_skill/...) 2 次。若第二次结果变不了，不要持续重复。\n"
             "- 收到任何工具执行成功的结果后（如 `File saved:` ），下一步应直接向用户总结，不要继续重复创建/写同一批文件。\n"
             "- 禁止在同一轮对话内连续 创建/写入 不同名称但内容实质近似的文件超过 2 个；若需批量同类生成，先向用户说明并征得同意。\n"
             "- 反复调用相同或近似工具而不产生新进展算运行故障，必须停止并清晰说明已完成的实际进度、未能完成的处与原因。\n\n"

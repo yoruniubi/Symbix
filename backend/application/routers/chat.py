@@ -14,7 +14,6 @@ from application.state import (
     symbix_client,
     act_mode_controller,
     tool_registry,
-    APPROVAL_TOOLS,
     _pending_approvals,
     _processing_approvals,
 )
@@ -109,7 +108,7 @@ def _emit_tool(
     status: str = "ok",
     error: str | None = None,
 ) -> None:
-    """统一处理 tool_call 的 checkpoint 发射。】"""
+    """统一处理 tool_call 的 checkpoint 发射。"""
     try:
         args_dict = (
             _json.loads(tc_args) if isinstance(tc_args, str) and tc_args else
@@ -568,11 +567,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             ckpt_tool_count += 1
             if isinstance(out, str) and out.startswith("[Error"):
                 ckpt_failed += 1
-                _emit_tool(request.session_id, ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
+                _emit_tool(ctx["session_id"], ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
                            ctx.get("risk_level", "medium"), True, out,
                            status="error", error=out[:200])
             else:
-                _emit_tool(request.session_id, ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
+                _emit_tool(ctx["session_id"], ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
                            ctx.get("risk_level", "medium"), True, out)
         else:
             out = f"[用户拒绝执行工具 {pending_tc['name']}]"
@@ -585,7 +584,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             })
             # — checkpoint: 用户拒绝 → 记 skipped (approved=False)
             ckpt_tool_count += 1
-            _emit_tool(request.session_id, ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
+            _emit_tool(ctx["session_id"], ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
                        ctx.get("risk_level", "medium"), False, "", status="skipped",
                        error="user rejected")
         tool_results.append({
@@ -950,7 +949,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 import traceback
                 traceback.print_exc()
                 yield format_sse({"type": "error", "content": str(e)})
-                yield "datan"
+                yield "data: [DONE]\n\n"
             finally:
                 _processing_approvals.discard(req.approval_id)
 
@@ -1034,6 +1033,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             steps = []
             full_text = ""
             tool_calls_raw = None
+            last_reasoning = None
             # 本轮 user_msg → agent 的 checkpoint 标识。整轮中所有 tool_call 与最后的 round 总结点共用.
             ckpt_round_id = _new_round_id()
             ckpt_tool_count = 0
@@ -1077,9 +1077,15 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     yield _sse
                 if event["type"] == "delta":
                     full_text += event["content"]
+                elif event["type"] == "reasoning":
+                    # DeepSeek/Groq 等带 reasoning_content 的模型首轮也会吐推理增量。
+                    # 需要拼上，否则 round 总结点的 reasoning_snippet 永远为空。
+                    last_reasoning = (last_reasoning or "") + (event.get("content") or "")
                 elif event["type"] == "done":
                     full_text = event.get("content") or full_text
                     tool_calls_raw = event.get("tool_calls")
+                    if event.get("reasoning"):
+                        last_reasoning = event.get("reasoning")
                     if event.get("error"):
                         print(f"[chat_stream] 内容不完整: {event['error']}")
 
@@ -1089,7 +1095,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
             max_rounds = 25
             round_count = 0
-            last_reasoning = None
+            # last_reasoning 已在首轮循环前初始化，这里不再覆盖。
             attempted_tool_calls = set()
             # 按工具名统计调用频次，防止模型“以不同参数反复调同一写入工具”陷入死循环
             tool_name_counts: dict[str, int] = {}

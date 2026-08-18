@@ -17,6 +17,7 @@ declare module 'vue' {
     ChatInput: typeof import('./src/components/ChatInput.vue')['default']
     ChatMessage: typeof import('./src/components/ChatMessage.vue')['default']
     ChatWelcome: typeof import('./src/components/ChatWelcome.vue')['default']
+    CheckpointPanel: typeof import('./src/components/panels/CheckpointPanel.vue')['default']
     FilePanel: typeof import('./src/components/panels/FilePanel.vue')['default']
     McpPanel: typeof import('./src/components/panels/McpPanel.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
