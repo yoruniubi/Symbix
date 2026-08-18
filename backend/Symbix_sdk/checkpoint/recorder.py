@@ -1,0 +1,258 @@
+"""CheckpointRecorder — 单例 recorder，对外暴露 type-safe 的 emit_* 接口。
+
+接入原则：
+- 在 ToolRegistry.execute / file_pipeline / chat.py 三处埋点，不深度侵入业务代码。
+- recorder 是「fire-and-forget」语义 —— emit 失败不能阻断主流程；写库失败仅打日志。
+- 全局单例 `get_recorder()`，避免每个调用点自己 new。
+
+典型用法：
+    from Symbix_sdk.checkpoint import get_recorder
+    get_recorder().emit_tool_call(
+        session_id=sid, round_id=rid, tool_name="write_to_file",
+        arguments={"path": ".../foo.py", "content": "..."},
+        risk_level="high", approved=True, result_snippet="ok", result_truncated=False,
+    )
+"""
+from __future__ import annotations
+
+import os
+import uuid
+from typing import Optional
+
+from .schema import (
+    CheckpointRecord,
+    RecordKind,
+    ToolCallRecord,
+    FileOpRecord,
+    CommandRecord,
+    McpCallRecord,
+    RoundRecord,
+)
+from .store import CheckpointStore
+
+
+class CheckpointRecorder:
+    """单例 recorder。不要直接 new，用 `get_recorder()`。"""
+
+    def __init__(self, store: CheckpointStore):
+        self.store = store
+
+    # ── 内部工具 ──────────────────────────────────────────────────
+    @staticmethod
+    def _new_id() -> str:
+        return uuid.uuid4().hex
+
+    def _emit(self, rec: CheckpointRecord) -> None:
+        """写入 + 容错：失败不抛、不阻断主流程。"""
+        try:
+            self.store.insert(rec)
+        except Exception as e:  # pragma: no cover - 写 checkpoint 失败不能影响业务
+            print(f"[checkpoint] insert failed (kind={rec.kind}, session={rec.session_id}): {e}")
+
+    # ── 对外 emit_* 接口 ───────────────────────────────────────────
+    def emit_tool_call(
+        self,
+        *,
+        session_id: str,
+        round_id: str,
+        tool_name: str,
+        arguments: dict,
+        risk_level: str = "unknown",
+        approved: bool = True,
+        status: str = "ok",
+        error: Optional[str] = None,
+        result_snippet: str = "",
+        result_truncated: bool = False,
+    ) -> str:
+        """记一条 native/skill 工具调用。"""
+        rec = CheckpointRecord(
+            id=self._new_id(),
+            kind=RecordKind.TOOL_CALL,
+            session_id=session_id,
+            round_id=round_id,
+            seq=0,                       # store 会填充
+            status=status,
+            error=error,
+            payload=ToolCallRecord(
+                tool_name=tool_name,
+                arguments=arguments or {},
+                risk_level=risk_level,
+                approved=approved,
+                result_snippet=result_snippet[:500],
+                result_truncated=result_truncated or len(result_snippet) > 500,
+            ).model_dump(mode="json"),
+        )
+        self._emit(rec)
+        return rec.id
+
+    def emit_file_op(
+        self,
+        *,
+        session_id: str,
+        round_id: str,
+        op: str,
+        path: str,
+        size_before: Optional[int] = None,
+        size_after: Optional[int] = None,
+        hash_before: Optional[str] = None,
+        hash_after: Optional[str] = None,
+        status: str = "ok",
+        error: Optional[str] = None,
+    ) -> str:
+        """记一条文件操作。before/after hash + size 由 file_pipeline 计算填入。"""
+        size_delta = None
+        if size_before is not None and size_after is not None:
+            size_delta = size_after - size_before
+        rec = CheckpointRecord(
+            id=self._new_id(),
+            kind=RecordKind.FILE_OP,
+            session_id=session_id,
+            round_id=round_id,
+            seq=0,
+            status=status,
+            error=error,
+            payload=FileOpRecord(
+                op=op,
+                path=path,
+                size_before=size_before,
+                size_after=size_after,
+                hash_before=hash_before,
+                hash_after=hash_after,
+                size_delta=size_delta,
+            ).model_dump(mode="json"),
+        )
+        self._emit(rec)
+        return rec.id
+
+    def emit_command(
+        self,
+        *,
+        session_id: str,
+        round_id: str,
+        cmd: str,
+        cwd: str = "",
+        exit_code: Optional[int] = None,
+        stdout_tail: str = "",
+        stderr_tail: str = "",
+        duration_ms: int = 0,
+        status: str = "ok",
+        error: Optional[str] = None,
+    ) -> str:
+        """记一条命令执行。"""
+        rec = CheckpointRecord(
+            id=self._new_id(),
+            kind=RecordKind.COMMAND,
+            session_id=session_id,
+            round_id=round_id,
+            seq=0,
+            status=status,
+            error=error,
+            payload=CommandRecord(
+                cmd=cmd,
+                cwd=cwd,
+                exit_code=exit_code,
+                stdout_tail=stdout_tail[-500:],
+                stderr_tail=stderr_tail[-500:],
+                duration_ms=duration_ms,
+            ).model_dump(mode="json"),
+        )
+        self._emit(rec)
+        return rec.id
+
+    def emit_mcp_call(
+        self,
+        *,
+        session_id: str,
+        round_id: str,
+        server_id: str,
+        tool_name: str,
+        arguments: dict,
+        result_snippet: str = "",
+        result_truncated: bool = False,
+        status: str = "ok",
+        error: Optional[str] = None,
+    ) -> str:
+        """记一条 MCP server 工具调用。"""
+        rec = CheckpointRecord(
+            id=self._new_id(),
+            kind=RecordKind.MCP_CALL,
+            session_id=session_id,
+            round_id=round_id,
+            seq=0,
+            status=status,
+            error=error,
+            payload=McpCallRecord(
+                server_id=server_id,
+                tool_name=tool_name,
+                arguments=arguments or {},
+                result_snippet=result_snippet[:500],
+                result_truncated=result_truncated or len(result_snippet) > 500,
+            ).model_dump(mode="json"),
+        )
+        self._emit(rec)
+        return rec.id
+
+    def emit_round(
+        self,
+        *,
+        session_id: str,
+        round_id: str,
+        user_msg: str = "",
+        assistant_text: str = "",
+        reasoning: str = "",
+        tool_count: int = 0,
+        failed_tools: int = 0,
+        duration_ms: int = 0,
+        status: str = "ok",
+        error: Optional[str] = None,
+    ) -> str:
+        """记一条 round 总结点 —— 写在每轮 final assistant 输出之后。"""
+        rec = CheckpointRecord(
+            id=self._new_id(),
+            kind=RecordKind.ROUND,
+            session_id=session_id,
+            round_id=round_id,
+            seq=0,
+            status=status,
+            error=error,
+            payload=RoundRecord(
+                user_msg_snippet=user_msg[:200],
+                user_msg_truncated=len(user_msg) > 200,
+                assistant_text_snippet=assistant_text[:200],
+                assistant_truncated=len(assistant_text) > 200,
+                reasoning_snippet=reasoning[:200],
+                tool_count=tool_count,
+                failed_tools=failed_tools,
+                duration_ms=duration_ms,
+            ).model_dump(mode="json"),
+        )
+        self._emit(rec)
+        return rec.id
+
+    # ── 读 ──────────────────────────────────────────────────────
+    def timeline(self, session_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
+        return self.store.list_by_session(session_id, limit=limit, offset=offset)
+
+    def summary(self, session_id: str) -> dict:
+        return self.store.summary_by_session(session_id)
+
+
+# ── 单例 ─────────────────────────────────────────────────────────────
+_INSTANCE: Optional[CheckpointRecorder] = None
+
+
+def init_recorder(db_path: str) -> CheckpointRecorder:
+    """应用启动时调用一次，注入 db_path（应与 memory.db 同库或独立）。"""
+    global _INSTANCE
+    _INSTANCE = CheckpointRecorder(CheckpointStore(db_path))
+    return _INSTANCE
+
+
+def get_recorder() -> CheckpointRecorder:
+    """拿全局单例。未初始化时抛 RuntimeError —— 强制走 init_recorder。"""
+    if _INSTANCE is None:
+        raise RuntimeError(
+            "CheckpointRecorder 未初始化；请在 application/state.py "
+            "启动时调用 Symbix_sdk.checkpoint.init_recorder(db_path)"
+        )
+    return _INSTANCE

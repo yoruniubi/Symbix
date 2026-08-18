@@ -85,6 +85,82 @@ def _batch_yield(
         out.append(format_sse(flushed))
     out.append(format_sse(event))
     return out
+
+
+# ═══════════════ Checkpoint 记录辅助 ═══════════════
+# 在 chat_stream / chat / approve 三处调用,把工具调用 + round 总结点写进 sqlite。
+# 继续 fire-and-forget 语义——写 checkpoint 不能阻断主业务流。
+from application.state import checkpoint_recorder  # noqa: E402
+
+
+def _new_round_id() -> str:
+    """生成一轮 user_msg → agent 的 round 标识。"""
+    return uuid.uuid4().hex[:12]
+
+
+def _emit_tool(
+    session_id: str,
+    round_id: str,
+    tc_name: str,
+    tc_args,
+    risk_level,
+    approved: bool,
+    tool_output: str,
+    status: str = "ok",
+    error: str | None = None,
+) -> None:
+    """统一处理 tool_call 的 checkpoint 发射。】"""
+    try:
+        args_dict = (
+            _json.loads(tc_args) if isinstance(tc_args, str) and tc_args else
+            (tc_args if isinstance(tc_args, dict) else {})
+        )
+    except Exception:
+        args_dict = {"_raw": str(tc_args)}
+    # risk_level 可能是 ToolRiskLevel 枚举或 str
+    rl = str(risk_level).split(".")[-1].lower() if risk_level else "unknown"
+    try:
+        checkpoint_recorder.emit_tool_call(
+            session_id=session_id,
+            round_id=round_id,
+            tool_name=tc_name,
+            arguments=args_dict,
+            risk_level=rl,
+            approved=approved,
+            status=status,
+            error=error,
+            result_snippet=tool_output or "",
+        )
+    except Exception as e:
+        print(f"[checkpoint] emit_tool_call failed: {e}")
+
+
+def _emit_round_summary(
+    session_id: str,
+    round_id: str,
+    user_msg: str,
+    assistant_text: str,
+    reasoning: str | None,
+    tool_count: int,
+    failed_tools: int,
+    duration_ms: int = 0,
+) -> None:
+    """一轮结束时发送 round 总结点。"""
+    try:
+        checkpoint_recorder.emit_round(
+            session_id=session_id,
+            round_id=round_id,
+            user_msg=user_msg or "",
+            assistant_text=assistant_text or "",
+            reasoning=reasoning or "",
+            tool_count=tool_count,
+            failed_tools=failed_tools,
+            duration_ms=duration_ms,
+        )
+    except Exception as e:
+        print(f"[checkpoint] emit_round failed: {e}")
+
+
 def _prepare_user_message(
     request: ChatRequest,
 ) -> tuple[str, list[dict], list[dict]]:
@@ -248,6 +324,12 @@ async def chat(request: ChatRequest, http_request: Request):
 
         last_reasoning = response.get("reasoning")
 
+        # checkpoint：本轮 user_msg → agent 标识
+        ckpt_round_id = _new_round_id()
+        ckpt_tool_count = 0
+        ckpt_failed = 0
+        ckpt_start_ts = asyncio.get_event_loop().time()
+
         max_tool_rounds = 25
         round_count = 0
         nonstream_name_counts: dict[str, int] = {}
@@ -326,6 +408,7 @@ async def chat(request: ChatRequest, http_request: Request):
                         "act_mode": act_mode,
                         "act_plan": act_plan,
                         "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                        "ckpt_round_id": ckpt_round_id,
                         "remaining_tcs": [
                             {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
                             for r in response["tool_calls"]
@@ -334,6 +417,17 @@ async def chat(request: ChatRequest, http_request: Request):
                         "risk_reason": risk_reason,
                     }
 
+                    # — checkpoint: 需审批工具被拦 → 记 skipped + round 未完待续
+                    ckpt_tool_count += 1
+                    _emit_tool(request.session_id, ckpt_round_id, fn.name, fn.arguments,
+                               risk_level, False, "", status="skipped",
+                               error="awaiting user approval")
+                    _emit_round_summary(
+                        request.session_id, ckpt_round_id,
+                        mem_msg, "", last_reasoning,
+                        ckpt_tool_count, ckpt_failed,
+                        duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                    )
                     return {
                         "status": "pending_approval",
                         "approval_id": approval_id,
@@ -369,6 +463,16 @@ async def chat(request: ChatRequest, http_request: Request):
                     "content": tool_output,
                 })
                 print(f"[MCP Tool] {fn.name} -> {tool_output[:200]}")
+                # — checkpoint: 记一条工具调用 (非流 /chat 路径)
+                ckpt_tool_count += 1
+                if isinstance(tool_output, str) and tool_output.startswith("[Error"):
+                    ckpt_failed += 1
+                    _emit_tool(request.session_id, ckpt_round_id, fn.name, fn.arguments,
+                               risk_level, True, tool_output,
+                               status="error", error=tool_output[:200])
+                else:
+                    _emit_tool(request.session_id, ckpt_round_id, fn.name, fn.arguments,
+                               risk_level, True, tool_output)
 
             response = await symbix_client.chat_with_tool_results(
                 user_input=user_for_llm,
@@ -385,6 +489,13 @@ async def chat(request: ChatRequest, http_request: Request):
 
         assistant_content = response["content"]
         memory.add(request.session_id, "assistant", assistant_content)
+        # — checkpoint: /chat (非流) 本轮完成 → 记 round 总结点
+        _emit_round_summary(
+            request.session_id, ckpt_round_id,
+            mem_msg, assistant_content, last_reasoning,
+            ckpt_tool_count, ckpt_failed,
+            duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+        )
 
         asyncio.create_task(maybe_compress_session(
             request.session_id, api_key, api_base, model))
@@ -433,6 +544,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     act_mode = ctx.get("act_mode", "reactive")
     act_plan = ctx.get("act_plan", [])
     pending_tc = ctx["pending_tc"]
+    # checkpoint：复用原轮 ckpt_round_id，使 approve 收尾后的 round 总结继续在同一 round 内
+    ckpt_round_id = ctx.get("ckpt_round_id", _new_round_id())
+    ckpt_tool_count = 0
+    ckpt_failed = 0
+    ckpt_start_ts = asyncio.get_event_loop().time()
     remaining_tcs = ctx["remaining_tcs"]
 
     tool_results = []
@@ -448,6 +564,16 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 "content": out,
                 "approved": True,
             })
+            # — checkpoint: 审批同意 → 记一条 approved=True 工具调用
+            ckpt_tool_count += 1
+            if isinstance(out, str) and out.startswith("[Error"):
+                ckpt_failed += 1
+                _emit_tool(request.session_id, ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
+                           ctx.get("risk_level", "medium"), True, out,
+                           status="error", error=out[:200])
+            else:
+                _emit_tool(request.session_id, ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
+                           ctx.get("risk_level", "medium"), True, out)
         else:
             out = f"[用户拒绝执行工具 {pending_tc['name']}]"
             steps.append({
@@ -457,6 +583,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 "content": out,
                 "approved": False,
             })
+            # — checkpoint: 用户拒绝 → 记 skipped (approved=False)
+            ckpt_tool_count += 1
+            _emit_tool(request.session_id, ckpt_round_id, pending_tc["name"], pending_tc["arguments"],
+                       ctx.get("risk_level", "medium"), False, "", status="skipped",
+                       error="user rejected")
         tool_results.append({
             "tool_call_id": pending_tc["id"],
             "role": "tool",
@@ -685,6 +816,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 "act_mode": act_mode,
                                 "act_plan": act_plan,
                                 "pending_tc": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                                "ckpt_round_id": ctx.get("ckpt_round_id", ckpt_round_id),
                                 "remaining_tcs": [{"id": r["id"], "name": r["name"], "arguments": r.get("arguments", "{}")} for r in tool_calls_raw],
                                 "risk_level": risk_level,
                                 "risk_reason": risk_reason,
@@ -698,6 +830,17 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 "act_mode": act_mode,
                                 "act_plan": act_plan,
                             })
+                            # — checkpoint: approve-stream 后续轮需审批 → 讃 skipped + 拦住本轮
+                            ckpt_tool_count += 1
+                            _emit_tool(session_id, ckpt_round_id, tc_name, tc_args,
+                                       risk_level, False, "", status="skipped",
+                                       error="awaiting user approval (nested)")
+                            _emit_round_summary(
+                                session_id, ckpt_round_id,
+                                user_input, full_text, last_reasoning,
+                                ckpt_tool_count, ckpt_failed,
+                                duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                            )
                             yield format_sse({"type": "done", "content": full_text})
                             return
 
@@ -707,6 +850,16 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                         steps.append({"type": "tool_result", "tool_call_id": tc_id, "name": tc_name, "content": out})
                         yield format_sse({"type": "tool_result", "id": tc_id, "name": tc_name, "content": out})
                         new_results.append({"tool_call_id": tc_id, "role": "tool", "name": tc_name, "content": out, "arguments": tc_args})
+                        # — checkpoint: approve-stream 后续轮工具调用
+                        ckpt_tool_count += 1
+                        if isinstance(out, str) and out.startswith("[Error"):
+                            ckpt_failed += 1
+                            _emit_tool(session_id, ckpt_round_id, tc_name, tc_args,
+                                       risk_level, True, out,
+                                       status="error", error=out[:200])
+                        else:
+                            _emit_tool(session_id, ckpt_round_id, tc_name, tc_args,
+                                       risk_level, True, out)
 
                     if not tool_calls_raw:
                         break
@@ -780,6 +933,13 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     full_text = "[已完成工具调用，但模型未返回最终文本。]"
                 memory.add(session_id, "assistant", full_text)
                 yield format_sse({"type": "done", "content": full_text, "act_mode": act_mode, "act_plan": act_plan})
+                # — checkpoint: approve-stream 本轮完成 → 记 round 总结点
+                _emit_round_summary(
+                    session_id, ckpt_round_id,
+                    user_input, full_text, last_reasoning,
+                    ckpt_tool_count, ckpt_failed,
+                    duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                )
                 yield "\n"
 
                 asyncio.create_task(maybe_compress_session(session_id, api_key or "", api_base or "", model or ""))
@@ -874,6 +1034,11 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             steps = []
             full_text = ""
             tool_calls_raw = None
+            # 本轮 user_msg → agent 的 checkpoint 标识。整轮中所有 tool_call 与最后的 round 总结点共用.
+            ckpt_round_id = _new_round_id()
+            ckpt_tool_count = 0
+            ckpt_failed = 0
+            ckpt_start_ts = asyncio.get_event_loop().time()
 
             if parsed_atts:
                 yield format_sse({
@@ -1042,6 +1207,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "name": tc_name,
                                 "arguments": tc_args,
                             },
+                            "ckpt_round_id": ckpt_round_id,
                             "remaining_tcs": [
                                 {
                                     "id": r["id"],
@@ -1061,7 +1227,19 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             "act_mode": act_mode,
                             "act_plan": act_plan,
                         })
+                        # — checkpoint: 需审批工具被拦住 → 记一条 skipped
+                        ckpt_tool_count += 1
+                        _emit_tool(request.session_id, ckpt_round_id, tc_name, tc_args,
+                                   risk_level, False, "", status="skipped",
+                                   error="awaiting user approval")
                         yield format_sse({"type": "done", "content": full_text})
+                        # — checkpoint: 本轮被审批拦住,尚未完成 → round 未完待续
+                        _emit_round_summary(
+                            request.session_id, ckpt_round_id,
+                            mem_msg, full_text, last_reasoning,
+                            ckpt_tool_count, ckpt_failed,
+                            duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                        )
                         return
 
                     tool_output = tool_registry.execute(tc_name, tc_args)
@@ -1081,6 +1259,16 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         # 会把 JSON 结果截断,看起来像被 SSE 分割成了多段。
                         "content": tool_output,
                     })
+                    # — checkpoint: 记一条工具调用 (SAFE 自动放行的)
+                    ckpt_tool_count += 1
+                    if isinstance(tool_output, str) and tool_output.startswith("[Error"):
+                        ckpt_failed += 1
+                        _emit_tool(request.session_id, ckpt_round_id, tc_name, tc_args,
+                                   risk_level, True, tool_output, status="error",
+                                   error=tool_output[:200])
+                    else:
+                        _emit_tool(request.session_id, ckpt_round_id, tc_name, tc_args,
+                                   risk_level, True, tool_output)
 
                 # 已经发现完全重复的调用时,不要再把空的 tool_calls 请求发回模型。
                 if not tool_calls_raw:
@@ -1205,6 +1393,13 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 "act_mode": act_mode,
                 "act_plan": act_plan,
             })
+            # — checkpoint: 一轮 user_msg → agent 完成,记 round 总结点
+            _emit_round_summary(
+                request.session_id, ckpt_round_id,
+                mem_msg, full_text, last_reasoning,
+                ckpt_tool_count, ckpt_failed,
+                duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+            )
             yield "data: [DONE]\n\n"
 
             asyncio.create_task(maybe_compress_session(

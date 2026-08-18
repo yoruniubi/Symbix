@@ -141,7 +141,23 @@ export default {
     skill: 'Skill',
     mcp: 'MCP',
     nativeTools: 'Native Tools',
+    checkpoint: '行为时间线',
     modelSettings: '模型设置',
+  },
+
+  // ===== Checkpoint Panel =====
+  checkpointPanel: {
+    title: '行为时间线',
+    events: '事件',
+    rounds: '轮次',
+    errors: '错误',
+    empty: '本会话暂无记录（开始对话或调用工具后会出现）',
+    noSession: '请先选择一个会话',
+    kindTool: '工具',
+    kindFile: '文件',
+    kindCommand: '命令',
+    kindMcp: 'MCP',
+    kindRound: '轮次总结',
   },
 
   // ===== Skill Panel =====

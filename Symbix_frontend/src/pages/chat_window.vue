@@ -45,6 +45,13 @@
         @update:active-panel="activePanel = $event"
       />
 
+      <!-- Checkpoint 时间线:Agents 行为回溯 -->
+      <CheckpointPanel
+        :active-panel="activePanel"
+        :active-session-id="activeSessionId"
+        @update:active-panel="activePanel = $event"
+      />
+
       <!-- Session List (underneath, always present) -->
       <SessionList
         :sessions="sessions"
@@ -136,6 +143,7 @@ import SkillPanel from '@/components/panels/SkillPanel.vue'
 import McpPanel from '@/components/panels/McpPanel.vue'
 import FilePanel from '@/components/panels/FilePanel.vue'
 import NativeToolsPanel from '@/components/panels/NativeToolsPanel.vue'
+import CheckpointPanel from '@/components/panels/CheckpointPanel.vue'
 import ChatActivityBar from '@/components/ChatActivityBar.vue'
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useMessage } from 'naive-ui'
@@ -179,7 +187,7 @@ interface Skill {
 
 const skillList = ref<Skill[]>([])
 const skillToolList = ref<any[]>([])
-const activePanel = ref<'files' | 'skill' | 'mcp' | 'native_tools' | null>(null)
+const activePanel = ref<'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref('gpt-4o-mini')
 const mcpConfigData = ref<any>(null)
@@ -378,7 +386,7 @@ async function refreshSkillList() {
   } catch {}
   refreshingSkill.value = false
 }
-async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools') {
+async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint') {
   console.log('🟡 togglePanel called', panel)
   // 如果当前已经是激活状态,点击则是关闭,不需要请求
   if (activePanel.value === panel) {

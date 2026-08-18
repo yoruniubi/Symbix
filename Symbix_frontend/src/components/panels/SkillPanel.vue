@@ -68,7 +68,7 @@ import { computed } from 'vue'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 const props = defineProps<{
-  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | null
+  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null
   skillList: any[]
   skillToolList: any[]
   refreshing?: boolean
@@ -76,7 +76,7 @@ const props = defineProps<{
 const refreshing = computed(() => props.refreshing ?? false)
 
 const emit = defineEmits<{
-  (e: 'update:activePanel', value: 'skill' | 'mcp' | 'native_tools' | null): void
+  (e: 'update:activePanel', value: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null): void
   (e: 'openAddChooser', kind: 'skill'): void
   (e: 'removeSkill', skillName: string): void
   (e: 'refreshSkillList'): void

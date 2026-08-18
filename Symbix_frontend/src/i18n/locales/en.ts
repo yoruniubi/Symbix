@@ -141,7 +141,23 @@ export default {
     skill: 'Skill',
     mcp: 'MCP',
     nativeTools: 'Native Tools',
+    checkpoint: 'Action Timeline',
     modelSettings: 'Model Settings',
+  },
+
+  // ===== Checkpoint Panel =====
+  checkpointPanel: {
+    title: 'Action Timeline',
+    events: 'events',
+    rounds: 'rounds',
+    errors: 'errors',
+    empty: 'No records yet (start a conversation or invoke tools to see here)',
+    noSession: 'Please pick a session first',
+    kindTool: 'Tool',
+    kindFile: 'File',
+    kindCommand: 'Command',
+    kindMcp: 'MCP',
+    kindRound: 'Round',
   },
 
   // ===== Skill Panel =====

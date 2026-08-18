@@ -12,6 +12,7 @@ from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import McpServerManager
 from Symbix_sdk.tools.registry import ToolRegistry
 from Symbix_sdk.skill.registry import SkillRegistry
+from Symbix_sdk.checkpoint import init_recorder as _init_checkpoint_recorder
 from Symbix_sdk.mcp.installer import McpInstaller
 from Symbix_sdk.act_mode import ActModeController
 
@@ -36,6 +37,12 @@ memory_store = MemoryStore(
     db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
     llm_client=symbix_client,    # 指向下方已初始化的 symbix_client
     extraction_model="gpt-4o-mini",
+)
+
+# Checkpoint recorder：同 memory.db 同库，跨表 join 方便。
+# 记录 Agent 对外部世界的副作用 (工具/文件/命令/MCP)，与对话文本 (memory) 正交。
+checkpoint_recorder = _init_checkpoint_recorder(
+    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
 )
 
 skill_registry = SkillRegistry(

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.server import Server as UvicornServer
 from application.services.pet_action import pet_action
 from application.state import mcp_manager
-from application.routers import chat, providers, mcp, skills, sessions, pet, files
+from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint
 
 
 def _force_close_sse(reason: str = "") -> None:
@@ -67,6 +67,7 @@ app.include_router(skills.router)
 app.include_router(sessions.router)
 app.include_router(pet.router)
 app.include_router(files.router)
+app.include_router(checkpoint.router)
 
 
 
