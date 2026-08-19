@@ -22,6 +22,9 @@ uploads/
 # MCP local install cache / node modules under backend if any
 backend/**/node_modules/
 
+# Playwright MCP 运行时输出（console 日志、page snapshot yml 等，按时间戳写）
+backend/.playwright-mcp/
+
 # Python
 __pycache__/
 *.py[cod]

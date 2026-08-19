@@ -635,6 +635,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
         # 追加到 messages，然后用流式 SSE 输出，避免前端干等。
         async def _stream_approve():
             nonlocal last_reasoning
+            # checkpoint 计数袭用外层 chat_approve 的局部变量:嵌套函数内对它们做 += 必须显式 nonlocal,
+            # 否则 Python 会按本函数局部赋值导致 UnboundLocalError("cannot access local variable ...").
+            nonlocal ckpt_tool_count, ckpt_failed, ckpt_start_ts
             try:
                 # 先把已执行的步骤发给前端
                 yield format_sse({"type": "steps", "steps": steps})
@@ -708,7 +711,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             if e.get("error"):
                                 print(f"[_stream_approve] 内容不完整: {e['error']}")
                 else:
-                    async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools):
+                    async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools,
+                        caps_model_override=raw_model):
                         if e["type"] == "stream_reset":
                             full_text = ""
                             _batcher = _DeltaBatcher()
@@ -904,7 +908,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 if e.get("error"):
                                     print(f"[_stream_approve] 内容不完整: {e['error']}")
                     else:
-                        async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools):
+                        async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools,
+                            caps_model_override=raw_model):
                             if e["type"] == "stream_reset":
                                 full_text_round = ""
                                 _batcher2 = _DeltaBatcher()
@@ -1363,7 +1368,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             tool_calls_raw = e.get("tool_calls")
                 else:
                     async for e in symbix_client._stream_openai_compat(
-                        url, headers, model_name, msgs, mcp_tools
+                        url, headers, model_name, msgs, mcp_tools,
+                        caps_model_override=raw_model
                     ):
                         if e["type"] == "stream_reset":
                             full_text_round = ""

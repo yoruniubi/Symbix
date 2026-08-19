@@ -412,10 +412,26 @@ async function handleTest() {
   }
 }
 
-function handleSave() {
+const BACKEND_URL = 'http://127.0.0.1:8000'
+
+async function handleSave() {
   saveSettings(form.value)
+  // 同步 default provider 到后端 providers.json，让 generate_title / maybe_compress / pet-forge 等
+  // 走非流式 chat() 的后台路径能拿到当前 model+key+base（否则会拿 providers.json 里旧 default dead value）。
+  // 失败不影响前端已保存，仅提示警告。
+  try {
+    const resp = await fetch(`${BACKEND_URL}/providers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'default', model: form.value.model, api_key: form.value.apiKey, api_base: form.value.baseUrl }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    await fetch(`${BACKEND_URL}/providers/default/activate`, { method: 'POST' })
+  } catch (e: any) {
+    message.warning(t('modelSetting.syncBackendFail', { msg: e.message }))
+  }
   message.success(t('modelSetting.saved'))
-  setTimeout(() => router.back(), 300)  
+  setTimeout(() => router.back(), 300)
 }
 
 function handleReset() {

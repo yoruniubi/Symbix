@@ -140,21 +140,30 @@
               accept="image/*"
               :default-upload="false"
               :show-file-list="true"
+              class="ref-upload"
               @change="handleRefImageChange"
             >
-              <n-button quaternary size="small">{{ t('skinWindow.modalRefImagePick') }}</n-button>
+              <n-upload-dragger class="ref-upload-trigger">
+                <div class="ref-upload-inner">
+                  <svg class="ref-upload-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="3"/>
+                    <circle cx="8.5" cy="8.5" r="1.6"/>
+                    <path d="M21 15l-5-5L5 21"/>
+                  </svg>
+                  <div class="ref-upload-title">{{ t('skinWindow.modalRefImageDrop') }}</div>
+                  <div class="ref-upload-sub">{{ t('skinWindow.modalRefImageHint') }}</div>
+                </div>
+              </n-upload-dragger>
             </n-upload>
             <div v-if="skillForm.refImage" class="ref-image-preview">
               <img :src="skillForm.refImage.dataUrl" alt="ref" />
               <n-button quaternary size="tiny" @click="skillForm.refImage = null">{{ t('skinWindow.modalRefImageClear') }}</n-button>
             </div>
-            <div class="ref-image-hint">{{ t('skinWindow.modalRefImageHint') }}</div>
           </n-form-item>
         </n-form>
       </div>
       <template #footer>
-        <n-space justify="end">
-          <n-button @click="closeSkillModal">{{ t('skinWindow.modalClose') }}</n-button>
+        <n-space justify="center">
           <n-button type="primary" @click="triggerSkillGenerate" :disabled="!canGenerateSkill">
             {{ t('skinWindow.modalGenerate') }}
           </n-button>
@@ -969,10 +978,67 @@ onMounted(() => {
   border-radius: 6px;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
 }
-.ref-image-hint {
-  margin-top: 4px;
+
+/* 参考图拖拽上传区，宽度限制为 40.5%（与表单其他控件视觉重量平衡） */
+.ref-upload {
+  width: 40.5%;
+  margin: 0 auto;
+}
+.ref-upload :deep(.n-upload-trigger) {
+  display: block;
+  width: 100%;
+}
+/* n-upload-dragger 本身是一个虚线椎间子；它与面板风格统一：背景 + 边框 + 圆角 */
+.ref-upload :deep(.n-upload-dragger) {
+  width: 100%;
+  padding: 16px 14px;
+  border-radius: var(--radius-md, 8px) !important;
+  background: var(--accent-soft) !important;
+  border: 1px dashed var(--accent-300, var(--border, rgba(255, 255, 255, 0.18))) !important;
+  color: var(--text-secondary);
+  transition: background var(--duration-fast, 120ms) ease,
+              border-color var(--duration-fast, 120ms) ease,
+              color var(--duration-fast, 120ms) ease;
+  cursor: pointer;
+}
+.ref-upload :deep(.n-upload-dragger:hover) {
+  background: var(--accent-soft-hover) !important;
+  border-color: var(--accent-500, #EF6B6E) !important;
+  color: var(--text-primary);
+}
+/* 拖拽拽起悬筒时的高亮（Naive 给的仅在 hover）手动加一个轻加亮 */
+.ref-upload :deep(.n-upload-dragger.n-upload-dragger--dragover) {
+  background: var(--accent-soft-hover) !important;
+  border-color: var(--accent-500, #EF6B6E) !important;
+  color: var(--text-primary);
+}
+.ref-upload-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 2px;
+}
+.ref-upload-icon {
+  color: var(--accent-500, #EF6B6E);
+  opacity: 0.85;
+}
+.ref-upload-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+}
+.ref-upload-sub {
   font-size: 11px;
   opacity: 0.7;
+}
+/* 选择后文件条目与面板风格统一 */
+.ref-upload :deep(.n-upload-file) {
+  margin-top: 6px;
+  width: 100%;
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-hover);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
 }
 
 /* ---- Scrollbar ---- */

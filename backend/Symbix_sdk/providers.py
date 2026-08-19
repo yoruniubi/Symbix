@@ -58,6 +58,12 @@ _PROVEDER_CAPABILITY_DEFAULTS: Dict[str, Dict[str, Any]] = {
         supports_streaming=True, supports_tools=True, supports_reasoning=False,
         supports_vision=True, supports_prompt_cache=False, api_kind="openai_compat",
     ),
+    # 中转站自定义前缀 z-ai（如 z-ai/glm-5.2、z-ai/glm-4.5）：经中转接智谱 GLM / Other OpenAI 兼容路线，
+    # 与 zhipu 默认能力位对齐。
+    "z-ai": dict(
+        supports_streaming=True, supports_tools=True, supports_reasoning=True,
+        supports_vision=True, supports_prompt_cache=False, api_kind="openai_compat",
+    ),
     "groq": dict(
         supports_streaming=True, supports_tools=True, supports_reasoning=False,
         supports_vision=False, supports_prompt_cache=False, api_kind="openai_compat",
@@ -72,9 +78,11 @@ _PROVEDER_CAPABILITY_DEFAULTS: Dict[str, Dict[str, Any]] = {
     ),
 }
 
-# 安全默认：未知 provider 按 OpenAI 兼容 + 不假设任何高级能力。
+# 安全默认：未知 provider 按 OpenAI 兼容。OpenAI function calling 是兼容协议标准部件,
+# 绝大多数 OpenAI 兼容上游都会按规范处理 tools 字段（不支持时静默忽略而非报错），
+# 所以未知前缀默认开 tools，符合原来 Symbix“任何模型都能调工具”的实际行为。
 _SAFE_DEFAULT = dict(
-    supports_streaming=True, supports_tools=False, supports_reasoning=False,
+    supports_streaming=True, supports_tools=True, supports_reasoning=False,
     supports_vision=False, supports_prompt_cache=False, api_kind="openai_compat",
 )
 

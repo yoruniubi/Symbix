@@ -535,18 +535,24 @@ class SymbixClient:
         self, url: str, headers: dict, model: str, messages: list,
         tools: Optional[list] = None, max_retries: int = 2,
         caps: Optional[dict] = None,
+        caps_model_override: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         """OpenAI /v1/chat/completions 及兼容接口 SSE 流（带断线重试）。
 
-        caps 来自 provider capability 解析；若为 None 则从 active provider 推断。
-        不支持工具 / 提示缓存的 provider 将被默默降级，避免上游 422/400。
+        caps 来自 provider capability 解析，优先级：显式 caps > caps_model_override 推断 > active provider。
+        chat_stream 调用时务必传 caps_model_override=raw_model（带前缀）,
+        以避免在 active provider 与本次请求 model 不一致时拿错能力位
+        （典型场景：前端选 z-ai/glm-5.2，但 providers.json active.model 是
+        gemini-3-flash-preview，旧路径会让 active 的 openai 默认能力位生效,
+        错误把 prompt_cache_key 塞进 body 导致上游 400 Unsupported parameter）。
         """
         # 能力位解析（让上游 422 的可能性尽可能低）
         if caps is None:
             try:
                 p = self.registry.get_active()
-                # 用 p.model（保留前缀）推断能力，比裸析更准。
-                caps = resolve_capabilities(p.model, p)
+                # 优先用 caps_model_override 推断（带前缀更准），active provider 仅作 fallback。
+                infer_model = caps_model_override or p.model
+                caps = resolve_capabilities(infer_model, p)
             except RuntimeError:
                 caps = dict(supports_tools=True, supports_prompt_cache=False,
                             supports_vision=False, supports_reasoning=False,
