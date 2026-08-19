@@ -19,6 +19,7 @@ from application.state import (
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
 from Symbix_sdk.model_capabilities import check_vision, clear_vision_cache
+from Symbix_sdk.checkpoint import set_current as _ctx_set_current, get_recorder as _get_recorder
 from application.services.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
@@ -328,6 +329,7 @@ async def chat(request: ChatRequest, http_request: Request):
         ckpt_tool_count = 0
         ckpt_failed = 0
         ckpt_start_ts = asyncio.get_event_loop().time()
+        yield format_sse({"type": "round_id", "round_id": ckpt_round_id})
 
         max_tool_rounds = 25
         round_count = 0
@@ -427,24 +429,21 @@ async def chat(request: ChatRequest, http_request: Request):
                         ckpt_tool_count, ckpt_failed,
                         duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
                     )
-                    return {
-                        "status": "pending_approval",
+                    yield format_sse({
+                        "type": "await_approval",
                         "approval_id": approval_id,
                         "session_id": request.session_id,
-                        "content": "",
-                        "reasoning": last_reasoning,
-                        "steps": steps,
-                        "act_mode": act_mode,
-                        "act_plan": act_plan,
                         "risk_level": risk_level,
                         "risk_reason": risk_reason,
-                        "pending_tool": {
+                        "tool": {
                             "tool_call_id": tc.id,
                             "name": fn.name,
                             "arguments": fn.arguments,
                         },
-                    }
+                    })
+                    return
 
+                _ctx_set_current(request.session_id, ckpt_round_id)
                 tool_output = tool_registry.execute(fn.name, fn.arguments)
                 if not isinstance(tool_output, str):
                     tool_output = _json.dumps(tool_output, ensure_ascii=False)
@@ -501,14 +500,11 @@ async def chat(request: ChatRequest, http_request: Request):
         asyncio.create_task(maybe_extract_memories(
             request.session_id, api_key, api_base, model))
 
-        return ChatResponse(
-            content=assistant_content,
-            session_id=request.session_id,
-            reasoning=last_reasoning,
-            steps=steps,
-            act_mode=act_mode,
-            act_plan=act_plan,
-        )
+        yield format_sse({"type": "done", "content": assistant_content,
+                          "reasoning": last_reasoning, "steps": steps,
+                          "act_mode": act_mode, "act_plan": act_plan})
+        yield "data: [DONE]\n\n"
+        return
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -553,6 +549,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     tool_results = []
     try:
         if req.approve:
+            _ctx_set_current(ctx["session_id"], ckpt_round_id)
             out = tool_registry.execute(pending_tc["name"], pending_tc["arguments"])
             if not isinstance(out, str):
                 out = _json.dumps(out, ensure_ascii=False)
@@ -609,6 +606,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
                 r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
             else:
+                _ctx_set_current(ctx["session_id"], ckpt_round_id)
                 r_out = tool_registry.execute(tc["name"], tc["arguments"])
                 if not isinstance(r_out, str):
                     r_out = _json.dumps(r_out, ensure_ascii=False)
@@ -847,6 +845,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             yield format_sse({"type": "done", "content": full_text})
                             return
 
+                        _ctx_set_current(session_id, ckpt_round_id)
                         out = tool_registry.execute(tc_name, tc_args)
                         if not isinstance(out, str):
                             out = _json.dumps(out, ensure_ascii=False)
@@ -983,6 +982,15 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
     async def generate():
         try:
+            # ── 重试标记：如果前端传了 superseded_round_id，标记旧 round ──
+            if request.superseded_round_id:
+                try:
+                    _get_recorder().store.mark_round_superseded(
+                        request.session_id, request.superseded_round_id
+                    )
+                except Exception:
+                    pass
+
             api_key = request.api_key
             api_base = request.api_base
             model = request.model or provider_registry.get_active().model
@@ -1044,6 +1052,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             ckpt_tool_count = 0
             ckpt_failed = 0
             ckpt_start_ts = asyncio.get_event_loop().time()
+            yield format_sse({"type": "round_id", "round_id": ckpt_round_id})
 
             if parsed_atts:
                 yield format_sse({
@@ -1253,6 +1262,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         )
                         return
 
+                    _ctx_set_current(request.session_id, ckpt_round_id)
                     tool_output = tool_registry.execute(tc_name, tc_args)
                     if not isinstance(tool_output, str):
                         tool_output = _json.dumps(tool_output, ensure_ascii=False)

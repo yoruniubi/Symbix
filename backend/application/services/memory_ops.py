@@ -78,11 +78,6 @@ async def maybe_extract_memories(
     api_base: str = "",
     model: str = "",
 ):
-    """压缩阈值触发后，取最近 COMPRESS_THRESHOLD 条消息，
-    异步调 MemoryStore.run_pipeline 提取原子记忆。
-
-    异常时不抛，仅打日志。
-    """
     total = memory.count_messages(session_id)
     if total < COMPRESS_THRESHOLD:
         return
@@ -91,7 +86,6 @@ async def maybe_extract_memories(
     if len(all_msgs) < COMPRESS_THRESHOLD:
         return
 
-    # 取最近 COMPRESS_THRESHOLD 条拼成 dialogue chunk
     recent = all_msgs[-COMPRESS_THRESHOLD:]
     chunk_lines: list[str] = []
     for m in recent:
@@ -104,6 +98,9 @@ async def maybe_extract_memories(
         applied = await memory_store.run_pipeline(
             dialogue_chunk=dialogue_chunk,
             session_id=session_id,
+            override_model=model or None,
+            override_api_key=api_key or None,
+            override_api_base=api_base or None,
         )
         if applied:
             print(f"[Memory] Extracted {len(applied)} new/updated facts from session {session_id[:8]}…")

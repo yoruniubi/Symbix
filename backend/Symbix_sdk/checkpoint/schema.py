@@ -38,7 +38,7 @@ class CheckpointRecord(BaseModel):
     seq: int                               # session 内全局递增序号（recorder 维护）
 
     # 状态（所有类型共用；错误也都写这里）
-    status: Literal["ok", "error", "skipped"] = "ok"
+    status: Literal["ok", "error", "skipped", "superseded"] = "ok"
     error: Optional[str] = None
 
     # 该 record 的特异化数据（json object）。子类 model_dump 后填这里。
@@ -58,14 +58,15 @@ class ToolCallRecord(BaseModel):
 
 
 class FileOpRecord(BaseModel):
-    """文件操作 — read / write / append / delete / move。"""
-    op: Literal["read", "write", "append", "replace", "delete", "move", "create"]
+    """文件操作 — read / write / append / delete / move，及 agent 恢复动作的 restore。"""
+    op: Literal["read", "write", "append", "replace", "delete", "move", "create", "restore"]
     path: str
     size_before: Optional[int] = None
     size_after: Optional[int] = None
     hash_before: Optional[str] = None      # sha256[:12]，给后续比对 / 回溯参考
     hash_after: Optional[str] = None
     size_delta: Optional[int] = None       # write 后 -1KB / +1KB，UI 一眼能看出是不是大改
+    blob_stored: bool = False              # 是否真的存了可回退的 before/after 内容
 
 
 class CommandRecord(BaseModel):

@@ -476,6 +476,8 @@ function handleRetryMessage(idx: number) {
   if (userIdx < 0) return
 
   const userText = messages.value[userIdx].content
+  const assistantMsg = messages.value[idx]
+  const supersededRoundId = (assistantMsg as any).roundId || ''
   // 从 user 消息起截断(含 assistant 及之后),由 sendMessage 重新推入
   messages.value.splice(userIdx)
   loading.value = false
@@ -483,7 +485,7 @@ function handleRetryMessage(idx: number) {
     abortController.value.abort()
     abortController.value = null
   }
-  sendMessage(userText, [])
+  sendMessage(userText, [], supersededRoundId)
 }
 
 function setModel(model: string) {
@@ -618,7 +620,7 @@ function publishAgentStatus(status: AgentStatus, bubble?: string) {
   })
 }
 
-async function sendMessage(text: string, files: any[]) {
+async function sendMessage(text: string, files: any[], supersededRoundId?: string) {
   console.log('=== sendMessage 开始(SSE 流式)===')
   safeLog('settings:', settings.value)
 
@@ -675,6 +677,7 @@ async function sendMessage(text: string, files: any[]) {
       model: settings.value.model || currentModel.value,
       use_mcp: true,
       attachments,
+      superseded_round_id: supersededRoundId || undefined,
     }
 
     abortController.value = new AbortController()
@@ -868,6 +871,11 @@ function handleSSEEvent(
         body: t('chat.approvalNotifyBody', { tool: evt.tool?.name || t('chat.unknownTool') }),
         forceDesktop: true,
       })
+      break
+
+    case 'round_id':
+      // 后端通知本轮 checkpoint round_id；重试时带上作为 superseded_round_id
+      msg.roundId = evt.round_id || ''
       break
 
     case 'done':

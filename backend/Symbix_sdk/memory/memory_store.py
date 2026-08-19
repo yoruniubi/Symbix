@@ -331,6 +331,8 @@ class MemoryStore:
         self,
         dialogue_chunk: str,
         override_model: Optional[str] = None,
+        override_api_key: Optional[str] = None,
+        override_api_base: Optional[str] = None
     ) -> list[dict]:
         """调 LLM 从对话片段提取原子事实。
 
@@ -343,11 +345,15 @@ class MemoryStore:
         model = override_model or self.model
         system_prompt = EXTRACTION_PROMPT.replace("{chunk}", dialogue_chunk)
 
+        
         try:
+            self.llm_client.system_prompt = system_prompt   # 补上：之前算了没用
             result = await self.llm_client.chat(
                 user_input="请提取记忆事实。",
                 history=[],
-                override_model=model,  # 用便宜模型
+                override_model=model,
+                override_api_key=override_api_key,
+                override_api_base=override_api_base,
             )
             raw = result.get("content", "").strip()
         except Exception as e:
@@ -415,6 +421,8 @@ class MemoryStore:
         candidate: dict,
         user_id: Optional[str] = None,
         override_model: Optional[str] = None,
+        override_api_key: Optional[str] = None,
+        override_api_base: Optional[str] = None,
     ) -> dict:
         """调 LLM 判断对新提取事实应采取的操作（ADD/UPDATE/DELETE/NONE）。
 
@@ -447,10 +455,13 @@ class MemoryStore:
         model = override_model or self.model
 
         try:
+            self.llm_client.system_prompt = prompt  
             result = await self.llm_client.chat(
                 user_input="请判断记忆操作。",
                 history=[],
                 override_model=model,
+                override_api_key=override_api_key,
+                override_api_base=override_api_base,
             )
             raw = result.get("content", "").strip()
         except Exception as e:
@@ -599,25 +610,30 @@ class MemoryStore:
         dialogue_chunk: str,
         session_id: str = "",
         user_id: Optional[str] = None,
+        override_model: Optional[str] = None,
+        override_api_key: Optional[str] = None,
+        override_api_base: Optional[str] = None,
     ) -> list[dict]:
-        """完整提取→检索→决策→写入流水线。
-
-        返回本次实际写入/更新的 fact 列表，供日志记录。
-        """
         uid = user_id or self.default_user_id
 
-        # 1. 提取
-        facts = await self.extract_facts(dialogue_chunk)
+        facts = await self.extract_facts(
+            dialogue_chunk,
+            override_model=override_model,
+            override_api_key=override_api_key,
+            override_api_base=override_api_base,
+        )
         if not facts:
             return []
 
         applied: list[dict] = []
-
-        # 2. 逐条决策+写入（检索是本地BM25，无网络延迟，顺序for即可）
         for fact in facts:
-            action = await self.decide_action(fact, user_id=uid)
+            action = await self.decide_action(
+                fact, user_id=uid,
+                override_model=override_model,
+                override_api_key=override_api_key,
+                override_api_base=override_api_base,
+            )
             new_id = self.apply_decision(action, fact, source_session_id=session_id, user_id=uid)
-
             if action["action"] in ("ADD", "UPDATE"):
                 applied.append({
                     **fact,
@@ -626,8 +642,8 @@ class MemoryStore:
                     "target_id": action.get("target_id"),
                     "reason": action.get("reason"),
                 })
-
         return applied
+    
 
     # ═══════════════════════════════════════════════════════════════
     # 辅助 CRUD

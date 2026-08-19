@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
     use_mcp: bool = False
     use_memory: bool = True
     attachments: list[AttachmentMeta] = []
+    superseded_round_id: str = ""  
 
 
 class ChatResponse(BaseModel):

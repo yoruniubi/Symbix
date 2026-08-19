@@ -12,6 +12,8 @@ backend/Symbix_sdk/config/providers.json
 **/*.db-wal
 **/*.sqlite
 **/*.sqlite3
+# Checkpoint blob snapshots (user file content, never commit)
+backend/Symbix_sdk/checkpoint_blobs/
 
 # Chat exports & uploads
 backend/Symbix_sdk/skill/installed_skills/

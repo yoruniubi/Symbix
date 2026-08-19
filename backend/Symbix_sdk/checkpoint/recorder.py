@@ -29,13 +29,17 @@ from .schema import (
     RoundRecord,
 )
 from .store import CheckpointStore
+from .blob_store import BlobStore, MAX_BLOB_BYTES
 
 
 class CheckpointRecorder:
     """单例 recorder。不要直接 new，用 `get_recorder()`。"""
 
-    def __init__(self, store: CheckpointStore):
+    def __init__(self, store: CheckpointStore, blob_store: Optional[BlobStore] = None):
         self.store = store
+        self.blob_store = blob_store or BlobStore(
+            os.path.join(os.path.dirname(os.path.abspath(store.db_path)), "checkpoint_blobs")
+        )
 
     # ── 内部工具 ──────────────────────────────────────────────────
     @staticmethod
@@ -96,10 +100,15 @@ class CheckpointRecorder:
         size_after: Optional[int] = None,
         hash_before: Optional[str] = None,
         hash_after: Optional[str] = None,
+        blob_stored: bool = False,
         status: str = "ok",
         error: Optional[str] = None,
     ) -> str:
-        """记一条文件操作。before/after hash + size 由 file_pipeline 计算填入。"""
+        """记一条文件操作。before/after hash + size 由 file_pipeline 计算填入。
+
+        blob_stored=True 表示 hash_before/hash_after 在 blob 库中确实有可回退内容；
+        二进制/超限文件则为 False，diff/restore 接口据此判断能否回溯。
+        """
         size_delta = None
         if size_before is not None and size_after is not None:
             size_delta = size_after - size_before
@@ -119,6 +128,7 @@ class CheckpointRecorder:
                 hash_before=hash_before,
                 hash_after=hash_after,
                 size_delta=size_delta,
+                blob_stored=blob_stored,
             ).model_dump(mode="json"),
         )
         self._emit(rec)
@@ -230,21 +240,52 @@ class CheckpointRecorder:
         return rec.id
 
     # ── 读 ──────────────────────────────────────────────────────
-    def timeline(self, session_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
-        return self.store.list_by_session(session_id, limit=limit, offset=offset)
+    def timeline(self, session_id: str, limit: int = 200, offset: int = 0,
+                 include_superseded: bool = False) -> list[dict]:
+        return self.store.list_by_session(session_id, limit=limit, offset=offset,
+                                          include_superseded=include_superseded)
 
     def summary(self, session_id: str) -> dict:
         return self.store.summary_by_session(session_id)
+
+    def get_blob(self, hash: str) -> Optional[str]:
+        """按 hash 读回 blob 内容（diff / restore 用）。无此 hash 返回 None。"""
+        return self.blob_store.get(hash)
+
+    def put_blob(self, content: str) -> str:
+        """存一份内容到 blob 库，返回 hash。超限或非文本不进行判断由调用方负责。"""
+        return self.blob_store.put(content)
+
+    def prune(self, session_id: str, keep_recent_rounds: int = 50) -> dict:
+        """清理某 session 过期 round 及其记录；顺带回收孤儿 blob。
+
+        返回 {"deleted_records": n, "deleted_blobs": m, "rows_scanned": k}。
+        """
+        pruned = self.store.prune_session(session_id, keep_recent_rounds)
+        orphans = self.prune_orphan_blobs()
+        return {**pruned, "deleted_blobs": orphans["deleted_blobs"]}
+
+    def prune_orphan_blobs(self) -> dict:
+        """回收不被任何 record 引用的 blob 文件。回来 {"deleted_blobs": n, "scanned": k}。"""
+        return self.store.prune_orphan_blobs(self.blob_store)
 
 
 # ── 单例 ─────────────────────────────────────────────────────────────
 _INSTANCE: Optional[CheckpointRecorder] = None
 
 
-def init_recorder(db_path: str) -> CheckpointRecorder:
-    """应用启动时调用一次，注入 db_path（应与 memory.db 同库或独立）。"""
+
+def init_recorder(db_path: str, blob_dir: Optional[str] = None) -> CheckpointRecorder:
+    """应用启动时调用一次，注入 db_path（与 memory.db 同库或独立）。
+
+    blob_dir 可选；不传则默认在 db_path 同级建 `checkpoint_blobs/`。
+    """
     global _INSTANCE
-    _INSTANCE = CheckpointRecorder(CheckpointStore(db_path))
+    store = CheckpointStore(db_path)
+    _INSTANCE = CheckpointRecorder(
+        store,
+        BlobStore(blob_dir or os.path.join(os.path.dirname(os.path.abspath(db_path)), "checkpoint_blobs")),
+    )
     return _INSTANCE
 
 

@@ -4,14 +4,52 @@ import os
 import subprocess
 
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed, parse_file_path
+from Symbix_sdk.checkpoint import get_recorder, get_current
 
 
 def edit_file(file_path: str, new_content: str) -> str:
     """编辑（覆盖写入）文件"""
     try:
         path = assert_path_allowed(file_path)
+        # ── checkpoint：仅当处于工具执行上下文时，做前后快照 + 记录 ──
+        session_id, round_id = get_current()
+        try:
+            recorder = get_recorder() if (session_id and round_id) else None
+        except Exception:
+            recorder = None
+        blob_stored = False
+        size_before = None
+        hash_before = None
+        size_after = None
+        hash_after = None
+        if recorder is not None:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    existed_old = f.read()
+                size_before = len(existed_old)
+                if existed_old:
+                    hash_before = recorder.put_blob(existed_old)
+                    blob_stored = True
+            except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, PermissionError):
+                pass  # 新文件 / 二进制 / 目录：不存 before
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
+        if recorder is not None:
+            size_after = len(new_content)
+            if new_content:
+                hash_after = recorder.put_blob(new_content)
+                blob_stored = True
+            recorder.emit_file_op(
+                session_id=session_id,
+                round_id=round_id,
+                op="write",
+                path=path,
+                size_before=size_before,
+                size_after=size_after,
+                hash_before=hash_before,
+                hash_after=hash_after,
+                blob_stored=blob_stored,
+            )
         return f"File saved: {path}"
     except Exception as e:
         return f"Error editing file {file_path}: {e}"

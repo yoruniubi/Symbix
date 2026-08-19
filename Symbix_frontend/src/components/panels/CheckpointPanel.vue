@@ -64,6 +64,10 @@
                     <span v-if="ev.payload.size_delta != null" class="cp-delta" :class="ev.payload.size_delta > 0 ? 'plus' : 'minus'">
                       {{ ev.payload.size_delta > 0 ? '+' : '' }}{{ formatBytes(ev.payload.size_delta) }}
                     </span>
+                    <!-- 查看改动按钮 -->
+                    <n-button size="tiny" quaternary class="cp-action-btn" :title="$t('checkpointPanel.viewDiff')" @click="showDiff(ev)">
+                      🔍 {{ $t('checkpointPanel.viewDiff') }}
+                    </n-button>
                   </div>
                   <div class="cp-ev-detail" v-else-if="ev.kind === 'tool_call' && ev.payload">
                     <code class="cp-path" v-if="ev.payload.arguments?.path">{{ ev.payload.arguments.path }}</code>
@@ -82,7 +86,46 @@
         </div>
 
         <n-empty v-else :description="activeSession ? $t('checkpointPanel.empty') : $t('checkpointPanel.noSession')" size="small" style="margin-top: 28px;" />
+
+        <!-- 底部清理按钮 -->
+        <div class="cp-actions" v-if="activeSession">
+          <n-button size="tiny" quaternary class="cp-prune-btn" @click="handlePrune" :loading="pruning">
+            🗑 {{ $t('checkpointPanel.prune') }}
+          </n-button>
+        </div>
       </div>
+
+      <!-- Diff 弹窗 -->
+      <n-modal v-model:show="diffVisible" :title="$t('checkpointPanel.diffTitle')" preset="card" style="max-width: 90vw; width: 800px;" :mask-closable="true">
+        <div class="diff-panel" v-if="diffData">
+          <div class="diff-meta">
+            <code class="diff-path">{{ diffData.path }}</code>
+            <span class="diff-op" :class="diffData.op">{{ diffData.op }}</span>
+            <span class="diff-size" v-if="diffData.size_before != null && diffData.size_after != null">
+              {{ formatBytes(diffData.size_before!) }} → {{ formatBytes(diffData.size_after!) }}
+            </span>
+          </div>
+          <div class="diff-columns" v-if="diffData.content_before != null || diffData.content_after != null">
+            <div class="diff-col">
+              <div class="diff-col-header">{{ $t('checkpointPanel.diffBefore') }}</div>
+              <pre class="diff-content">{{ diffData.content_before ?? '(empty)' }}</pre>
+            </div>
+            <div class="diff-col">
+              <div class="diff-col-header">{{ $t('checkpointPanel.diffAfter') }}</div>
+              <pre class="diff-content">{{ diffData.content_after ?? '(empty)' }}</pre>
+            </div>
+          </div>
+          <div v-else class="diff-no-blob">
+            {{ $t('checkpointPanel.diffNoBlob') }}
+          </div>
+          <!-- 恢复按钮 -->
+          <div class="diff-restore" v-if="diffData?.blob_stored && diffData?.op !== 'delete'">
+            <n-button type="warning" size="small" @click="handleRestore" :loading="restoring">
+              ↩ {{ $t('checkpointPanel.restore') }}
+            </n-button>
+          </div>
+        </div>
+      </n-modal>
     </div>
   </transition>
 </template>
@@ -111,6 +154,12 @@ const loading = ref(false)
 const records = ref<any[]>([])
 const summary = ref<any>(null)
 const expanded = ref<Set<string>>(new Set())
+
+// Diff dialog
+const diffVisible = ref(false)
+const diffData = ref<any>(null)
+const restoring = ref(false)
+const pruning = ref(false)
 
 const activeSession = computed(() => {
   const sid = props.activeSessionId
@@ -177,14 +226,15 @@ function formatBytes(n: number): string {
 }
 
 async function loadTimeline() {
-  if (!activeSession.value) {
+  const sid = activeSession.value
+  if (!sid) {
     records.value = []
     return
   }
   loading.value = true
   try {
     const res = await fetch(
-      `${BACKEND_URL}/sessions/${encodeURIComponent(activeSession.value)}/timeline?limit=2000`,
+      `${BACKEND_URL}/sessions/${encodeURIComponent(sid)}/timeline?limit=2000`,
     )
     const data = await res.json()
     records.value = data.records || []
@@ -200,7 +250,8 @@ async function loadTimeline() {
 }
 
 async function loadSummary() {
-  if (!activeSession.value) {
+  const sid = activeSession.value
+  if (!sid) {
     summary.value = null
     records.value = []
     return
@@ -208,7 +259,7 @@ async function loadSummary() {
   loading.value = true
   try {
     const res = await fetch(
-      `${BACKEND_URL}/sessions/${encodeURIComponent(activeSession.value)}/timeline/summary`,
+      `${BACKEND_URL}/sessions/${encodeURIComponent(sid)}/timeline/summary`,
     )
     summary.value = await res.json()
   } catch (e) {
@@ -227,6 +278,97 @@ watch(
   },
   { immediate: true },
 )
+
+async function showDiff(ev: any) {
+  const sid = activeSession.value
+  const recordId = ev.id
+  if (!recordId || !sid) return
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/sessions/${encodeURIComponent(sid)}/checkpoint/file-op/${recordId}/diff`,
+    )
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      ;(window as any).$message?.error?.(`${t('checkpointPanel.restoreFail', { msg: err.detail || res.status }) }`)
+      return
+    }
+    diffData.value = await res.json()
+    diffVisible.value = true
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(`${t('checkpointPanel.restoreFail', { msg: e.message }) }`)
+  }
+}
+
+async function handleRestore() {
+  const sid = activeSession.value
+  if (!diffData.value || !sid) return
+  ;(window as any).$dialog?.warning?.({
+    title: t('checkpointPanel.restore'),
+    content: t('checkpointPanel.restoreConfirm'),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      restoring.value = true
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/sessions/${encodeURIComponent(sid)}/checkpoint/file-op/${diffData.value.record_id}/restore`,
+          { method: 'POST' },
+        )
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }))
+          ;(window as any).$message?.error?.(`${t('checkpointPanel.restoreFail', { msg: err.detail || res.status }) }`)
+          return
+        }
+        ;(window as any).$message?.success?.(t('checkpointPanel.restoreSuccess'))
+        diffVisible.value = false
+        await loadTimeline()
+      } catch (e: any) {
+        ;(window as any).$message?.error?.(`${t('checkpointPanel.restoreFail', { msg: e.message }) }`)
+      } finally {
+        restoring.value = false
+      }
+    },
+  })
+}
+
+async function handlePrune() {
+  const sid = activeSession.value
+  if (!sid) return
+  ;(window as any).$dialog?.warning?.({
+    title: t('checkpointPanel.prune'),
+    content: t('checkpointPanel.pruneConfirm', { n: 50 }),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      pruning.value = true
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/sessions/${encodeURIComponent(sid)}/timeline/prune`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keep_recent_rounds: 50 }),
+          },
+        )
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }))
+          ;(window as any).$message?.error?.(`${t('checkpointPanel.pruneFail', { msg: err.detail || res.status }) }`)
+          return
+        }
+        const result = await res.json()
+        ;(window as any).$message?.success?.(t('checkpointPanel.pruneSuccess', {
+          deleted: result.deleted_records,
+          blobs: result.deleted_blobs,
+        }))
+        await loadTimeline()
+      } catch (e: any) {
+        ;(window as any).$message?.error?.(`${t('checkpointPanel.pruneFail', { msg: e.message }) }`)
+      } finally {
+        pruning.value = false
+      }
+    },
+  })
+}
 
 function handleClose() {
   emit('update:activePanel', null)
@@ -508,4 +650,22 @@ function handleClose() {
 .cp-delta.plus  { color: var(--success, #34d399); }
 .cp-delta.minus { color: var(--error, #ef4444); }
 .cp-snippet { opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Diff + prune 样式 */
+.cp-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: center; }
+.cp-prune-btn { color: var(--text-muted); }
+.cp-action-btn { opacity: 0.75; transition: opacity var(--duration-fast, 120ms) ease; }
+.cp-event:hover .cp-action-btn { opacity: 1; }
+.diff-panel { display: flex; flex-direction: column; gap: 12px; }
+.diff-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.diff-path { font-family: ui-monospace, monospace; font-size: 12px; background: var(--accent-soft); padding: 2px 6px; border-radius: 4px; color: var(--text-primary); }
+.diff-op { font-size: 10px; text-transform: uppercase; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-300, #8b5cf6); }
+.diff-size { font-size: 11px; color: var(--text-muted); }
+.diff-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 120px; }
+.diff-col { border: 1px solid var(--border); border-radius: var(--radius-md, 8px); overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+.diff-col-header { font-size: 11px; font-weight: 600; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--border); color: var(--text-secondary); }
+.diff-content { flex: 1; margin: 0; padding: 10px; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; color: var(--text-primary); }
+.diff-no-blob { padding: 20px 12px; text-align: center; color: var(--text-muted); font-size: 12px; border: 1px dashed var(--border); border-radius: var(--radius-md, 8px); }
+.diff-restore { display: flex; justify-content: flex-end; }
+
 </style>

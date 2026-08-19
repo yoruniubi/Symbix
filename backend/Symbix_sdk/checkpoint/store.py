@@ -113,18 +113,29 @@ class CheckpointStore:
             )
             conn.commit()
 
-    def list_by_session(self, session_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
-        """按 session 列时间线，按 seq 升序。"""
+    def list_by_session(self, session_id: str, limit: int = 200, offset: int = 0,
+                       include_superseded: bool = False) -> list[dict]:
+        """按 session 列时间线，按 seq 升序。默认过滤掉 superseded 记录。"""
         with self._lock:
             conn = self._ensure_conn()
-            rows = conn.execute(
-                """SELECT id, kind, ts, round_id, seq, status, error, payload
-                     FROM checkpoint_records
-                    WHERE session_id = ?
-                    ORDER BY seq ASC
-                    LIMIT ? OFFSET ?""",
-                (session_id, limit, offset),
-            ).fetchall()
+            if include_superseded:
+                rows = conn.execute(
+                    """SELECT id, kind, ts, round_id, seq, status, error, payload
+                         FROM checkpoint_records
+                        WHERE session_id = ?
+                        ORDER BY seq ASC
+                        LIMIT ? OFFSET ?""",
+                    (session_id, limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, kind, ts, round_id, seq, status, error, payload
+                         FROM checkpoint_records
+                        WHERE session_id = ? AND status != 'superseded'
+                        ORDER BY seq ASC
+                        LIMIT ? OFFSET ?""",
+                    (session_id, limit, offset),
+                ).fetchall()
         out = []
         for r in rows:
             obj = dict(r)
@@ -135,17 +146,27 @@ class CheckpointStore:
             out.append(obj)
         return out
 
-    def list_by_round(self, session_id: str, round_id: str) -> list[dict]:
-        """某 round 的全部事件。"""
+    def list_by_round(self, session_id: str, round_id: str,
+                       include_superseded: bool = False) -> list[dict]:
+        """某 round 的全部事件。默认过滤掉 superseded。"""
         with self._lock:
             conn = self._ensure_conn()
-            rows = conn.execute(
-                """SELECT id, kind, ts, round_id, seq, status, error, payload
-                     FROM checkpoint_records
-                    WHERE session_id = ? AND round_id = ?
-                    ORDER BY seq ASC""",
-                (session_id, round_id),
-            ).fetchall()
+            if include_superseded:
+                rows = conn.execute(
+                    """SELECT id, kind, ts, round_id, seq, status, error, payload
+                         FROM checkpoint_records
+                        WHERE session_id = ? AND round_id = ?
+                        ORDER BY seq ASC""",
+                    (session_id, round_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, kind, ts, round_id, seq, status, error, payload
+                         FROM checkpoint_records
+                        WHERE session_id = ? AND round_id = ? AND status != 'superseded'
+                        ORDER BY seq ASC""",
+                    (session_id, round_id),
+                ).fetchall()
         out = []
         for r in rows:
             obj = dict(r)
@@ -175,6 +196,94 @@ class CheckpointStore:
                 (session_id,),
             ).fetchone()
         return dict(row) if row else {}
+
+    def mark_round_superseded(self, session_id: str, round_id: str) -> int:
+        """把某 round 下所有记录 status 改为 'superseded'。返回受影响行数。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            cur = conn.execute(
+                """UPDATE checkpoint_records
+                      SET status = 'superseded'
+                    WHERE session_id = ? AND round_id = ?""",
+                (session_id, round_id),
+            )
+            conn.commit()
+            return cur.rowcount
+
+    def get_record(self, record_id: str) -> Optional[dict]:
+        """按主键查单条记录。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            row = conn.execute(
+                """SELECT id, kind, ts, session_id, round_id, seq, status, error, payload
+                     FROM checkpoint_records WHERE id = ?""",
+                (record_id,),
+            ).fetchone()
+        if not row:
+            return None
+        obj = dict(row)
+        try:
+            obj["payload"] = json.loads(obj.get("payload") or "{}")
+        except json.JSONDecodeError:
+            obj["payload"] = {}
+        return obj
+
+    def prune_session(self, session_id: str, keep_recent_rounds: int = 50) -> dict:
+        """保留最近 N 个 round，删除更早 round 的所有记录。返回删除统计。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            # 取该 session 所有 round_id，按 MAX(seq) 倒序
+            round_rows = conn.execute(
+                """SELECT round_id, MAX(seq) AS max_seq
+                     FROM checkpoint_records
+                    WHERE session_id = ?
+                    GROUP BY round_id
+                    ORDER BY max_seq DESC""",
+                (session_id,),
+            ).fetchall()
+            all_rounds = [r["round_id"] for r in round_rows]
+            if len(all_rounds) <= keep_recent_rounds:
+                return {"deleted_records": 0, "rounds_total": len(all_rounds),
+                        "rounds_kept": len(all_rounds)}
+            to_drop = all_rounds[keep_recent_rounds:]
+            placeholders = ",".join("?" for _ in to_drop)
+            cur = conn.execute(
+                f"""DELETE FROM checkpoint_records
+                      WHERE session_id = ? AND round_id IN ({placeholders})""",
+                (session_id, *to_drop),
+            )
+            conn.commit()
+            return {"deleted_records": cur.rowcount,
+                    "rounds_total": len(all_rounds),
+                    "rounds_kept": keep_recent_rounds,
+                    "rounds_dropped": len(to_drop)}
+
+    def prune_orphan_blobs(self, blob_store) -> dict:
+        """扫描全表 payload 里引用的 hash，删掉 blob 库中不再被引用的文件。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            rows = conn.execute(
+                """SELECT payload FROM checkpoint_records
+                    WHERE kind = 'file_op'"""
+            ).fetchall()
+        referenced: set[str] = set()
+        for r in rows:
+            try:
+                payload = json.loads(r["payload"] or "{}")
+            except json.JSONDecodeError:
+                continue
+            for key in ("hash_before", "hash_after"):
+                h = payload.get(key)
+                if isinstance(h, str) and h:
+                    referenced.add(h)
+        all_hashes = blob_store.list_all_hashes()
+        orphans = all_hashes - referenced
+        deleted = 0
+        for h in orphans:
+            blob_store.delete(h)
+            deleted += 1
+        return {"deleted_blobs": deleted, "scanned": len(all_hashes),
+                "referenced": len(referenced)}
 
     def close(self):
         with self._lock:

@@ -9,10 +9,17 @@
 通过 application.state.checkpoint_recorder 的 emit_* 接口完成的，这里只负责读。
 """
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+from typing import Optional
 
 from application.state import checkpoint_recorder
+from Symbix_sdk.tools.file_pipeline import assert_path_allowed
 
 router = APIRouter(tags=["checkpoint"])
+
+
+class PruneRequest(BaseModel):
+    keep_recent_rounds: int = 50
 
 
 @router.get("/sessions/{session_id}/timeline")
@@ -50,3 +57,131 @@ async def session_timeline_round_detail(session_id: str, round_id: str):
     """某一 round 内的所有事件（工具调用 + round 总结点自己）。按 seq 升序。"""
     rows = checkpoint_recorder.store.list_by_round(session_id, round_id)
     return {"session_id": session_id, "round_id": round_id, "count": len(rows), "records": rows}
+
+
+@router.post("/sessions/{session_id}/timeline/prune")
+async def session_timeline_prune(session_id: str, req: PruneRequest):
+    """清理旧 round：保留最近 N 个 round，删掉其余记录，并顺带回收孤儿 blob。"""
+    if req.keep_recent_rounds < 1:
+        raise HTTPException(status_code=422, detail="keep_recent_rounds 至少为 1")
+    result = checkpoint_recorder.prune(session_id, keep_recent_rounds=req.keep_recent_rounds)
+    return {"session_id": session_id, **result}
+
+
+@router.get("/sessions/{session_id}/checkpoint/file-op/{record_id}/diff")
+async def file_op_diff(session_id: str, record_id: str):
+    """回溯读：按 record_id 取某条 file_op 的 before/after 内容。"""
+    rec = checkpoint_recorder.store.get_record(record_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="record not found")
+    if rec.get("kind") != "file_op":
+        raise HTTPException(status_code=400, detail="record is not a file_op")
+    payload = rec.get("payload") or {}
+    path = payload.get("path", "")
+    blob_stored = bool(payload.get("blob_stored"))
+
+    if not blob_stored:
+        return {
+            "record_id": record_id,
+            "session_id": session_id,
+            "path": path,
+            "content_before": None,
+            "content_after": None,
+            "size_before": payload.get("size_before"),
+            "size_after": payload.get("size_after"),
+            "note": "该文件未存储可回退内容(可能是二进制文件或超出大小限制)",
+        }
+
+    content_before = None
+    content_after = None
+    if payload.get("hash_before"):
+        content_before = checkpoint_recorder.get_blob(payload["hash_before"])
+    if payload.get("hash_after"):
+        content_after = checkpoint_recorder.get_blob(payload["hash_after"])
+
+    return {
+        "record_id": record_id,
+        "session_id": session_id,
+        "path": path,
+        "content_before": content_before,
+        "content_after": content_after,
+        "size_before": payload.get("size_before"),
+        "size_after": payload.get("size_after"),
+        "size_delta": payload.get("size_delta"),
+        "op": payload.get("op"),
+        "blob_stored": True,
+    }
+
+
+@router.post("/sessions/{session_id}/checkpoint/file-op/{record_id}/restore")
+async def file_op_restore(session_id: str, record_id: str):
+    """回溯写：用 hash_before 的内容覆盖回写 path（delete 场景则重建文件）。
+
+    高风险操作：沙箱校验 + 恢复动作本身也 emit 一条 file_op 保持审计链。
+    """
+    rec = checkpoint_recorder.store.get_record(record_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="record not found")
+    if rec.get("kind") != "file_op":
+        raise HTTPException(status_code=400, detail="record is not a file_op")
+    payload = rec.get("payload") or {}
+    if not payload.get("blob_stored") or not payload.get("hash_before"):
+        raise HTTPException(
+            status_code=400,
+            detail="该记录未存储可回退内容(二进制/超限文件无法恢复)",
+        )
+    if rec.get("session_id") != session_id:
+        raise HTTPException(status_code=400, detail="record 不属于该 session")
+
+    content_before = checkpoint_recorder.get_blob(payload["hash_before"])
+    if content_before is None:
+        raise HTTPException(status_code=404, detail="before blob not found")
+
+    # 沙箱校验：不允许恢复到沙箱外路径
+    try:
+        path = assert_path_allowed(payload.get("path", ""))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"路径校验失败: {e}")
+
+    # 当前文件内容(如果存在)作为 after 快照
+    cur_content = None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cur_content = f.read()
+    except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, PermissionError):
+        pass
+
+    # 写入恢复内容
+    try:
+        import os
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content_before)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"恢复写入失败: {e}")
+
+    # 恢复动作本身也要 emit 一条 file_op（op="restore"）
+    hash_cur = checkpoint_recorder.put_blob(cur_content) if cur_content else None
+    hash_restored = checkpoint_recorder.put_blob(content_before)
+    checkpoint_recorder.emit_file_op(
+        session_id=session_id,
+        round_id=rec.get("round_id", "restore"),
+        op="restore",
+        path=path,
+        size_before=len(cur_content) if cur_content is not None else None,
+        size_after=len(content_before),
+        hash_before=hash_cur,
+        hash_after=hash_restored,
+        blob_stored=True,
+    )
+
+    return {
+        "record_id": record_id,
+        "session_id": session_id,
+        "path": path,
+        "restored": True,
+        "hash_after": hash_restored,
+        "size_after": len(content_before),
+    }
