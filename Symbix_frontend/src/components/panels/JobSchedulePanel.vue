@@ -6,8 +6,15 @@
         <span class="side-panel-title">{{ $t('jobPanel.title') }}</span>
         <div class="side-panel-actions">
           <n-button size="medium" type="primary" class="add-entry-btn" @click="startCreate">{{ $t('jobPanel.add') }}</n-button>
-          <n-button quaternary size="tiny" class="panel-icon-btn" :title="$t('common.refresh')" @click="loadJobs">↻</n-button>
-          <n-button quaternary size="tiny" class="panel-icon-btn close-btn" @click="emit('update:activePanel', null)">×</n-button>
+          <n-button quaternary size="tiny" class="panel-icon-btn" :title="$t('common.refresh')" @click="loadJobs">
+            <svg :class="['refresh-icon', { spinning: loading }]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </n-button>
+          <n-button quaternary size="tiny" class="panel-icon-btn close-btn" :title="$t('common.close')" @click="emit('update:activePanel', null)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </n-button>
         </div>
       </div>
       <div class="side-panel-body">
@@ -25,7 +32,7 @@
           <div class="job-switch"><span>{{ $t('jobPanel.autoSafe') }}</span><n-switch v-model:value="form.auto_safe" size="small" /></div>
           <div class="job-form-actions">
             <n-button size="small" type="primary" :loading="saving" @click="saveJob">{{ $t('jobPanel.save') }}</n-button>
-            <n-button size="small" quaternary @click="editing = false">{{ $t('jobPanel.cancel') }}</n-button>
+            <n-button size="small" @click="editing = false">{{ $t('jobPanel.cancel') }}</n-button>
           </div>
         </div>
 
@@ -86,28 +93,179 @@ const intervalPreset = ref('hour')
 const cronText = ref('0 9 * * *')
 const dateText = ref('')
 const form = ref({ name: '', prompt: '', trigger_type: 'interval' as TriggerType, trigger_config: { hours: 1 } as Record<string, any>, enabled: true, auto_safe: true })
-const triggerOptions = [{ label: t('jobPanel.triggerInterval'), value: 'interval' }, { label: t('jobPanel.triggerCron'), value: 'cron' }, { label: t('jobPanel.triggerDate'), value: 'date' }]
-const intervalOptions = [{ label: t('jobPanel.everyMinute'), value: 'minute' }, { label: t('jobPanel.everyHour'), value: 'hour' }, { label: t('jobPanel.everyDay'), value: 'day' }, { label: t('jobPanel.everyWeek'), value: 'week' }]
+const triggerOptions = [
+  { label: t('jobPanel.triggerInterval'), value: 'interval' },
+  { label: t('jobPanel.triggerCron'), value: 'cron' },
+  { label: t('jobPanel.triggerDate'), value: 'date' },
+]
+const intervalOptions = [
+  { label: t('jobPanel.everyMinute'), value: 'minute' },
+  { label: t('jobPanel.everyHour'), value: 'hour' },
+  { label: t('jobPanel.everyDay'), value: 'day' },
+  { label: t('jobPanel.everyWeek'), value: 'week' },
+]
 
-async function request(path: string, options?: RequestInit): Promise<any> { const res = await fetch(`${BACKEND_URL}${path}`, options); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`); return data }
-async function loadJobs() { loading.value = true; try { jobs.value = await request('/jobs') } catch (e: any) { (window as any).$message?.error?.(t('jobPanel.loadFail', { msg: e.message })) } finally { loading.value = false } }
-function startCreate() { editingId.value = null; intervalPreset.value = 'hour'; cronText.value = '0 9 * * *'; dateText.value = ''; form.value = { name: '', prompt: '', trigger_type: 'interval', trigger_config: { hours: 1 }, enabled: true, auto_safe: true }; editing.value = true }
-function startEdit(job: Job) { editingId.value = job.id; form.value = { name: job.name, prompt: job.prompt, trigger_type: job.trigger_type, trigger_config: { ...job.trigger_config }, enabled: job.enabled, auto_safe: job.auto_safe }; if (job.trigger_type === 'cron') cronText.value = [job.trigger_config.minute ?? '*', job.trigger_config.hour ?? '*', job.trigger_config.day ?? '*', job.trigger_config.month ?? '*', job.trigger_config.day_of_week ?? '*'].join(' '); if (job.trigger_type === 'date') dateText.value = job.trigger_config.run_date ?? ''; if (job.trigger_type === 'interval') intervalPreset.value = Object.keys(job.trigger_config)[0]?.replace(/s$/, '') || 'hour'; editing.value = true }
-function setInterval(value: string) { const cfg: Record<string, number> = { minute: 1, hour: 1, day: 1, week: 1 }; const keys: Record<string, string> = { minute: 'minutes', hour: 'hours', day: 'days', week: 'weeks' }; form.value.trigger_config = { [keys[value]]: cfg[value] } }
-function preparePayload() { const payload: any = { ...form.value }; if (payload.trigger_type === 'cron') { const [minute='*', hour='*', day='*', month='*', day_of_week='*'] = cronText.value.trim().split(/\s+/); payload.trigger_config = { minute, hour, day, month, day_of_week } } if (payload.trigger_type === 'date') payload.trigger_config = { run_date: dateText.value }; return payload }
-async function saveJob() { saving.value = true; try { const payload = preparePayload(); if (!payload.name.trim() || !payload.prompt.trim()) throw new Error('name and prompt are required'); const data = editingId.value ? await request(`/jobs/${editingId.value}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) : await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); editing.value = false; await loadJobs(); (window as any).$message?.success?.(editingId.value ? t('jobPanel.updateSuccess') : t('jobPanel.createSuccess')); return data } catch (e: any) { (window as any).$message?.error?.(t('jobPanel.saveFail', { msg: e.message })) } finally { saving.value = false } }
-async function runNow(id: string) { try { await request(`/jobs/${id}/run`, { method: 'POST' }); (window as any).$message?.success?.(t('jobPanel.runNow')) } catch (e: any) { (window as any).$message?.error?.(t('jobPanel.runFail', { msg: e.message })) } }
-async function toggleJob(job: Job) { try { await request(`/jobs/${job.id}/${job.enabled ? 'pause' : 'resume'}`, { method: 'POST' }); await loadJobs() } catch (e: any) { (window as any).$message?.error?.(t('jobPanel.saveFail', { msg: e.message })) } }
-async function deleteJob(id: string) { if (!window.confirm(t('jobPanel.deleteConfirm'))) return; try { await request(`/jobs/${id}`, { method: 'DELETE' }); await loadJobs(); (window as any).$message?.success?.(t('jobPanel.deleteSuccess')) } catch (e: any) { (window as any).$message?.error?.(t('jobPanel.deleteFail', { msg: e.message })) } }
-async function openHistory(id: string) { try { history.value = await request(`/jobs/${id}/history`); historyVisible.value = true } catch (e: any) { (window as any).$message?.error?.(t('jobPanel.historyFail', { msg: e.message })) } }
-function triggerLabel(job: Job) { if (job.trigger_type === 'interval') return `${t('jobPanel.triggerInterval')}: ${Object.entries(job.trigger_config).map(([k, v]) => `${v} ${k}`).join(', ')}`; if (job.trigger_type === 'date') return `${t('jobPanel.triggerDate')}: ${job.trigger_config.run_date}`; return `Cron: ${[job.trigger_config.minute, job.trigger_config.hour, job.trigger_config.day, job.trigger_config.month, job.trigger_config.day_of_week].join(' ')}` }
-function statusLabel(status: string) { return status === 'ok' ? t('jobPanel.statusOk') : status === 'error' ? t('jobPanel.statusError') : t('jobPanel.statusSkipped') }
-function formatDate(value: string) { const d = new Date(value); return Number.isNaN(d.valueOf()) ? value : d.toLocaleString() }
+async function request(path: string, options?: RequestInit): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}${path}`, options)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`)
+  return data
+}
+
+async function loadJobs() {
+  loading.value = true
+  try {
+    jobs.value = await request('/jobs')
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('jobPanel.loadFail', { msg: e.message }))
+  } finally {
+    loading.value = false
+  }
+}
+
+function startCreate() {
+  editingId.value = null
+  intervalPreset.value = 'hour'
+  cronText.value = '0 9 * * *'
+  dateText.value = ''
+  form.value = { name: '', prompt: '', trigger_type: 'interval', trigger_config: { hours: 1 }, enabled: true, auto_safe: true }
+  editing.value = true
+}
+
+function startEdit(job: Job) {
+  editingId.value = job.id
+  form.value = { name: job.name, prompt: job.prompt, trigger_type: job.trigger_type, trigger_config: { ...job.trigger_config }, enabled: job.enabled, auto_safe: job.auto_safe }
+  if (job.trigger_type === 'cron') {
+    cronText.value = [job.trigger_config.minute ?? '*', job.trigger_config.hour ?? '*', job.trigger_config.day ?? '*', job.trigger_config.month ?? '*', job.trigger_config.day_of_week ?? '*'].join(' ')
+  }
+  if (job.trigger_type === 'date') dateText.value = job.trigger_config.run_date ?? ''
+  if (job.trigger_type === 'interval') intervalPreset.value = Object.keys(job.trigger_config)[0]?.replace(/s$/, '') || 'hour'
+  editing.value = true
+}
+
+function setInterval(value: string) {
+  const cfg: Record<string, number> = { minute: 1, hour: 1, day: 1, week: 1 }
+  const keys: Record<string, string> = { minute: 'minutes', hour: 'hours', day: 'days', week: 'weeks' }
+  form.value.trigger_config = { [keys[value]]: cfg[value] }
+}
+
+function preparePayload() {
+  const payload: any = { ...form.value }
+  if (payload.trigger_type === 'cron') {
+    const [minute = '*', hour = '*', day = '*', month = '*', day_of_week = '*'] = cronText.value.trim().split(/\s+/)
+    payload.trigger_config = { minute, hour, day, month, day_of_week }
+  }
+  if (payload.trigger_type === 'date') payload.trigger_config = { run_date: dateText.value }
+  return payload
+}
+
+async function saveJob() {
+  saving.value = true
+  try {
+    const payload = preparePayload()
+    if (!payload.name.trim() || !payload.prompt.trim()) throw new Error('name and prompt are required')
+    const data = editingId.value
+      ? await request(`/jobs/${editingId.value}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      : await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    editing.value = false
+    await loadJobs()
+    ;(window as any).$message?.success?.(editingId.value ? t('jobPanel.updateSuccess') : t('jobPanel.createSuccess'))
+    return data
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('jobPanel.saveFail', { msg: e.message }))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function runNow(id: string) {
+  try {
+    await request(`/jobs/${id}/run`, { method: 'POST' })
+    ;(window as any).$message?.success?.(t('jobPanel.runNow'))
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('jobPanel.runFail', { msg: e.message }))
+  }
+}
+
+async function toggleJob(job: Job) {
+  try {
+    await request(`/jobs/${job.id}/${job.enabled ? 'pause' : 'resume'}`, { method: 'POST' })
+    await loadJobs()
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('jobPanel.saveFail', { msg: e.message }))
+  }
+}
+
+async function deleteJob(id: string) {
+  if (!window.confirm(t('jobPanel.deleteConfirm'))) return
+  try {
+    await request(`/jobs/${id}`, { method: 'DELETE' })
+    await loadJobs()
+    ;(window as any).$message?.success?.(t('jobPanel.deleteSuccess'))
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('jobPanel.deleteFail', { msg: e.message }))
+  }
+}
+
+async function openHistory(id: string) {
+  try {
+    history.value = await request(`/jobs/${id}/history`)
+    historyVisible.value = true
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('jobPanel.historyFail', { msg: e.message }))
+  }
+}
+
+function triggerLabel(job: Job) {
+  if (job.trigger_type === 'interval') return `${t('jobPanel.triggerInterval')}: ${Object.entries(job.trigger_config).map(([k, v]) => `${v} ${k}`).join(', ')}`
+  if (job.trigger_type === 'date') return `${t('jobPanel.triggerDate')}: ${job.trigger_config.run_date}`
+  return `Cron: ${[job.trigger_config.minute, job.trigger_config.hour, job.trigger_config.day, job.trigger_config.month, job.trigger_config.day_of_week].join(' ')}`
+}
+
+function statusLabel(status: string) {
+  return status === 'ok' ? t('jobPanel.statusOk') : status === 'error' ? t('jobPanel.statusError') : t('jobPanel.statusSkipped')
+}
+
+function formatDate(value: string) {
+  const d = new Date(value)
+  return Number.isNaN(d.valueOf()) ? value : d.toLocaleString()
+}
+
 watch(() => props.activePanel, (panel) => { if (panel === 'jobs') loadJobs() }, { immediate: true })
 defineExpose({ refresh: loadJobs })
 </script>
 
 <style scoped>
-.side-panel { position:absolute; left:0; top:0; bottom:0; min-width:var(--panel-min-width); max-width:min(var(--panel-max-width),70vw); display:flex; flex-direction:column; overflow:hidden; z-index:20; background:var(--panel-bg); backdrop-filter:blur(16px); border-right:1px solid var(--border); box-shadow:var(--shadow-md); }
-.panel-resize-handle { position:absolute; top:0; right:calc(var(--panel-resize-handle-width) / -2); width:var(--panel-resize-handle-width); height:100%; cursor:col-resize; z-index:2; }.panel-resize-handle:hover,.is-resizing .panel-resize-handle{background:var(--accent-500);opacity:.35}.side-panel-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}.side-panel-title{font-size:13px;font-weight:600;color:var(--text-primary);text-transform:uppercase;letter-spacing:.5px}.side-panel-actions{display:flex;align-items:center;gap:4px}.side-panel-body{flex:1;min-height:0;padding:16px;overflow-y:auto}.panel-icon-btn{width:32px!important;height:32px!important;min-width:32px!important;padding:0!important;font-size:20px}.close-btn:hover{color:var(--error,#ef4444)!important}.add-entry-btn{height:32px;font-size:12px}.job-form,.job-item{margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-hover)}.job-field{margin-bottom:10px}.job-field>span,.job-switch>span{display:block;margin-bottom:5px;font-size:11px;font-weight:600;color:var(--text-secondary)}.job-switch{display:flex;justify-content:space-between;align-items:center;margin:10px 0}.job-switch>span{margin:0}.job-form-actions,.job-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}.job-item-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--text-primary)}.job-state{padding:2px 6px;border-radius:5px;font-size:10px}.enabled,.status-ok{color:var(--ok,#4ade80);background:color-mix(in srgb,var(--ok,#4ade80) 12%,transparent)}.paused,.status-skipped{color:var(--text-muted);background:var(--surface-raised)}.job-prompt,.history-output{margin-top:7px;font-size:12px;line-height:1.45;white-space:pre-wrap;color:var(--text-secondary)}.job-meta,.job-last{margin-top:5px;font-size:11px;color:var(--text-muted)}.status-error,.history-error{color:var(--error,#f87171)}.history-item{padding:9px 0;border-bottom:1px solid var(--border);font-size:12px}.panel-slide-enter-active{transition:all var(--duration-base,180ms) var(--ease-standard,ease)}.panel-slide-leave-active{transition:all var(--duration-fast,120ms) var(--ease-standard,ease)}.panel-slide-enter-from{opacity:0;transform:translateX(-20px)}.panel-slide-leave-to{opacity:0;transform:translateX(-12px)}
+.side-panel { position:absolute; left:0; top:0; bottom:0; min-width:var(--panel-min-width); max-width:min(var(--panel-max-width),70vw); height:100%; min-height:0; display:flex; flex-direction:column; overflow:hidden; z-index:20; background:var(--panel-bg); backdrop-filter:blur(16px); border-right:1px solid var(--border); box-shadow:var(--shadow-md); }
+.panel-resize-handle { position:absolute; top:0; right:calc(var(--panel-resize-handle-width) / -2); width:var(--panel-resize-handle-width); height:100%; cursor:col-resize; z-index:2; }
+.panel-resize-handle:hover, .is-resizing .panel-resize-handle { background:var(--accent-500); opacity:.35; }
+.side-panel-header { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); flex:0 0 auto; }
+.side-panel-title { font-size:13px; font-weight:600; color:var(--text-primary); text-transform:uppercase; letter-spacing:.5px; }
+.side-panel-actions { display:flex; align-items:center; gap:4px; }
+.side-panel-body { flex:1; min-height:0; padding:16px; overflow-y:auto; }
+.panel-icon-btn { width:32px!important; height:32px!important; min-width:32px!important; padding:0!important; border-radius:8px!important; }
+.panel-icon-btn :deep(.n-button__icon) { margin:0!important; }
+.refresh-icon { transition: transform var(--duration-fast,120ms) var(--ease-standard,ease); }
+.refresh-icon.spinning { animation: panel-refresh-spin 1s linear infinite; }
+@keyframes panel-refresh-spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+.close-btn:hover { color:var(--error,#ef4444)!important; }
+.add-entry-btn { height:32px; font-size:12px; }
+.job-form, .job-item { margin-bottom:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-hover); }
+.job-field { margin-bottom:10px; }
+.job-field > span, .job-switch > span { display:block; margin-bottom:5px; font-size:11px; font-weight:600; color:var(--text-secondary); }
+.job-switch { display:flex; justify-content:space-between; align-items:center; margin:10px 0; }
+.job-switch > span { margin:0; }
+.job-form-actions, .job-actions { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
+.job-item-head { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; color:var(--text-primary); }
+.job-state { padding:2px 6px; border-radius:5px; font-size:10px; }
+.enabled, .status-ok { color:var(--ok,#4ade80); background:color-mix(in srgb,var(--ok,#4ade80) 12%,transparent); }
+.paused, .status-skipped { color:var(--text-muted); background:var(--surface-raised); }
+.job-prompt, .history-output { margin-top:7px; font-size:12px; line-height:1.45; white-space:pre-wrap; color:var(--text-secondary); }
+.job-meta, .job-last { margin-top:5px; font-size:11px; color:var(--text-muted); }
+.status-error, .history-error { color:var(--error,#f87171); }
+.history-item { padding:9px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.panel-slide-enter-active { transition:all var(--duration-base,180ms) var(--ease-standard,ease); }
+.panel-slide-leave-active { transition:all var(--duration-fast,120ms) var(--ease-standard,ease); }
+.panel-slide-enter-from { opacity:0; transform:translateX(-20px); }
+.panel-slide-leave-to { opacity:0; transform:translateX(-12px); }
 </style>

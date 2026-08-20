@@ -36,7 +36,7 @@
           </div>
           <div class="risk-form-actions">
             <n-button size="small" type="primary" :loading="saving" @click="saveOverride">{{ $t('riskPanel.save') }}</n-button>
-            <n-button size="small" quaternary @click="adding = false">{{ $t('riskPanel.cancel') }}</n-button>
+            <n-button size="small" @click="adding = false">{{ $t('riskPanel.cancel') }}</n-button>
           </div>
         </div>
 
