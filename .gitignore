@@ -5,6 +5,8 @@
 
 # AI provider credentials
 backend/Symbix_sdk/config/providers.json
+# User-defined local tool risk overrides
+backend/Symbix_sdk/config/risk_overrides.json
 # Conversation memory / SQLite
 **/*.db
 **/*.db-journal

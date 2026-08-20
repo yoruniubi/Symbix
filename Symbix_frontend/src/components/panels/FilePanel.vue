@@ -112,7 +112,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
-type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint'
+type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs'
 type FileEntry = {
   name: string
   path: string

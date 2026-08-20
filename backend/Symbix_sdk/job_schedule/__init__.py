@@ -1,0 +1,169 @@
+"""定时任务 Job Schedule 包。
+
+导出 JobScheduler / JobStorage / JobRunner 及 schema，并提供一个 JobManager 把三者串起来，
+供 FastAPI 路由与 lifespan 使用。
+"""
+from __future__ import annotations
+import os
+import uuid
+from datetime import datetime
+from typing import Optional
+
+from .schema import (
+    JobBase,
+    JobCreate,
+    JobUpdate,
+    JobOut,
+    JobHistoryItem,
+    validate_trigger,
+)
+from .storage import JobStorage
+from .scheduler import JobScheduler, _set_manager_ref
+from .runner import JobRunner
+
+
+class JobManager:
+    """编排层：把 storage + scheduler + runner 绑定到 shared db，暴露业务 CRUD。"""
+
+    def __init__(self, db_path: str) -> None:
+        self.storage = JobStorage(db_path)
+        self.scheduler = JobScheduler(db_path)
+        self.runner: Optional[JobRunner] = None
+        # 持有执行所需业务单例（在 build_runner 注入前为 None）
+        self._deps: dict = {}
+
+    # ------- 依赖注入（启动时 main.py 调用）-------
+    def build(self, **deps) -> None:
+        """注入 memory/tool_registry/... 等业务依赖，并构造 runner。deps 键见 runner.JobRunner。"""
+        self._deps = deps
+        if self.runner is None:
+            self.runner = JobRunner(self.storage, self.scheduler, **deps)
+            _set_manager_ref(self)
+
+    def start(self) -> None:
+        """恢复并启动：把已启用 job 重新装上调度。"""
+        if self.runner is None:
+            raise RuntimeError("JobManager.build() 未调用（缺少业务依赖）")
+        for job in self.storage.list_meta():
+            if job.get("enabled", True):
+                try:
+                    self.scheduler.add_job(job)
+                except Exception as e:
+                    print(f"[job] 恢复 job {job['id']} 失败: {e}")
+        self.scheduler.start()
+
+    def shutdown(self) -> None:
+        self.scheduler.shutdown()
+
+    # ------- CRUD -------
+    @staticmethod
+    def _new_id() -> str:
+        return uuid.uuid4().hex[:12]
+
+    def create(self, data: JobCreate) -> dict:
+        validate_trigger(data.trigger_type, data.trigger_config)
+        job = data.model_dump()
+        job["id"] = self._new_id()
+        job["last_run_time"] = None
+        job["last_status"] = None
+        job["last_error"] = None
+        self.storage.upsert_meta(job)
+        if job.get("enabled", True) and self.scheduler.running:
+            self.scheduler.add_job(job)
+        return self._to_out(job)
+
+    def update(self, job_id: str, data: JobUpdate) -> dict:
+        existing = self.storage.get_meta(job_id)
+        if not existing:
+            raise KeyError(job_id)
+        patch = data.model_dump(exclude_unset=True)
+        existing.update(patch)
+        if "trigger_type" in patch or "trigger_config" in patch:
+            validate_trigger(existing["trigger_type"], existing["trigger_config"])
+        self.storage.upsert_meta(existing)
+        if self.scheduler.running:
+            # 始终重建（覆盖 pause/resume/trigger/enabled 变化）
+            try:
+                self.scheduler.remove_job(job_id)
+            except Exception:
+                pass
+            if existing.get("enabled", True):
+                self.scheduler.add_job(existing)
+        return self._to_out(existing)
+
+    def delete(self, job_id: str) -> bool:
+        self.scheduler.remove_job(job_id)
+        return self.storage.delete_meta(job_id)
+
+    def pause(self, job_id: str) -> dict:
+        existing = self.storage.get_meta(job_id)
+        if not existing:
+            raise KeyError(job_id)
+        existing["enabled"] = False
+        self.storage.upsert_meta(existing)
+        self.scheduler.pause_job(job_id)
+        return self._to_out(existing)
+
+    def resume(self, job_id: str) -> dict:
+        existing = self.storage.get_meta(job_id)
+        if not existing:
+            raise KeyError(job_id)
+        existing["enabled"] = True
+        self.storage.upsert_meta(existing)
+        if self.scheduler.running:
+            try:
+                self.scheduler.resume_job(job_id)
+            except Exception:
+                self.scheduler.add_job(existing)
+        return self._to_out(existing)
+
+    async def run_now(self, job_id: str) -> dict:
+        """立即试跑一次（dev）。"""
+        job = self.storage.get_meta(job_id)
+        if not job:
+            raise KeyError(job_id)
+        if self.runner is None:
+            raise RuntimeError("runner not built")
+        await self.runner.execute(job)
+        return self._to_out(job)
+
+    def list(self) -> list[dict]:
+        return [self._to_out(j) for j in self.storage.list_meta()]
+
+    def get(self, job_id: str) -> dict:
+        job = self.storage.get_meta(job_id)
+        if not job:
+            raise KeyError(job_id)
+        return self._to_out(job)
+
+    def history(self, job_id: str, limit: int = 20) -> list[dict]:
+        return self.storage.list_history(job_id, limit)
+
+    def _to_out(self, job: dict) -> dict:
+        out = dict(job)
+        out["next_run_time"] = self.scheduler.get_next_run(job["id"])
+        # datetime → iso(str) 便于 JSON 序列化
+        for k in ("next_run_time", "last_run_time"):
+            v = out.get(k)
+            if isinstance(v, datetime):
+                out[k] = v.isoformat()
+            elif v is not None and not isinstance(v, str):
+                out[k] = None
+        return out
+
+
+def _defaults():
+    return {}
+
+
+__all__ = [
+    "JobManager",
+    "JobStorage",
+    "JobScheduler",
+    "JobRunner",
+    "JobBase",
+    "JobCreate",
+    "JobUpdate",
+    "JobOut",
+    "JobHistoryItem",
+]

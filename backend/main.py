@@ -4,8 +4,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.server import Server as UvicornServer
 from application.services.pet_action import pet_action
-from application.state import mcp_manager
-from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint
+from application.state import (
+    mcp_manager,
+    job_manager,
+    memory,
+    tool_registry,
+    skill_registry,
+    symbix_client,
+    provider_registry,
+    checkpoint_recorder,
+)
+from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs
 
 
 def _force_close_sse(reason: str = "") -> None:
@@ -36,9 +45,32 @@ UvicornServer.shutdown = _shutdown_close_sse_first  # type: ignore[method-assign
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """应用生命周期：退出时再兜底关一次 SSE + MCP。"""
+    """应用生命周期:退出时再兜底关一次 SSE + MCP。"""
+    # 启动 job schedule：注入业务单例并恢复任务
+    try:
+        job_manager.build(
+            memory=memory,
+            tool_registry=tool_registry,
+            skill_registry=skill_registry,
+            symbix_client=symbix_client,
+            provider_registry=provider_registry,
+            checkpoint_recorder=checkpoint_recorder,
+            pet_action=pet_action,
+        )
+        job_manager.start()
+        jobs._set_manager(job_manager)
+        print("[job] JobScheduler started")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[job] failed to start JobScheduler: {e}")
     yield
     _force_close_sse("lifespan")
+    try:
+        job_manager.shutdown()
+        print("[job] JobScheduler stopped")
+    except Exception as e:
+        print(f"[job] shutdown failed: {e}")
     try:
         mcp_manager.stop_all()
         print("[MCP] All servers stopped")
@@ -67,6 +99,8 @@ app.include_router(sessions.router)
 app.include_router(pet.router)
 app.include_router(files.router)
 app.include_router(checkpoint.router)
+app.include_router(risk.router)
+app.include_router(jobs.router)
 
 
 

@@ -95,7 +95,7 @@ import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 const props = withDefaults(defineProps<{
-  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null
+  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null
   mcpServerGroups: { server_id: string; tool_count: number; tools: any[]; error?: string }[]
   mcpToolList: any[]
   expandedMcpServers: Set<string>
@@ -106,7 +106,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (e: 'update:activePanel', value:'files'| 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null): void
+  (e: 'update:activePanel', value:'files'| 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null): void
   (e: 'toggleMcpServer', serverId: string): void
   (e: 'removeMcp', serverId: string): void
   (e: 'refresh'): void

@@ -29,12 +29,12 @@
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 const props = defineProps<{
-  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null
+  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null
   nativeToolList: { type: string; function: { name: string; description: string; parameters: any } }[]
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:activePanel', value: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null): void
+  (e: 'update:activePanel', value: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null): void
 }>()
 
 const { width: panelWidth, isResizing, startResize } = useResizablePanel({

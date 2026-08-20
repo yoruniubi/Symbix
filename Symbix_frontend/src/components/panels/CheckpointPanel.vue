@@ -138,11 +138,11 @@ import { useResizablePanel } from '@/composables/useResizablePanel'
 const { t } = useI18n() as any
 
 const props = defineProps<{
-  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null
+  activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null
   activeSessionId?: string | null
 }>()
 
-const emit = defineEmits<{ (e: 'update:activePanel', value: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | null): void }>()
+const emit = defineEmits<{ (e: 'update:activePanel', value: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null): void }>()
 
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000'
 

@@ -13,6 +13,7 @@ from Symbix_sdk.mcp.connector import McpServerManager
 from Symbix_sdk.tools.registry import ToolRegistry
 from Symbix_sdk.skill.registry import SkillRegistry
 from Symbix_sdk.checkpoint import init_recorder as _init_checkpoint_recorder
+from Symbix_sdk.job_schedule import JobManager
 from Symbix_sdk.mcp.installer import McpInstaller
 from Symbix_sdk.act_mode import ActModeController
 
@@ -43,6 +44,12 @@ memory_store = MemoryStore(
 # 记录 Agent 对外部世界的副作用 (工具/文件/命令/MCP)，与对话文本 (memory) 正交。
 checkpoint_recorder = _init_checkpoint_recorder(
     db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
+)
+
+# Job schedule:同 memory.db 同级目录,独立 jobs.db + apscheduler 内置表。
+# build() 会在 main.py lifespan startup 时注入业务依赖。
+job_manager = JobManager(
+    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "jobs.db"),
 )
 
 skill_registry = SkillRegistry(

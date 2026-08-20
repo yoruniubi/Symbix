@@ -25,7 +25,18 @@ agent最重要的一个特质就是自主性，可以自行决定通过何种方
    (2): agent同事，简单来说就是不同职位的agent，开发的，测试的
    (3): 反驳型的，一般用于大项目的重构，可以大幅度减少幻觉发生的可能性
 8. 评估
-有专门的评估框架，来测试agent的能力，之后可以测试一下
+有专门的评估框架，来测试agent的能力，之后可以测试一下；其实本质思想就是benchmark使用你的Agent，然后看看输出是否符合预期，常见的有：
+## 工具调用能力
+
+- **BFCL（Berkeley Function-Calling Leaderboard）** —— 目前最主流的工具调用评测集，专门测模型/Agent 在给定一堆函数定义时，能不能选对函数、传对参数（包括单函数调用、并行调用、多轮多步调用、错误参数处理）。如果你的 harness 是自己写的工具路由/参数解析逻辑，这个能直接测出你 harness 层的问题，而不是模型本身的问题。
+- **ToolBench** —— 覆盖更大规模、更真实的 API 场景（16000+ 真实 API），偏向"多工具组合调用完成复杂任务"，比 BFCL 更贴近真实业务场景。
+- **τ-bench (tau-bench)** —— 模拟客服/电商这类需要**多轮工具调用 + 遵守业务规则**的场景，专门测 Agent 在真实约束下（比如不能乱退款）调用工具的可靠性，比较适合测你 harness 的"纪律性"（会不会瞎调用工具、会不会不按规则来）。
+
+## 代码生成/修复能力
+
+- **SWE-bench（推荐先跑 Verified 子集）** —— 目前业界最认可的代码 Agent 硬指标。输入是真实 GitHub 仓库的 issue，Agent 需要自己读代码、定位问题、生成 patch，跑测试验证是否修复成功。这个非常适合测你 harness 编排"读代码 → 定位 → 改代码 → 验证"这一整条链路的能力，跟你之前帮我排查那次 log 问题的流程很像。
+- **Terminal-bench** —— 更贴近"在真实命令行环境里干活"的场景（跑命令、装依赖、调试报错），如果你的 harness 有 shell 执行能力，这个能测出很多 BFCL/SWE-bench 测不出的问题（比如环境处理、异常恢复）。
+
 9. 关于SEO和GEO
 SEO就是搜索引擎优化(search engine optimization),简单来说就是怎样让你的项目排在搜索结果比较前面的位置，然后GEO就是生成引擎优化(generative engine optimization), 主要是就是AI搜索相关的优化，如何让自己的项目能比较容易让AI检索的到，其实这一块跟这个推广有关了，之后再说。
 SEO的文章：https://developers.google.com/search/docs/fundamentals/seo-starter-guide?hl=zh-cn

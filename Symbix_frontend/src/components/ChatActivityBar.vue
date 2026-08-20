@@ -17,6 +17,12 @@
               <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
               <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
             </svg>
+            <svg v-else-if="item.panel === 'risk'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>
+            </svg>
+            <svg v-else-if="item.panel === 'jobs'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M12 14v3l2 1"/>
+            </svg>
             <svg v-else-if="item.panel === 'checkpoint'" width="22" height="22" viewBox="0 0 1024 1024" fill="currentColor">
               <path d="M832 272c0-62.4-51-112.9-113.6-112-60.7.9-110 50.6-110.4 111.3-.3 52.6 35.6 96.8 84.2 109.2 14 3.6 23.8 16 24.1 30.4.5 27.3-4.4 57.4-22.3 82.5-28.7 40.3-80.7 54.9-126.6 67.8-29 8.1-50.1 10.2-68.7 12-26.4 2.6-51.4 5.1-82.6 23-6.6 3.8-13.1 8-19.2 12.6-5.3 4-12.8.2-12.8-6.4V241.3c0-12.2 6.8-23.5 17.7-28.9 37.1-18.4 62.6-56.8 62.3-101.1-.5-62.8-53.2-113.4-116-111.2C288.1 2.1 240 51.4 240 112c0 44 25.4 82.1 62.3 100.4 10.9 5.4 17.7 16.5 17.7 28.6v541.7c0 12.2-6.8 23.5-17.7 28.9-37.1 18.4-62.6 56.8-62.3 101.1.4 62.8 53.1 113.3 115.9 111.2C416 1021.9 464 972.5 464 912c0-44-25.4-82.1-62.3-100.4-10.9-5.4-17.7-16.5-17.7-28.6v-19.2c0-42 19.9-81.8 54.3-105.9 3.1-2.2 6.4-4.3 9.7-6.2 19.3-11.1 33.5-12.5 57-14.8 20.2-2 45.3-4.5 79.7-14.1 50.5-14.2 119.6-33.5 161.4-92.3 24-33.7 35.4-75 34.1-123-.2-6.9-.7-13.8-1.4-20.9-1.1-10.7 3.5-21 11.8-27.8 25.3-20.4 41.4-51.7 41.4-86.8zM304 112c0-26.5 21.5-48 48-48s48 21.5 48 48-21.5 48-48 48-48-21.5-48-48zm96 800c0 26.5-21.5 48-48 48s-48-21.5-48-48 21.5-48 48-48 48 21.5 48 48zm320-592c-26.5 0-48-21.5-48-48s21.5-48 48-48 48 21.5 48 48-21.5 48-48 48z"/>
             </svg>
@@ -48,7 +54,7 @@
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 
-type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint'
+type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs'
 
 defineProps<{ activePanel: Panel | null }>()
 
@@ -61,6 +67,8 @@ const panelItems: { panel: Panel; label: string }[] = [
   { panel: 'mcp', label: t('activityBar.mcp') },
   { panel: 'native_tools', label: t('activityBar.nativeTools') },
   { panel: 'checkpoint', label: t('activityBar.checkpoint') },
+  { panel: 'risk', label: t('activityBar.risk') },
+  { panel: 'jobs', label: t('activityBar.jobs') },
 ]
 </script>
 

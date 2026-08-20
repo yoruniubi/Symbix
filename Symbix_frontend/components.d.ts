@@ -19,6 +19,7 @@ declare module 'vue' {
     ChatWelcome: typeof import('./src/components/ChatWelcome.vue')['default']
     CheckpointPanel: typeof import('./src/components/panels/CheckpointPanel.vue')['default']
     FilePanel: typeof import('./src/components/panels/FilePanel.vue')['default']
+    JobSchedulePanel: typeof import('./src/components/panels/JobSchedulePanel.vue')['default']
     McpPanel: typeof import('./src/components/panels/McpPanel.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
     NativeToolsPanel: typeof import('./src/components/panels/NativeToolsPanel.vue')['default']
@@ -52,5 +53,6 @@ declare module 'vue' {
     SessionList: typeof import('./src/components/SessionList.vue')['default']
     SkillPanel: typeof import('./src/components/panels/SkillPanel.vue')['default']
     TitleBar: typeof import('./src/components/TitleBar.vue')['default']
+    ToolsRiskPanel: typeof import('./src/components/panels/ToolsRiskPanel.vue')['default']
   }
 }

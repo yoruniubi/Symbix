@@ -1,8 +1,10 @@
 """
 工具调用风险分级器
-根据工具名称和参数动态判断风险等级
+分层配置：代码内默认规则（ground truth）+ JSON override（前端可配）。
+override 只能整体覆盖某工具的等级，不能改默认规则本身；删 override 即恢复默认。
 """
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
+import os
 import re
 import json
 
@@ -14,101 +16,181 @@ class ToolRiskLevel:
     HIGH = "high"        # 删除/执行命令，强制审批+警告
 
 
+# ============ override 持久化 ============
+_OVERRIDE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "config", "risk_overrides.json",
+)
+
+_override_cache: Optional[dict] = None
+
+
+def _load_overrides() -> dict:
+    """加载 override 配置（{tool_name: {"level": "safe|medium|high", "reason": "..."}}）。"""
+    global _override_cache
+    if _override_cache is not None:
+        return _override_cache
+    if not os.path.exists(_OVERRIDE_PATH):
+        _override_cache = {}
+        return _override_cache
+    try:
+        with open(_OVERRIDE_PATH, "r", encoding="utf-8") as f:
+            _override_cache = json.load(f) or {}
+    except Exception:
+        _override_cache = {}
+    return _override_cache
+
+
+def _save_overrides(data: dict) -> None:
+    global _override_cache
+    _override_cache = data
+    os.makedirs(os.path.dirname(_OVERRIDE_PATH), exist_ok=True)
+    with open(_OVERRIDE_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def get_overrides() -> dict:
+    """返回当前 override 配置（深拷贝，避免外部误改缓存）。"""
+    return json.loads(json.dumps(_load_overrides()))
+
+
+def set_override(tool_name: str, level: str, reason: str = "") -> None:
+    """新增/更新一条 override。level 必须是 safe/medium/high。"""
+    if level not in (ToolRiskLevel.SAFE, ToolRiskLevel.MEDIUM, ToolRiskLevel.HIGH):
+        raise ValueError(f"invalid level: {level}")
+    data = _load_overrides()
+    data[tool_name] = {"level": level, "reason": reason or f"自定义分级: {level}"}
+    _save_overrides(data)
+
+
+def remove_override(tool_name: str) -> bool:
+    """删除一条 override，恢复默认。返回是否确实删了一条。"""
+    data = _load_overrides()
+    if tool_name in data:
+        del data[tool_name]
+        _save_overrides(data)
+        return True
+    return False
+
+
+# ============ 默认规则（代码内 ground truth）============
+
+_READONLY_TOOLS = {
+    "read_file", "list_files", "search_files", "parse_file",
+    "read_multiple_files", "get_file_info", "search_codebase",
+    "search_file_with_name",
+    "emit_pet_action", "check_agent_status", "play_status_animation",
+}
+
+_WRITE_TOOLS = {
+    "edit_file", "write_to_file", "replace_in_file",
+    "search_and_replace",
+    "create_skill", "create_directory", "move_file",
+}
+
+_DANGEROUS_CMD_PATTERNS = [
+    r"rm\s+-rf", r"dd\s+if=", r"mkfs", r">/dev/",
+    r"format", r"del\s+/s", r"shutdown", r"reboot", r"chmod\s+777",
+]
+
+_CRITICAL_FILE_PATTERNS = [".env", "config", "database", ".db", "credentials", "secret"]
+_CRITICAL_PATHS = ["/etc/", "/sys/", "/proc/", "C:\\Windows\\", "C:\\Program Files\\"]
+
+
+def _classify_default(tool_name: str, arguments: dict) -> Tuple[str, str]:
+    """代码内默认分级逻辑（不可被前端删除）。"""
+    if tool_name in _READONLY_TOOLS:
+        return (ToolRiskLevel.SAFE, "只读/无副作用操作，安全放行")
+
+    if tool_name == "delete_file":
+        path = arguments.get("file_path", "")
+        if any(p in path.lower() for p in _CRITICAL_FILE_PATTERNS):
+            return (ToolRiskLevel.HIGH, f"删除关键文件: {path}")
+        return (ToolRiskLevel.HIGH, "删除文件操作")
+
+    if tool_name in ("run_command", "execute_command", "exec_command"):
+        cmd = arguments.get("command", "")
+        for p in _DANGEROUS_CMD_PATTERNS:
+            if re.search(p, cmd.lower()):
+                return (ToolRiskLevel.HIGH, f"危险命令: {cmd[:50]}")
+        return (ToolRiskLevel.MEDIUM, "执行命令")
+
+    if tool_name == "open_terminal":
+        cmd = arguments.get("command", "") or ""
+        if cmd.strip():
+            for p in _DANGEROUS_CMD_PATTERNS:
+                if re.search(p, cmd.lower()):
+                    return (ToolRiskLevel.HIGH, f"危险命令 (open_terminal): {cmd[:50]}")
+            return (ToolRiskLevel.MEDIUM, "通过 open_terminal 执行命令")
+        return (ToolRiskLevel.MEDIUM, "打开终端窗口")
+
+    if tool_name in ("write_file", "write_to_file", "create_file", "edit_file", "search_and_replace"):
+        path = arguments.get("file_path", arguments.get("path", ""))
+        if any(path.startswith(cp) for cp in _CRITICAL_PATHS):
+            return (ToolRiskLevel.HIGH, f"写入系统关键路径: {path}")
+
+    if tool_name in _WRITE_TOOLS:
+        return (ToolRiskLevel.MEDIUM, "文件修改操作")
+
+    return (ToolRiskLevel.MEDIUM, "未分类工具，建议审查")
+
+
 def classify_tool_risk(tool_name: str, arguments: Union[dict, str]) -> Tuple[str, str]:
     """
-    分析工具调用的风险等级
-    
+    分析工具调用的风险等级。override 优先于默认。
+
     Args:
         tool_name: 工具名称
         arguments: 工具参数字典或JSON字符串
-        
+
     Returns:
         (risk_level, reason) 元组
-        - risk_level: "safe" | "medium" | "high"
-        - reason: 风险原因说明（中文）
     """
-    
-    # 如果是字符串，解析为字典
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
         except (json.JSONDecodeError, ValueError):
             arguments = {}
-    
-    # 1. 纯读操作 → SAFE
-    readonly_tools = {
-        "read_file", "list_files", "search_files", "parse_file",
-        "read_multiple_files", "get_file_info", "search_codebase",
-        "search_file_with_name",  # 只报路径，不读写文件
-        # 桌宠动画工具：仅触发 UI 动画/表情，无文件或命令副作用
-        "emit_pet_action", "check_agent_status", "play_status_animation",
-    }
-    if tool_name in readonly_tools:
-        return (ToolRiskLevel.SAFE, "只读/无副作用操作，安全放行")
-    
-    # 2. 高危操作 → HIGH
-    if tool_name == "delete_file":
-        path = arguments.get("file_path", "")
-        # 检测关键文件
-        critical_patterns = [".env", "config", "database", ".db", "credentials", "secret"]
-        if any(pattern in path.lower() for pattern in critical_patterns):
-            return (ToolRiskLevel.HIGH, f"删除关键文件: {path}")
-        return (ToolRiskLevel.HIGH, "删除文件操作")
-    
-    if tool_name in ["run_command", "execute_command", "exec_command"]:
-        cmd = arguments.get("command", "")
-        # 检测危险命令
-        dangerous_patterns = [
-            r"rm\s+-rf",           # 递归删除
-            r"dd\s+if=",           # 磁盘操作
-            r"mkfs",               # 格式化
-            r">/dev/",             # 写入设备
-            r"format",             # 格式化
-            r"del\s+/s",           # Windows 递归删除
-            r"shutdown",           # 关机
-            r"reboot",             # 重启
-            r"chmod\s+777",        # 危险权限
-        ]
-        for pattern in dangerous_patterns:
-            if re.search(pattern, cmd.lower()):
-                return (ToolRiskLevel.HIGH, f"危险命令: {cmd[:50]}")
-        return (ToolRiskLevel.MEDIUM, "执行命令")
+    if not isinstance(arguments, dict):
+        arguments = {}
 
-    # open_terminal 带非空 command 时，本质上同 run_command：静默执行任意命令并返回输出。
-    # 必须套与 run_command 同样的危险命令检测。仅在 visible=True 且 command 为空时（仅弹终端）才走 MEDIUM。
-    if tool_name == "open_terminal":
-        cmd = arguments.get("command", "") or ""
-        if cmd.strip():
-            dangerous_patterns = [
-                r"rm\s+-rf", r"dd\s+if=", r"mkfs", r">/dev/",
-                r"format", r"del\s+/s", r"shutdown", r"reboot", r"chmod\s+777",
-            ]
-            for pattern in dangerous_patterns:
-                if re.search(pattern, cmd.lower()):
-                    return (ToolRiskLevel.HIGH, f"危险命令 (open_terminal): {cmd[:50]}")
-            return (ToolRiskLevel.MEDIUM, "通过 open_terminal 执行命令")
-        return (ToolRiskLevel.MEDIUM, "打开终端窗口")
-    
-    # 检测系统关键路径写入
-    if tool_name in ["write_file", "write_to_file", "create_file", "edit_file", "search_and_replace"]:
-        # search_and_replace 的目标路径可由 query/path 任一项给出；优先用 path
-        path = arguments.get("file_path", arguments.get("path", ""))
-        critical_paths = ["/etc/", "/sys/", "/proc/", "C:\\Windows\\", "C:\\Program Files\\"]
-        if any(path.startswith(cp) for cp in critical_paths):
-            return (ToolRiskLevel.HIGH, f"写入系统关键路径: {path}")
+    # override 优先：前端显式配置的工具直接用 override 等级
+    overrides = _load_overrides()
+    ov = overrides.get(tool_name)
+    if ov:
+        return (ov.get("level", ToolRiskLevel.MEDIUM), ov.get("reason", "自定义分级"))
 
-    # 3. 写入/修改操作 → MEDIUM
-    write_tools = {
-        "edit_file", "write_to_file", "replace_in_file",
-        "search_and_replace",
-        "create_skill", "create_directory", "move_file",
-    }
-    # open_terminal 已在上方单独分档处理，这里不再重复登记为 MEDIUM。
-    if tool_name in write_tools:
-        return (ToolRiskLevel.MEDIUM, "文件修改操作")
-    
-    # 4. 未知工具 → MEDIUM（保守策略）
-    return (ToolRiskLevel.MEDIUM, "未分类工具，建议审查")
+    return _classify_default(tool_name, arguments)
+
+
+def get_effective_rules() -> dict:
+    """返回合并后的生效规则（默认 + override），供前端展示。
+
+    结构：{tool_name: {"level": str, "reason": str, "source": "default"|"override"}}
+    """
+    overrides = _load_overrides()
+    # 从默认逻辑反推已知工具的"基础等级"（不含参数敏感的 HIGH 升级，只取工具默认档）
+    known: dict = {}
+    for t in _READONLY_TOOLS:
+        known[t] = (ToolRiskLevel.SAFE, "只读/无副作用操作，安全放行")
+    for t in _WRITE_TOOLS:
+        known[t] = (ToolRiskLevel.MEDIUM, "文件修改操作")
+    for t in ("delete_file",):
+        known[t] = (ToolRiskLevel.HIGH, "删除文件操作")
+    for t in ("run_command", "execute_command", "exec_command", "open_terminal"):
+        known[t] = (ToolRiskLevel.MEDIUM, "执行命令/打开终端")
+
+    result: dict = {}
+    for t, (lvl, reason) in known.items():
+        if t in overrides:
+            result[t] = {"level": overrides[t]["level"], "reason": overrides[t].get("reason", ""), "source": "override"}
+        else:
+            result[t] = {"level": lvl, "reason": reason, "source": "default"}
+    # override 里可能有默认规则未覆盖的工具名
+    for t, ov in overrides.items():
+        if t not in result:
+            result[t] = {"level": ov["level"], "reason": ov.get("reason", ""), "source": "override"}
+    return result
 
 
 # 测试代码
@@ -120,20 +202,14 @@ if __name__ == "__main__":
         ("run_command", {"command": "rm -rf /"}),
         ("run_command", {"command": "ls -la"}),
         ("edit_file", {"file_path": "code.py", "content": "print('hello')"}),
-        # 新增覆盖：search_file_with_name 只读应 SAFE
         ("search_file_with_name", {"file_name": "main.py"}),
-        # search_and_replace 写操作应 MEDIUM（非关键路径）
         ("search_and_replace", {"query": "foo", "new_content": "bar", "path": "./src.py"}),
-        # search_and_replace 写入系统关键路径应 HIGH
         ("search_and_replace", {"query": "foo", "new_content": "bar", "path": "C:\\Windows\\System32\\x.cfg"}),
-        # open_terminal 仅弹终端应 MEDIUM
         ("open_terminal", {"visible": True}),
-        # open_terminal 带危险命令应 HIGH
         ("open_terminal", {"command": "rm -rf /", "visible": False}),
-        # open_terminal 带普通命令应 MEDIUM
         ("open_terminal", {"command": "git status", "visible": False}),
     ]
-    
+
     print("风险分级测试:")
     for tool_name, args in test_cases:
         level, reason = classify_tool_risk(tool_name, args)
