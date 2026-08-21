@@ -6,7 +6,7 @@
         <span class="side-panel-title">{{ $t('checkpointPanel.title') }}</span>
         <div class="side-panel-actions">
           <n-button quaternary size="tiny" class="panel-icon-btn" :title="$t('common.refresh')" @click="loadSummary">
-            <svg :class="['refresh-icon', { spinning: loading }]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg :class="['refresh-icon', { spinning: loading }]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
@@ -25,10 +25,22 @@
             <span class="cp-pill chip-err" v-if="summary.error_n">{{ summary.error_n }} {{ $t('checkpointPanel.errors') }}</span>
           </div>
           <div class="cp-summary-row sub" v-if="summary.tool_call_n || summary.file_op_n || summary.command_n || summary.mcp_call_n">
-            <span v-if="summary.tool_call_n" class="cp-tag-mini">🔧 {{ summary.tool_call_n }}</span>
-            <span v-if="summary.file_op_n" class="cp-tag-mini">📄 {{ summary.file_op_n }}</span>
-            <span v-if="summary.command_n" class="cp-tag-mini">⌨ {{ summary.command_n }}</span>
-            <span v-if="summary.mcp_call_n" class="cp-tag-mini">🔌 {{ summary.mcp_call_n }}</span>
+            <span v-if="summary.tool_call_n" class="cp-tag-mini">
+              <svg class="cp-tag-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              {{ summary.tool_call_n }}
+            </span>
+            <span v-if="summary.file_op_n" class="cp-tag-mini">
+              <svg class="cp-tag-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              {{ summary.file_op_n }}
+            </span>
+            <span v-if="summary.command_n" class="cp-tag-mini">
+              <svg class="cp-tag-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>
+              {{ summary.command_n }}
+            </span>
+            <span v-if="summary.mcp_call_n" class="cp-tag-mini">
+              <svg class="cp-tag-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              {{ summary.mcp_call_n }}
+            </span>
           </div>
         </div>
 
@@ -36,7 +48,7 @@
         <div class="cp-timeline" v-if="roundsWithEvents.length">
           <div v-for="(round, ri) in roundsWithEvents" :key="ri" class="cp-round">
             <div class="cp-round-header" @click="toggleRound(round.round_id)">
-              <span class="cp-round-marker" :class="{ expanded: round.expanded }">▸</span>
+              <svg class="cp-round-marker" :class="{ expanded: round.expanded }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
               <div class="cp-round-title">
                 <div class="cp-round-user" v-if="round.user_msg">{{ round.user_msg }}</div>
                 <div class="cp-round-id" v-else>#{{ round.round_id }}</div>
@@ -47,11 +59,11 @@
             <div class="cp-round-body" v-if="round.expanded">
               <div v-for="(ev, ei) in round.events" :key="ev.id || ei" class="cp-event">
                 <span class="cp-event-icon">
-                  <span v-if="ev.kind === 'tool_call' && risk(ev) === 'high'" class="dot dot-high">●</span>
-                  <span v-else-if="ev.kind === 'tool_call' && risk(ev) === 'medium'" class="dot dot-mid">●</span>
-                  <span v-else-if="ev.status === 'error'" class="dot dot-err">●</span>
-                  <span v-else-if="ev.kind === 'round'" class="dot dot-round">◆</span>
-                  <span v-else class="dot dot-safe">●</span>
+                  <svg v-if="ev.kind === 'tool_call' && risk(ev) === 'high'" class="dot dot-high" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                  <svg v-else-if="ev.kind === 'tool_call' && risk(ev) === 'medium'" class="dot dot-mid" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                  <svg v-else-if="ev.status === 'error'" class="dot dot-err" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                  <svg v-else-if="ev.kind === 'round'" class="dot dot-round" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  <svg v-else class="dot dot-safe" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
                 </span>
                 <div class="cp-event-main">
                   <div class="cp-event-line1">
@@ -64,9 +76,11 @@
                     <span v-if="ev.payload.size_delta != null" class="cp-delta" :class="ev.payload.size_delta > 0 ? 'plus' : 'minus'">
                       {{ ev.payload.size_delta > 0 ? '+' : '' }}{{ formatBytes(ev.payload.size_delta) }}
                     </span>
-                    <!-- 查看改动按钮 -->
                     <n-button size="tiny" quaternary class="cp-action-btn" :title="$t('checkpointPanel.viewDiff')" @click="showDiff(ev)">
-                      🔍 {{ $t('checkpointPanel.viewDiff') }}
+                      <template #icon>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>
+                      </template>
+                      {{ $t('checkpointPanel.viewDiff') }}
                     </n-button>
                   </div>
                   <div class="cp-ev-detail" v-else-if="ev.kind === 'tool_call' && ev.payload">
@@ -87,10 +101,12 @@
 
         <n-empty v-else :description="activeSession ? $t('checkpointPanel.empty') : $t('checkpointPanel.noSession')" size="small" style="margin-top: 28px;" />
 
-        <!-- 底部清理按钮 -->
         <div class="cp-actions" v-if="activeSession">
           <n-button size="tiny" quaternary class="cp-prune-btn" @click="handlePrune" :loading="pruning">
-            🗑 {{ $t('checkpointPanel.prune') }}
+            <template #icon>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </template>
+            {{ $t('checkpointPanel.prune') }}
           </n-button>
         </div>
       </div>
@@ -118,10 +134,12 @@
           <div v-else class="diff-no-blob">
             {{ $t('checkpointPanel.diffNoBlob') }}
           </div>
-          <!-- 恢复按钮 -->
           <div class="diff-restore" v-if="diffData?.blob_stored && diffData?.op !== 'delete'">
             <n-button type="warning" size="small" @click="handleRestore" :loading="restoring">
-              ↩ {{ $t('checkpointPanel.restore') }}
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+              </template>
+              {{ $t('checkpointPanel.restore') }}
             </n-button>
           </div>
         </div>
@@ -528,7 +546,8 @@ function handleClose() {
 .cp-pill.chip-mini { font-size: 10px; padding: 1px 6px; }
 .cp-pill.st-ok-pill { color: var(--success, #34d399); }
 .cp-pill.st-err-pill { color: var(--error, #ef4444); }
-.cp-tag-mini { white-space: nowrap; }
+.cp-tag-mini { white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
+.cp-tag-icon { display: block; flex-shrink: 0; }
 
 /* 时间线（按 round 折叠） */
 .cp-timeline {
@@ -561,8 +580,8 @@ function handleClose() {
 .cp-round-marker {
   flex-shrink: 0;
   color: var(--text-secondary);
-  font-size: 10px;
   width: 10px;
+  height: 10px;
   transition: transform 0.15s ease;
 }
 .cp-round-marker.expanded { transform: rotate(90deg); }
@@ -595,8 +614,8 @@ function handleClose() {
   border-bottom: 1px solid var(--border);
 }
 .cp-event:last-child { border-bottom: none; }
-.cp-event-icon { padding-top: 2px; font-size: 8px; }
-.dot { font-size: 10px; }
+.cp-event-icon { padding-top: 2px; display: inline-flex; align-items: center; }
+.dot { display: block; }
 .dot-safe  { color: var(--success, #34d399); }
 .dot-mid   { color: var(--warning, #f59e0b); }
 .dot-high  { color: var(--error, #ef4444); }
@@ -646,13 +665,21 @@ function handleClose() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cp-delta { font-size: 10px; }
-.cp-delta.plus  { color: var(--success, #34d399); }
-.cp-delta.minus { color: var(--error, #ef4444); }
-.cp-snippet { opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-delta { 
+  font-size: 10px; 
+}
+.cp-delta.plus { 
+  color: var(--success, #34d399); 
+}
+.cp-delta.minus { 
+  color: var(--error, #ef4444);
+}
+.cp-snippet { 
+  opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; 
+}
 
 /* Diff + prune 样式 */
-.cp-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: center; }
+.cp-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
 .cp-prune-btn { color: var(--text-muted); }
 .cp-action-btn { opacity: 0.75; transition: opacity var(--duration-fast, 120ms) ease; }
 .cp-event:hover .cp-action-btn { opacity: 1; }

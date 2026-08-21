@@ -82,22 +82,69 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
     """
     将 path 解析为绝对路径，并要求其落在任一 root 之下（防 .. 穿越）。
     成功返回 abspath，否则 None。
+
+    相对路径的处理顺序：
+      1) 优先把相对路径拼到每个 root 下，落在 sandbox 任一 root 内即用（避免进程 cwd 依赖
+         ——后端 cwd 常是 backend/，单纯的 cwd 相对解析会把 'backend/xxx' 拼成 backend/backend/xxx）
+      2) 否则回退到相对进程 cwd 解析，仍要求落在 sandbox 内
+    绝对路径直接判定 sandbox。
     """
     if not path or not str(path).strip():
         return None
-    try:
-        abs_path = os.path.abspath(os.path.expanduser(path))
-    except Exception:
-        return None
-    for root in roots:
-        root_abs = os.path.abspath(root)
+
+    norm = path.strip()
+    roots_abs = [os.path.abspath(r) for r in roots]
+
+    # 绝对路径：直接判 sandbox
+    if os.path.isabs(norm):
         try:
-            common = os.path.commonpath([abs_path, root_abs])
+            abs_path = os.path.abspath(os.path.expanduser(norm))
+        except Exception:
+            return None
+        for root_abs in roots_abs:
+            try:
+                if os.path.commonpath([abs_path, root_abs]) == root_abs:
+                    return abs_path
+            except ValueError:
+                continue
+        return None
+
+    # 相对路径：先尝试拼到每个 root 下。
+    # 优先级：父目录存在的优先（read_file/list_files/edit_file 语义一致；
+    # edit_file 写新文件从项目根开始试，backend/Symbix_sdk/x 正确落到 backend 下）。
+    candidates: list[str] = []
+    for root_abs in roots_abs:
+        # 单独 '.' 的特殊语义：直接对应 root 本身
+        if norm == ".":
+            return root_abs
+        candidate = os.path.abspath(os.path.join(root_abs, norm))
+        try:
+            if os.path.commonpath([candidate, root_abs]) == root_abs:
+                candidates.append(candidate)
         except ValueError:
             continue
-        if common == root_abs:
-            return abs_path
-    return None
+    # 1) 优先选路径本身存在的（ 目录或文件，读根据不歧义）
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    # 2) 次之选父目录存在的（edit_file 写新文件场景）
+    for c in candidates:
+        if os.path.isdir(os.path.dirname(c)):
+            return c
+    # 3) 都不存在：回退到 cwd 相对解析若仍 sandbox 内
+    try:
+        cwd_abs = os.path.abspath(os.path.expanduser(norm))
+    except Exception:
+        cwd_abs = None
+    if cwd_abs is not None:
+        for root_abs in roots_abs:
+            try:
+                if os.path.commonpath([cwd_abs, root_abs]) == root_abs:
+                    return cwd_abs
+            except ValueError:
+                continue
+    # 4) 最后凑合：选第一个 sandbox 内候选（允许新文件可解析）
+    return candidates[0] if candidates else None
 
 
 def sandbox_roots() -> list[str]:

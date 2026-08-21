@@ -5,7 +5,14 @@
       <div class="side-panel-header">
         <span class="side-panel-title">{{ $t('jobPanel.title') }}</span>
         <div class="side-panel-actions">
-          <n-button size="medium" type="primary" class="add-entry-btn" @click="startCreate">{{ $t('jobPanel.add') }}</n-button>
+          <n-button size="medium" type="primary" class="add-entry-btn" @click="startCreate">
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </template>
+            {{ $t('jobPanel.add') }}
+          </n-button>
           <n-button quaternary size="tiny" class="panel-icon-btn" :title="$t('common.refresh')" @click="loadJobs">
             <svg :class="['refresh-icon', { spinning: loading }]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
@@ -197,14 +204,21 @@ async function toggleJob(job: Job) {
 }
 
 async function deleteJob(id: string) {
-  if (!window.confirm(t('jobPanel.deleteConfirm'))) return
-  try {
-    await request(`/jobs/${id}`, { method: 'DELETE' })
-    await loadJobs()
-    ;(window as any).$message?.success?.(t('jobPanel.deleteSuccess'))
-  } catch (e: any) {
-    ;(window as any).$message?.error?.(t('jobPanel.deleteFail', { msg: e.message }))
-  }
+  ;(window as any).$dialog?.warning?.({
+    title: t('jobPanel.delete'),
+    content: t('jobPanel.deleteConfirm'),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      try {
+        await request(`/jobs/${id}`, { method: 'DELETE' })
+        await loadJobs()
+        ;(window as any).$message?.success?.(t('jobPanel.deleteSuccess'))
+      } catch (e: any) {
+        ;(window as any).$message?.error?.(t('jobPanel.deleteFail', { msg: e.message }))
+      }
+    },
+  })
 }
 
 async function openHistory(id: string) {

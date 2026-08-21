@@ -61,7 +61,10 @@
                 <svg v-else-if="step.status === 'rejected'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
               </span>
-              <span class="step-name">{{ formatToolName(step.name) }}</span>
+              <span class="step-name">
+                <span v-if="toolIconSvg(step.name)" class="tool-icon" v-html="toolIconSvg(step.name)"></span>
+                {{ formatToolName(step.name) }}
+              </span>
               <span class="step-badge" :class="step.status">{{ statusLabel(step.status) }}</span>
               <svg class="step-expand-arrow" :class="{ expanded: expandedSteps[Number(i)] }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
@@ -257,24 +260,67 @@ function toggleStep(i: number) {
   expandedSteps.value[i] = !expandedSteps.value[i]
 }
 
+// 按工具名分发 SVG 图标（整个 svg 字符串，通过 v-html 注入 span 内）
+const TOOL_ICONS: Record<string, string> = {
+  // 文件类
+  edit_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  read_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  list_files: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>',
+  parse_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>',
+  create_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
+  write_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  delete_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  // 搜索类
+  search_files: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  search_and_replace: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><line x1="20" y1="20" x2="15.5" y2="15.5"/><line x1="4" y1="4" x2="8" y2="8"/><line x1="8" y1="4" x2="4" y2="8"/></svg>',
+  search_file_with_name: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M11 8v6M8 11h6"/></svg>',
+  // 终端
+  open_terminal: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>',
+  execute_command: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>',
+  // 桌姄
+  emit_pet_action: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
+  check_agent_status: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
+  play_status_animation: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9z"/></svg>',
+  // 技能
+  create_skill: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>',
+  // web
+  fetch_webpage: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></svg>',
+  search_online: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M11 8a8 8 0 0 1 7 8M3 11a8 8 0 0 1 8 8"/></svg>',
+}
+
+function toolIconSvg(name: string): string | null {
+  if (!name) return null
+  if (name.startsWith('skill__')) {
+    return TOOL_ICONS.create_skill
+  }
+  // MCP 工具没有前缀头型，用通用 fallback
+  return TOOL_ICONS[name] || null
+}
+
 function formatToolName(name: string): string {
   if (!name) return t('chat.toolCall')
-  // 去掉 snake_case → 可读中文映射
   const map: Record<string, string> = {
-    'create_file': t('chat.toolCreateFile'),
-    'read_file': t('chat.toolReadFile'),
-    'write_file': t('chat.toolWriteFile'),
-    'delete_file': t('chat.toolDeleteFile'),
-    'list_files': t('chat.toolListFiles'),
-    'execute_command': t('chat.toolExecuteCommand'),
-    'search_files': t('chat.toolSearchFiles'),
-    'read_multiple_files': t('chat.toolReadMultipleFiles'),
-    'java_class_scanner': t('chat.toolJavaClassScanner'),
-    'file_structure_scanner': t('chat.toolFileStructureScanner'),
-    'batch_code_modifier': t('chat.toolBatchCodeModifier'),
-    'code_quality_scanner': t('chat.toolCodeQualityScanner'),
+    edit_file: t('chat.toolEditFile'),
+    list_files: t('chat.toolListFiles'),
+    read_file: t('chat.toolReadFile'),
+    parse_file: t('chat.toolParseFile'),
+    search_files: t('chat.toolSearchFiles'),
+    search_and_replace: t('chat.toolSearchAndReplace'),
+    search_file_with_name: t('chat.toolSearchFileWithName'),
+    open_terminal: t('chat.toolOpenTerminal'),
+    emit_pet_action: t('chat.toolEmitPetAction'),
+    check_agent_status: t('chat.toolCheckAgentStatus'),
+    play_status_animation: t('chat.toolPlayStatusAnimation'),
+    create_skill: t('chat.toolCreateSkill'),
+    fetch_webpage: t('chat.toolFetchWebpage'),
+    search_online: t('chat.toolSearchOnline'),
+    create_file: t('chat.toolCreateFile'),
+    write_file: t('chat.toolWriteFile'),
+    delete_file: t('chat.toolDeleteFile'),
+    execute_command: t('chat.toolExecuteCommand'),
   }
   if (map[name]) return map[name]
+  if (name.startsWith('skill__')) return `${t('chat.toolSkill')}: ${name.replace(/^skill__/, '')}`
   // 通用格式化
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
@@ -779,12 +825,41 @@ onMounted(() => {
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.step-card.done .step-name { color: var(--text-secondary); }
-.step-card.running .step-name, .step-card.pending .step-name { color: var(--text-primary); }
+.step-name .tool-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted, currentColor);
+  transition: color var(--duration-base, 180ms) var(--ease-standard, ease);
+}
+.step-name .tool-icon :deep(svg) {
+  display: block;
+}
+.step-card.done .step-name .tool-icon { 
+  color: var(--success, #4E9A6E); 
+}
+.step-card.running .step-name .tool-icon,
+.step-card.pending .step-name .tool-icon { 
+  color: var(--accent-500, #EF6B6E); 
+}
+.step-card.awaiting_approval .step-name .tool-icon { 
+  color: var(--warning, #D89B3C); 
+}
+.step-card.rejected .step-name .tool-icon { 
+  color: var(--error, #D3555A); 
+}
+.step-card.done .step-name { 
+  color: var(--text-secondary); 
+}
+.step-card.running .step-name, .step-card.pending .step-name { 
+  color: var(--text-primary); 
+}
 
 .step-badge {
   font-size: 10px;
@@ -795,10 +870,18 @@ onMounted(() => {
   color: var(--text-muted);
   background: var(--surface-hover);
 }
-.step-badge.done { color: var(--success, #4E9A6E); background: rgba(78, 154, 110, 0.12); }
-.step-badge.pending, .step-badge.running { color: var(--accent-500, #EF6B6E); background: var(--accent-soft); }
-.step-badge.awaiting_approval { color: var(--warning, #D89B3C); background: rgba(216, 155, 60, 0.12); }
-.step-badge.rejected { color: var(--error, #D3555A); background: rgba(211, 85, 90, 0.12); }
+.step-badge.done { 
+  color: var(--success, #4E9A6E); background: rgba(78, 154, 110, 0.12); 
+}
+.step-badge.pending, .step-badge.running { 
+  color: var(--accent-500, #EF6B6E); background: var(--accent-soft); 
+}
+.step-badge.awaiting_approval { 
+  color: var(--warning, #D89B3C); background: rgba(216, 155, 60, 0.12); 
+}
+.step-badge.rejected { 
+  color: var(--error, #D3555A); background: rgba(211, 85, 90, 0.12); 
+}
 
 .step-expand-arrow {
   color: var(--text-muted);

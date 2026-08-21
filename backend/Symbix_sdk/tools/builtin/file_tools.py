@@ -1,10 +1,45 @@
 from __future__ import annotations
 import json
 import os
+import re as _re
+import shutil
 import subprocess
 
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed, parse_file_path
 from Symbix_sdk.checkpoint import get_recorder, get_current
+
+
+_RG_CANDIDATES = [
+    # Windows 下常见安装位置（C: 系统盘）
+    r"C:\Program Files\ripgrep\rg.exe",
+    r"C:\Program Files (x86)\ripgrep\rg.exe",
+    # scoop / chocolatey
+    os.path.expandvars(r"%USERPROFILE%\scoop\shims\rg.exe"),
+    os.path.expandvars(r"%USERPROFILE%\scoop\apps\ripgrep\current\rg.exe"),
+    r"C:\ProgramData\chocolatey\bin\rg.exe",
+    # pi 自带的 rg
+    os.path.expandvars(r"%USERPROFILE%\.pi\agent\bin\rg.exe"),
+    r"C:\Users\Frank\.pi\agent\bin\rg.exe",
+    # Unix
+    "/usr/bin/rg",
+    "/usr/local/bin/rg",
+    "/opt/homebrew/bin/rg",
+]
+
+
+def _find_rg() -> str | None:
+    """定位 ripgrep 可执行文件。返回可执行路径或 None。"""
+    env_path = os.environ.get("SYMBIX_RG_PATH")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    for name in ("rg", "rg.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+    for cand in _RG_CANDIDATES:
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
 
 
 def edit_file(file_path: str, new_content: str) -> str:
@@ -126,43 +161,51 @@ def search_files(
     max_results: int = 100,
     timeout: int = 30,
 ) -> dict:
-    """使用 ripgrep 在文件中搜索关键词/正则，返回匹配列表。"""
+    """使用 ripgrep 在文件中搜索关键词/正则，返回匹配列表。
+    rg 不可用时自动回退到 Python os.walk + re 搜索，保证总能工作。
+    """
     if not path or not query:
         return {"success": False, "error_msg": "path 和 query 均不能为空", "results": []}
-    if not os.path.exists(path):
-        return {"success": False, "error_msg": f"路径不存在: {path}", "results": []}
+    # 统一通过沙箱解析相对路径（相对项目根优先，避免依赖进程 cwd）
+    try:
+        root_path = assert_path_allowed(path)
+    except Exception as e:
+        return {"success": False, "error_msg": f"路径不被允许: {e}", "results": []}
+    if not os.path.exists(root_path):
+        return {"success": False, "error_msg": f"路径不存在: {root_path}", "results": []}
 
-    cmd = ["rg", "--json", query, path]
+    rg_path = _find_rg()
+    if rg_path:
+        return _search_with_rg(
+            rg_path, query, root_path, glob, max_results, timeout
+        )
+    return _search_with_python(query, root_path, glob, max_results, timeout)
+
+
+def _search_with_rg(
+    rg_path: str,
+    query: str,
+    root_path: str,
+    glob: str | None,
+    max_results: int,
+    timeout: int,
+) -> dict:
+    cmd = [rg_path, "--json", query, root_path]
     if glob:
         cmd += ["--glob", glob]
     cmd += ["--max-count", str(max_results)]
-
     try:
         result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout
         )
     except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "error_msg": f"搜索超时(超过 {timeout} 秒),请缩小搜索范围",
-            "results": [],
-        }
-    except FileNotFoundError:
-        return {
-            "success": False,
-            "error_msg": "ripgrep 未安装或不在 PATH 中",
-            "results": [],
-        }
-
+        return {"success": False, "error_msg": f"搜索超时(超过 {timeout} 秒),请缩小搜索范围", "results": []}
+    except OSError as e:
+        # rg 调起失败（权限/文件损伤等）→ 退化到 Python 回退
+        return _search_with_python(query, root_path, glob, max_results, timeout, note=f"rg 调起失败: {e}")
     if result.returncode == 2:
-        return {
-            "success": False,
-            "error_msg": f"rg 执行出错: {result.stderr.strip()}",
-            "results": [],
-        }
+        return {"success": False, "error_msg": f"rg 执行出错: {result.stderr.strip()}", "results": []}
 
     matches = []
     for line in result.stdout.splitlines():
@@ -179,17 +222,83 @@ def search_files(
             "line_number": obj["data"]["line_number"],
             "line_content": obj["data"]["lines"]["text"].rstrip("\n"),
         })
-
     truncated = False
     if len(matches) > max_results:
         matches = matches[:max_results]
         truncated = True
+    return {"success": True, "error_msg": None, "results": matches, "truncated": truncated}
 
+
+# Python 回退时的默认忽略目录（保持与 rg .gitignore 默认行为接近）
+_PY_FALLBACK_IGNORE_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".mypy_cache", ".pytest_cache", "dist", "build", ".next",
+}
+
+
+def _search_with_python(
+    query: str,
+    root_path: str,
+    glob: str | None,
+    max_results: int,
+    timeout: int,
+    note: str | None = None,
+) -> dict:
+    """rg 不可用时用 Python 实现 grep。支持正则（re.search）与 glob 过滤。"""
+    try:
+        pattern = _re.compile(query, _re.IGNORECASE)
+    except _re.error as e:
+        return {"success": False, "error_msg": f"无效的正则表达式 '{query}': {e}", "results": []}
+    glob_re = None
+    if glob:
+        try:
+            glob_re = _re.compile(_re.escape(glob).replace(r"\*", ".*").replace(r"\?", "."))
+        except _re.error:
+            glob_re = None
+
+    matches: list[dict] = []
+    truncated = False
+    import time
+    deadline = time.time() + timeout
+    try:
+        for dirpath, dirnames, filenames in os.walk(root_path):
+            if time.time() > deadline:
+                return {"success": False, "error_msg": f"搜索超时(超过 {timeout} 秒),请缩小搜索范围", "results": []}
+            # 裁剪忽略目录
+            dirnames[:] = [d for d in dirnames if d not in _PY_FALLBACK_IGNORE_DIRS]
+            for name in filenames:
+                if glob_re and not glob_re.search(name):
+                    continue
+                fpath = os.path.join(dirpath, name)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        for lineno, line in enumerate(f, 1):
+                            if pattern.search(line):
+                                matches.append({
+                                    "file": fpath,
+                                    "line_number": lineno,
+                                    "line_content": line.rstrip("\n"),
+                                })
+                                if len(matches) >= max_results:
+                                    truncated = True
+                                    break
+                            if time.time() > deadline:
+                                return {"success": False, "error_msg": f"搜索超时(超过 {timeout} 秒),请缩小搜索范围", "results": []}
+                        if truncated:
+                            break
+                except (OSError, UnicodeDecodeError, PermissionError):
+                    continue
+            if truncated:
+                break
+    except OSError as e:
+        return {"success": False, "error_msg": f"遍历失败: {e}", "results": []}
     return {
         "success": True,
         "error_msg": None,
         "results": matches,
         "truncated": truncated,
+        "fallback": True,
+        "note": note or "ripgrep 不可用，已使用 Python 内置搜索（较慢，请考虑安装 ripgrep）",
     }
 
 # 帮助Agent找到文件中具体的某一部分，然后再实施替换
@@ -277,27 +386,31 @@ def search_file_with_name(
     # 这样能复用 ripgrep 的 .gitignore / 隐藏文件过滤逻辑，避免扫到 node_modules。
     results: list[dict] = []
     use_walk = False
+    rg_path = _find_rg()
     try:
-        # -S 让 rg 输出用 NUL 分隔，避免文件名含空格/quoting 问题
-        proc = subprocess.run(
-            ["rg", "--files", "-S", "--hidden", root],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        if proc.returncode not in (0, 1):  # 1 = 无匹配，是正常
-            use_walk = True
+        if rg_path:
+            proc = subprocess.run(
+                [rg_path, "--files", "-S", "--hidden", root],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout,
+            )
+            if proc.returncode not in (0, 1):  # 1 = 无匹配，是正常
+                use_walk = True
+            else:
+                needle = file_name.lower()
+                for line in proc.stdout.splitlines():
+                    if not line:
+                        continue
+                    base = os.path.basename(line)
+                    if needle in base.lower():
+                        results.append({
+                            "file": line,
+                            "name": base,
+                        })
+                        if len(results) >= max_results:
+                            break
         else:
-            needle = file_name.lower()
-            for line in proc.stdout.splitlines():
-                if not line:
-                    continue
-                base = os.path.basename(line)
-                if needle in base.lower():
-                    results.append({
-                        "file": line,                              # 完整相对/绝对路径
-                        "name": base,                            # 文件名本身
-                    })
-                    if len(results) >= max_results:
-                        break
+            use_walk = True
     except FileNotFoundError:
         use_walk = True
     except subprocess.TimeoutExpired:
@@ -306,7 +419,7 @@ def search_file_with_name(
             "error_msg": f"查找超时(超过 {timeout} 秒)，请缩小 root_path 或减少 node_modules",
             "results": [],
         }
-    except Exception as e:
+    except Exception:
         use_walk = True
 
     # 回退：ripgrep 不可用时用 os.walk
