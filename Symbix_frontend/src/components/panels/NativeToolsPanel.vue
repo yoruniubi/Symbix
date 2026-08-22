@@ -17,7 +17,7 @@
             </svg>
             {{ tool.function.name }}
           </div>
-          <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px;">{{ tool.function.description }}</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px; word-break:break-word; overflow-wrap:anywhere; min-width:0;">{{ tool.function.description }}</div>
         </div>
         <n-empty v-if="nativeToolList.length === 0" :description="$t('nativeToolsPanel.empty')" size="small" style="margin-top:20px;" />
       </div>

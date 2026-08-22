@@ -67,9 +67,9 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
                   <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                 </svg>
-                {{ tool.function.name }}
+                {{ formatMcpToolName(tool.function.name) }}
               </div>
-              <div class="mcp-tool-desc">{{ tool.function.description }}</div>
+              <div class="mcp-tool-desc">{{ formatMcpToolDesc(tool.function.name, tool.function.description) }}</div>
             </div>
           </div>
         </div>
@@ -93,6 +93,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
+import { getMcpToolI18n } from '@/utils/mcpToolI18n'
 
 const props = withDefaults(defineProps<{
   activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null
@@ -151,6 +152,16 @@ function handleRemoveMcp(serverId: string) {
 
 function handleRefresh() {
   emit('refresh')
+}
+
+function formatMcpToolName(toolName: string): string {
+  const i18n = getMcpToolI18n(toolName)
+  return i18n?.name || toolName
+}
+
+function formatMcpToolDesc(toolName: string, originalDesc: string): string {
+  const i18n = getMcpToolI18n(toolName)
+  return i18n?.description || originalDesc
 }
 </script>
 
