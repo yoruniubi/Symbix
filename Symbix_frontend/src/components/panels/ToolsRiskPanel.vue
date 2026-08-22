@@ -1,6 +1,6 @@
 <template>
   <transition name="panel-slide">
-    <div ref="panelEl" class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'risk'">
+    <div class="side-panel" :class="{ 'is-resizing': isResizing }" :style="{ width: `${panelWidth}px` }" v-if="activePanel === 'risk'">
       <div class="panel-resize-handle" :title="$t('common.pullToResize')" @mousedown="startResize" />
       <div class="side-panel-header">
         <span class="side-panel-title">{{ $t('riskPanel.title') }}</span>
@@ -49,7 +49,7 @@
         <template v-else>
           <div class="risk-summary">
             <n-text depth="3" style="font-size:16px;">{{ $t('riskPanel.summary', { n: effectiveCount }) }}</n-text>
-            <div class="risk-hint">{{ $t('riskPanel.dragHint') }}</div>
+            <div class="risk-hint">{{ $t('riskPanel.levelHint') }}</div>
           </div>
         </template>
 
@@ -75,6 +75,13 @@
                   {{ entry.rule.source === 'override' ? $t('riskPanel.sourceOverride') : $t('riskPanel.sourceDefault') }}
                 </span>
                 <div class="risk-tool-ops" @click.stop>
+                  <n-dropdown trigger="click" size="small" :options="levelMenuOptions" @select="(k: string) => changeLevel(entry.name, k as Level)">
+                    <n-button size="tiny" quaternary class="level-btn" :class="`level-${entry.rule.level}`">
+                      <span class="risk-level-dot" :style="{ background: levelColor(entry.rule.level) }"></span>
+                      {{ levelLabel(entry.rule.level) }}
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-left:2px;"><polygon points="6,9 12,15 18,9"/></svg>
+                    </n-button>
+                  </n-dropdown>
                   <n-button v-if="entry.rule.source === 'override'" size="tiny" quaternary type="error" class="panel-icon-btn sm"
                     :title="$t('riskPanel.deleteOverride')" @click="removeOverride(entry.name)">
                     <template #icon>
@@ -97,21 +104,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
-import Sortable from 'sortablejs'
-
 type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs'
 type Level = 'safe' | 'medium' | 'high'
 type RuleEntry = { name: string; rule: any }
-
 const props = defineProps<{ activePanel: Panel | null }>()
 const emit = defineEmits<{ (e: 'update:activePanel', value: Panel | null): void }>()
 const { t } = useI18n()
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000'
 const { width: panelWidth, isResizing, startResize } = useResizablePanel({ storageKey: 'symbix-panel-width-risk' })
-
 const rules = ref<Record<string, any>>({})
 const loading = ref(false)
 const adding = ref(false)
@@ -120,10 +123,8 @@ const testing = ref(false)
 const testResult = ref<any>(null)
 const expandedLevels = ref<Set<Level>>(new Set(['safe', 'medium', 'high']))
 const expandedTools = ref<Set<string>>(new Set())
-
 const form = ref({ tool_name: '', level: 'medium', reason: '' })
 const testForm = ref({ tool_name: 'run_command', arguments: '{}' })
-
 const levelOptions = [
   { label: 'Safe', value: 'safe' },
   { label: 'Medium', value: 'medium' },
@@ -149,46 +150,14 @@ const groups = computed(() =>
       }
       return { level, label: groupMeta[level].label, color: groupMeta[level].color, items }
     })
-)
-
-const panelEl = ref<HTMLElement | null>(null)
-const sortableInstances: Sortable[] = []
-
-function destroySortables() {
-  for (const inst of sortableInstances) inst.destroy()
-  sortableInstances.length = 0
+  )
+function changeLevel(toolName: string, level: Level) {
+  applyLevel(toolName, level)
 }
-
-function setupSortables() {
-  destroySortables()
-  const root = panelEl.value
-  if (!root) return
-  const lists = root.querySelectorAll<HTMLElement>('.risk-card-tools[data-level]')
-  lists.forEach((list) => {
-    const inst = Sortable.create(list, {
-      group: 'risk-tools',
-      animation: 140,
-      handle: '.risk-tool-head',
-      ghostClass: 'drag-ghost',
-      chosenClass: 'drag-chosen',
-      dragClass: 'drag-dragging',
-      filter: '.risk-tool-ops',
-      preventOnFilter: false,
-      onEnd: handleDrop,
-    })
-    sortableInstances.push(inst)
-  })
-}
-
-async function handleDrop(evt: any) {
-  const fromLevel = evt.from.getAttribute('data-level') as Level | null
-  const toLevel = evt.to.getAttribute('data-level') as Level | null
-  const toolName = evt.item.getAttribute('data-tool') as string | null
-  if (!fromLevel || !toLevel || !toolName) return
-  if (fromLevel === toLevel) return
-  await applyLevel(toolName, toLevel)
-}
-
+const levelMenuOptions = validLevels.map((lv) => ({
+  label: t(groupMeta[lv].label),
+  key: lv,
+}))
 async function applyLevel(toolName: string, level: Level, reason?: string) {
   const prev = rules.value[toolName] || ({} as any)
   const r = reason !== undefined ? reason : (prev?.source === 'override' ? (prev?.reason || '') : '')
@@ -201,11 +170,14 @@ async function applyLevel(toolName: string, level: Level, reason?: string) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     rules.value = data.rules || {}
-    ;(window as any).$message?.success?.(t('riskPanel.dragSuccess', { tool: toolName, level: t(groupMeta[level].label) }))
+    ;(window as any).$message?.success?.(t('riskPanel.levelChanged', { tool: toolName, level: t(groupMeta[level].label) }))
   } catch (e: any) {
-    ;(window as any).$message?.error?.(t('riskPanel.dragFail', { msg: e.message }))
+    ;(window as any).$message?.error?.(t('riskPanel.levelFail', { msg: e.message }))
     await loadRules()
   }
+}
+function levelLabel(level: string) {
+  return t((groupMeta as any)[level]?.label || 'riskPanel.groupSafe')
 }
 
 function toggleLevel(level: Level) {
@@ -297,15 +269,6 @@ function handleClose() {
 watch(() => props.activePanel, (panel) => {
   if (panel === 'risk') loadRules()
 })
-watch(groups, async () => {
-  await nextTick()
-  setupSortables()
-})
-watch(expandedLevels, async () => {
-  await nextTick()
-  setupSortables()
-})
-onBeforeUnmount(destroySortables)
 defineExpose({ refresh: loadRules })
 </script>
 
@@ -355,18 +318,19 @@ defineExpose({ refresh: loadRules })
 .risk-card-tools { padding:6px 4px 2px 14px; }
 .risk-tool-item { margin-top:8px; padding:8px; border-radius:var(--radius-md); background:var(--surface-hover); border:1px solid transparent; }
 .risk-tool-item:hover { background:var(--surface-raised); }
-.risk-tool-head { display:flex; align-items:center; gap:4px; cursor:grab; }
-.risk-tool-head:active { cursor:grabbing; }
-.risk-tool-item.sortable-ghost { opacity:0.4; }
-.risk-tool-item.drag-ghost { opacity:0.4; background:var(--surface-raised); }
-.risk-tool-item.drag-chosen { box-shadow:0 0 0 1px var(--accent-300); }
-.risk-tool-item.drag-dragging { opacity:0.85; }
+.risk-tool-head { display:flex; align-items:center; gap:4px; cursor:pointer; }
+.risk-tool-head:active { cursor:default; }
 .risk-tool-icon { flex-shrink:0; color:var(--accent-300,#F7A85B); margin-left:2px; }
 .risk-tool-name { font-size:13px; color:var(--accent-300,#F7A85B); line-height:1.35; word-break:break-word; overflow-wrap:anywhere; }
 .risk-source-badge { padding:1px 6px; border-radius:4px; font-size:10px; line-height:1.4; flex-shrink:0; margin-left:auto; }
 .src-default { color:var(--text-muted); background:var(--surface-raised); }
 .src-override { color:var(--accent-300); background:var(--accent-soft); }
 .risk-tool-ops { display:flex; align-items:center; gap:2px; flex-shrink:0; margin-left:2px; }
+.level-btn { height:22px!important; font-size:10px!important; padding:0 4px!important; border-radius:6px!important; color:var(--text-secondary)!important; }
+.level-btn .risk-level-dot { margin:0 3px 0 0; }
+.level-btn.level-safe { color:var(--ok,#4ade80)!important; }
+.level-btn.level-medium { color:var(--warn,#facc15)!important; }
+.level-btn.level-high { color:var(--error,#f87171)!important; }
 .risk-tool-detail { font-size:11px; color:var(--text-muted); margin-top:6px; margin-left:24px; line-height:1.45; white-space:pre-wrap; }
 .risk-tool-detail-inline { margin-left:2px; font-size:11px; color:var(--text-muted); line-height:1.45; min-width:0; flex:1; overflow-wrap:anywhere; }
 .risk-test { margin-top:22px; }

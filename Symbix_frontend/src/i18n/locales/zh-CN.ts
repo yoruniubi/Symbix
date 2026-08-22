@@ -174,15 +174,15 @@ export default {
     deleteOverride: '移除覆盖(恢复默认)',
     noReason: '(无说明)',
     overrideHint: '为工具设置自定义等级;默认规则在覆盖下层保持不变。',
-    dragHint: '拖拽工具到另一等级卡片可快速改等级;点工具名展开查看说明。删除“自定义”徽章可恢复默认。',
+    levelHint: '点每个工具旁的等级按钮,选择 Safe / Medium / High 即可随时调整。',
     testTitle: '试测工具',
     testBtn: '分级',
     addSuccess: '覆盖已保存',
     addFail: '保存失败: {msg}',
     deleteFail: '移除失败: {msg}',
     loadFail: '加载规则失败: {msg}',
-    dragSuccess: '已将 {tool} 调整为「{level}」',
-    dragFail: '拖拽保存失败: {msg}',
+    levelChanged: '已将 {tool} 调整为「{level}」',
+    levelFail: '调整失败: {msg}',
   },
 
   // ===== Job Schedule Panel =====

@@ -175,15 +175,15 @@ export default {
     deleteOverride: 'Remove override (restore default)',
     noReason: '(no description)',
     overrideHint: 'Set a custom level for a tool. Default rules stay intact below overrides.',
-    dragHint: 'Drag a tool to another level card to change its level; click its name to expand the note. Remove a “custom” badge to restore the default.',
+    levelHint: 'Click the level button beside each tool to pick Safe / Medium / High anytime.',
     testTitle: 'Test a tool',
     testBtn: 'Classify',
     addSuccess: 'Override saved',
     addFail: 'Failed to save: {msg}',
     deleteFail: 'Failed to remove: {msg}',
     loadFail: 'Failed to load rules: {msg}',
-    dragSuccess: 'Moved {tool} to “{level}”',
-    dragFail: 'Drag save failed: {msg}',
+    levelChanged: 'Moved {tool} to “{level}”',
+    levelFail: 'Adjustment failed: {msg}',
   },
 
   // ===== Job Schedule Panel =====

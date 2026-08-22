@@ -19,7 +19,6 @@
     "@tauri-apps/plugin-os": "^2.3.2",
     "markstream-vue": "^1.0.7-beta.5",
     "pixi.js": "^8.19.0",
-    "sortablejs": "^1.15.7",
     "vue": "^3.5.13",
     "vue-i18n": "^11.4.8",
     "vue-router": "^5.0.6"
@@ -27,7 +26,6 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.2.0",
-    "@types/sortablejs": "^1.15.9",
     "@vitejs/plugin-vue": "^5.2.1",
     "naive-ui": "^2.44.1",
     "typescript": "^7.0.2",
