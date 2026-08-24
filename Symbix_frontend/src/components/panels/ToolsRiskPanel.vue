@@ -318,14 +318,14 @@ defineExpose({ refresh: loadRules })
 .risk-card-tools { padding:6px 4px 2px 14px; }
 .risk-tool-item { margin-top:8px; padding:8px; border-radius:var(--radius-md); background:var(--surface-hover); border:1px solid transparent; }
 .risk-tool-item:hover { background:var(--surface-raised); }
-.risk-tool-head { display:flex; align-items:center; gap:4px; cursor:pointer; }
+.risk-tool-head { display:flex; align-items:center; gap:4px; cursor:pointer; min-width:0; }
 .risk-tool-head:active { cursor:default; }
 .risk-tool-icon { flex-shrink:0; color:var(--accent-300,#F7A85B); margin-left:2px; }
-.risk-tool-name { font-size:13px; color:var(--accent-300,#F7A85B); line-height:1.35; word-break:break-word; overflow-wrap:anywhere; }
+.risk-tool-name { font-size:13px; color:var(--accent-300,#F7A85B); line-height:1.35; min-width:0; flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .risk-source-badge { padding:1px 6px; border-radius:4px; font-size:10px; line-height:1.4; flex-shrink:0; margin-left:auto; }
 .src-default { color:var(--text-muted); background:var(--surface-raised); }
 .src-override { color:var(--accent-300); background:var(--accent-soft); }
-.risk-tool-ops { display:flex; align-items:center; gap:2px; flex-shrink:0; margin-left:2px; }
+.risk-tool-ops { display:flex; align-items:center; gap:2px; flex-shrink:0; margin-left:2px; white-space:nowrap; }
 .level-btn { height:22px!important; font-size:10px!important; padding:0 4px!important; border-radius:6px!important; color:var(--text-secondary)!important; }
 .level-btn .risk-level-dot { margin:0 3px 0 0; }
 .level-btn.level-safe { color:var(--ok,#4ade80)!important; }
