@@ -71,9 +71,6 @@
                   <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                 </svg>
                 <span class="risk-tool-name">{{ entry.name }}</span>
-                <span class="risk-source-badge" :class="entry.rule.source === 'override' ? 'src-override' : 'src-default'">
-                  {{ entry.rule.source === 'override' ? $t('riskPanel.sourceOverride') : $t('riskPanel.sourceDefault') }}
-                </span>
                 <div class="risk-tool-ops" @click.stop>
                   <n-dropdown trigger="click" size="small" :options="levelMenuOptions" @select="(k: string) => changeLevel(entry.name, k as Level)">
                     <n-button size="tiny" quaternary class="level-btn" :class="`level-${entry.rule.level}`">
@@ -321,11 +318,8 @@ defineExpose({ refresh: loadRules })
 .risk-tool-head { display:flex; align-items:center; gap:4px; cursor:pointer; min-width:0; }
 .risk-tool-head:active { cursor:default; }
 .risk-tool-icon { flex-shrink:0; color:var(--accent-300,#F7A85B); margin-left:2px; }
-.risk-tool-name { font-size:13px; color:var(--accent-300,#F7A85B); line-height:1.35; min-width:0; flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.risk-source-badge { padding:1px 6px; border-radius:4px; font-size:10px; line-height:1.4; flex-shrink:0; margin-left:auto; }
-.src-default { color:var(--text-muted); background:var(--surface-raised); }
-.src-override { color:var(--accent-300); background:var(--accent-soft); }
-.risk-tool-ops { display:flex; align-items:center; gap:2px; flex-shrink:0; margin-left:2px; white-space:nowrap; }
+.risk-tool-name { font-size:13px; color:var(--accent-300,#F7A85B); line-height:1.35; min-width:0; flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.risk-tool-ops { display:flex; align-items:center; gap:2px; flex-shrink:0; margin-left:auto; white-space:nowrap; }
 .level-btn { height:22px!important; font-size:10px!important; padding:0 4px!important; border-radius:6px!important; color:var(--text-secondary)!important; }
 .level-btn .risk-level-dot { margin:0 3px 0 0; }
 .level-btn.level-safe { color:var(--ok,#4ade80)!important; }
