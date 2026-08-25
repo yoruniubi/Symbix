@@ -1,13 +1,7 @@
-"""
-工具调用风险分级器
-分层配置：代码内默认规则（ground truth）+ JSON override（前端可配）。
-override 只能整体覆盖某工具的等级，不能改默认规则本身；删 override 即恢复默认。
-"""
 from typing import Tuple, Union, Optional
 import os
 import re
 import json
-
 
 class ToolRiskLevel:
     """风险等级常量"""

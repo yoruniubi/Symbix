@@ -144,7 +144,11 @@ async def generate_title(req: GenerateTitleRequest):
     # 检查 Provider 是否可用，避免未配置 API Key 时返回 500
     try:
         provider = provider_registry.get_active()
-        if not provider.api_key:
+        # 前端可选传入当前会话实际使用的 model/api_base/api_key，避免用 providers.json 里的过期 default
+        use_model = req.model or provider.model
+        use_base = req.api_base or provider.api_base
+        use_key = req.api_key or provider.api_key
+        if not use_key:
             return {"status": "skipped", "reason": "未配置 API Key"}
     except Exception:
         return {"status": "skipped", "reason": "Provider 未就绪"}
@@ -159,6 +163,9 @@ async def generate_title(req: GenerateTitleRequest):
             history=[],
             registry=skill_registry,
             tools=None,
+            override_model=use_model or None,
+            override_api_base=use_base or None,
+            override_api_key=use_key or None,
         )
         title = result.get("content", "").strip().strip('"').strip("'")[:30]
         if len(title) > 15:

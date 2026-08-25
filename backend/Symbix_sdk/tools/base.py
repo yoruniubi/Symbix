@@ -1,4 +1,3 @@
-# tools/base.py
 from dataclasses import dataclass
 from typing import Callable, Any
 

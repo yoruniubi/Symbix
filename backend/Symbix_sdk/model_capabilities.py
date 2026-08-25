@@ -1,19 +1,3 @@
-"""
-模型视觉能力探测模块
-
-设计思路：
-1. 不依赖静态规则列表（永远列不完，新模型无法覆盖）
-2. 通过实际试探判断：发送一个带 image_url 的最小请求，
-   如果 API 返回 400/422 等错误，说明不支持视觉
-3. 探测结果带 TTL 缓存，避免重复请求
-4. 提供静态规则作为「快速预判」：已知确定不支持的纯文本模型
-   可直接跳过探测，省一次请求
-
-探测策略：
-- 仅在用户上传图片时触发探测
-- 缓存结果直到 TTL 过期或主动清除
-- 探测失败（网络错误等）保守降级为「不支持」
-"""
 from __future__ import annotations
 
 import time
@@ -31,7 +15,6 @@ _TINY_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkY"
     "PhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
-
 
 def clear_vision_cache(model: Optional[str] = None) -> None:
     """

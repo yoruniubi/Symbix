@@ -981,6 +981,9 @@ async function tryGenerateTitle(sessionId: string) {
       body: JSON.stringify({
         session_id: sessionId,
         context: recent,
+        model: settings.value.model || currentModel.value,
+        api_base: settings.value.baseUrl || '',
+        api_key: settings.value.apiKey || '',
       }),
     })
     if (res.ok) {

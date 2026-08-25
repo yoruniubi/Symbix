@@ -1,4 +1,3 @@
-# tools/registry.py
 import json as _json
 from .native_tools import NativeToolkit
 from Symbix_sdk.mcp.connector import McpServerManager

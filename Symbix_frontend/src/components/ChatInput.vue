@@ -1,9 +1,12 @@
 <template>
-  <div class="input-container">
+  <div class="input-container" @paste="handlePaste">
     <!-- 附件预览区 -->
     <div v-if="attachments.length > 0" class="attachment-preview">
-      <div v-for="(file, idx) in attachments" :key="idx" class="file-chip">
-        <n-icon size="16" class="file-chip-icon">
+      <div v-for="(file, idx) in attachments" :key="idx" class="file-chip" :class="{ 'is-image': !!file.previewSrc }">
+        <!-- 图片附件:显示缩略图预览 -->
+        <img v-if="file.previewSrc" :src="file.previewSrc" class="file-chip-thumb" alt="" />
+        <!-- 非图片附件:文件图标 -->
+        <n-icon v-else size="16" class="file-chip-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
@@ -131,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 
@@ -142,6 +145,8 @@ export interface AttachmentItem {
   size?: number
   kind?: string
   preview?: string
+  /** 本地即时缩略图预览(dataURL / blobURL),粘贴或选择图片立即展示 */
+  previewSrc?: string
   status?: 'uploading' | 'ok' | 'error'
   error?: string
   file?: File
@@ -222,6 +227,16 @@ const canSend = computed(() => {
   return !busy && (textOk || readyFiles.length > 0)
 })
 
+/** 生成图片本地即时预览(dataURL),供附件区缩略图显示 */
+function makeImagePreview(raw: File): string | undefined {
+  if (!isImageFile(raw.name, raw.type)) return undefined
+  try {
+    return URL.createObjectURL(raw)
+  } catch {
+    return undefined
+  }
+}
+
 const currentModelLabel = computed(() => {
   const opt = props.modelOptions.find(o => o.value === props.currentModel)
   return opt?.label || props.currentModel || t('chatInput.selectModel')
@@ -231,9 +246,17 @@ function handleSend() {
   const text = inputValue.value.trim()
   if (!canSend.value || props.loading) return
   const files = attachments.value.filter(a => a.status === 'ok' || (!!a.path && a.status !== 'error'))
+  attachments.value.forEach(revokePreview)
   attachments.value = []
   emit('send', text || '', files)
   inputValue.value = ''
+}
+
+/** 释放 blob URL,避免内存泄漏 */
+function revokePreview(a: AttachmentItem) {
+  if (a.previewSrc && a.previewSrc.startsWith('blob:')) {
+    try { URL.revokeObjectURL(a.previewSrc) } catch { /* ignore */ }
+  }
 }
 
 async function handleFileUpload({ file, onFinish, onError }: any) {
@@ -242,19 +265,30 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
     onFinish?.()
     return
   }
+  await uploadFile(raw)
+  onFinish?.()
+}
+
+/**
+ * 上传单个文件到后端并加入附件列表(status: uploading -> ok/error)
+ * 同时生成图片即时缩略图预览。粘贴图片与选择上传共用此逻辑。
+ */
+async function uploadFile(raw: File) {
   const item: AttachmentItem = {
     name: raw.name,
     size: raw.size,
     mime: raw.type,
     status: 'uploading',
     file: raw,
+    previewSrc: makeImagePreview(raw),
   }
+  // 立即生成本地预览(在 upload 完成前就能看到缩略图)
   attachments.value.push(item)
   const idx = attachments.value.length - 1
   try {
     const form = new FormData()
     form.append('files', raw, raw.name)
-    // 优先用父组件传入的会话 id；新对话尚未建 session 时用 pending 目录
+    // 优先用父组件传入的会话 id;新对话尚未建 session 时用 pending 目录
     form.append('session_id', props.sessionId || 'pending')
     const res = await fetch(`${BACKEND_URL}/upload`, {
 
@@ -276,7 +310,7 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
         status: 'ok',
         file: undefined,
       }
-      // 如果是图片，检查当前模型是否支持视觉
+      // 如果是图片,检查当前模型是否支持视觉
       if (isImageFile(raw.name, raw.type)) {
         const vision = await checkModelVision()
         if (!vision) {
@@ -291,7 +325,6 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
       }
       messageUi.error(t('chatInput.uploadFailed', { name: raw.name }))
     }
-    onFinish?.()
   } catch (e: any) {
     attachments.value[idx] = {
       ...attachments.value[idx],
@@ -299,11 +332,35 @@ async function handleFileUpload({ file, onFinish, onError }: any) {
       error: e?.message || String(e),
     }
     messageUi.error(t('chatInput.uploadFailed', { name: raw.name }))
-    onError?.(e)
   }
 }
 
+/** 处理 Ctrl+V 粘贴:提取剪贴板中的图片文件(截图/复制的图)并走上传预览流程 */
+async function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items || []
+  if (items.length === 0) return
+  const imageFiles: File[] = []
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile()
+      if (f) imageFiles.push(f)
+    }
+  }
+  if (imageFiles.length === 0) return
+  // 阻止浏览器将图片二进制数据粘贴为文本
+  e.preventDefault()
+  // 剪贴板粘贴的图片可能无文件名,补充一个可读名字
+  const named = imageFiles.map((f, i) => {
+    if (f.name) return f
+    const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+    return new File([f], `pasted-image-${Date.now()}-${i + 1}.${ext}`, { type: f.type })
+  })
+  for (const f of named) await uploadFile(f)
+}
+
 function removeAttachment(idx: number) {
+  revokePreview(attachments.value[idx])
   attachments.value.splice(idx, 1)
 }
 
@@ -339,6 +396,11 @@ function handleInputKeydown(e: KeyboardEvent) {
     handleSend()
   }
 }
+
+// 组件卸载时释放所有 blob URL
+onBeforeUnmount(() => {
+  attachments.value.forEach(revokePreview)
+})
 </script>
 
 <style scoped>
@@ -380,6 +442,24 @@ function handleInputKeydown(e: KeyboardEvent) {
   padding: 4px 6px 4px 10px;
   font-size: 12px;
   color: var(--text-primary);
+}
+.file-chip.is-image {
+  padding: 4px;
+}
+/* 图片附件缩略图预览 */
+.file-chip-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: var(--radius-sm, 4px);
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: transform var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+.file-chip-thumb:hover {
+  transform: scale(1.06);
 }
 .file-chip-icon {
   color: var(--accent-500, #EF6B6E);

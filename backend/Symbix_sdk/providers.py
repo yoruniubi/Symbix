@@ -11,9 +11,6 @@ class ProviderConfig:
     model: str          # litellm 格式，如 "anthropic/claude-sonnet-4-6" 或 "ollama/qwen2.5"
     api_key: Optional[str] = None
     api_base: Optional[str] = None
-    # ── 能力位（显式覆盖；None=由 provider_class 默认推断）
-    # 这套位以 pi 的 capability flag 为参照：显式开关 + 不支持时优雅降级，
-    # 以便“死命测”不会因模型不支持 stdin /vision / reasoning / cache 而 422/500。
     supports_streaming: Optional[bool] = None
     supports_tools: Optional[bool] = None
     supports_reasoning: Optional[bool] = None       # reasoning_effort / thinking 参数

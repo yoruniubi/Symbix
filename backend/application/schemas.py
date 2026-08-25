@@ -80,6 +80,9 @@ class RenameSessionRequest(BaseModel):
 class GenerateTitleRequest(BaseModel):
     session_id: str = ""
     context: str = ""
+    model: str = ""
+    api_base: str = ""
+    api_key: str = ""
 
 
 class InstallNpmRequest(BaseModel):

@@ -1,9 +1,3 @@
-# tools/tool_setup.py
-"""统一注册所有内置工具到 NativeToolkit。
-
-各模块分别导出 *_TOOLS_SCHEMAS 字典，
-本文件按需组合，避免 native_toolkit.py 膨胀。
-"""
 from __future__ import annotations
 
 from Symbix_sdk.tools.builtin.file_tools import FILE_TOOLS_SCHEMAS

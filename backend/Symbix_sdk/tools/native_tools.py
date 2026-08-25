@@ -1,22 +1,3 @@
-# tools/native_tools.py
-"""
-本地原生工具包 — 核心调度逻辑
-
-NativeToolkit 负责：
-- 注册工具函数 + JSON Schema
-- 将工具列表转为 OpenAI function calling 格式
-- 执行工具调用并返回结果
-- 管理 skill 工具的动态注册
-
-具体的工具实现已拆分到：
-  - file_tools.py      (edit_file / list_files / read_file / parse_file / search_files)
-  - pet_tools.py        (emit_pet_action)
-  - skill_tools.py      (create_skill)
-  - terminal_tools.py   (open_terminal)
-
-统一注册入口:
-  - tool_setup.py       (setup_builtin_tools)
-"""
 from __future__ import annotations
 from typing import Callable, Any
 import json

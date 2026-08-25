@@ -1,13 +1,3 @@
-# tools/file_pipeline.py
-"""
-用户附件上传、解析、沙箱与多模态注入。
-
-职责：
-1. 将上传文件安全落盘到 uploads/{session_id}/
-2. 按扩展名解析文本 / 表格 / PDF / DOCX / 图片
-3. 把解析结果注入 LLM 用户消息（文本 + 可选 image_url parts）
-4. 为 native read_file/edit_file 提供路径沙箱校验
-"""
 from __future__ import annotations
 
 import base64

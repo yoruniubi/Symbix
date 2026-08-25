@@ -1,7 +1,3 @@
-"""
-SymbixClient — 核心 AI 对话客户端
-流式路径绕过 litellm，直接用 HTTP SSE 请求上游 API
-"""
 import json
 import asyncio
 import httpx
