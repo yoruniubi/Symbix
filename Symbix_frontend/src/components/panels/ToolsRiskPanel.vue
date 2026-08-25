@@ -53,44 +53,55 @@
           </div>
         </template>
 
-        <!-- 按等级分组卡片 -->
-        <div v-for="group in groups" :key="group.level" class="risk-card">
-          <div class="risk-card-header" :class="`level-${group.level}`" @click="toggleLevel(group.level)">
-            <svg class="risk-expand-icon" :class="{ expanded: expandedLevels.has(group.level) }" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
-            <span class="risk-level-dot" :style="{ background: group.color }"></span>
-            <span class="risk-card-title">{{ $t(group.label) }}</span>
-            <span class="risk-tool-count">{{ group.items.length }}</span>
+        <!-- 按来源分组,每组下再按等级分组卡片 -->
+        <div v-for="sgroup in sourceGroups" :key="sgroup.source" class="risk-source-section">
+          <div class="risk-source-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+            <span class="risk-source-title">{{ $t(sgroup.label) }}</span>
+            <span class="risk-source-count">{{ sgroup.levelGroups.reduce((acc, g) => acc + g.items.length, 0) }}</span>
           </div>
-          <div v-if="expandedLevels.has(group.level)"
-               :data-level="group.level"
-               class="risk-card-tools">
-            <div v-for="entry in group.items" :key="entry.name" :data-tool="entry.name" class="risk-tool-item">
-              <div class="risk-tool-head" @click="toggleTool(entry.name)">
-                <svg class="risk-expand-icon sm" :class="{ expanded: expandedTools.has(entry.name) }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
-                <svg class="risk-tool-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                </svg>
-                <span class="risk-tool-name">{{ entry.name }}</span>
-                <div class="risk-tool-ops" @click.stop>
-                  <n-dropdown trigger="click" size="small" :options="levelMenuOptions" @select="(k: string) => changeLevel(entry.name, k as Level)">
-                    <n-button size="tiny" quaternary class="level-btn" :class="`level-${entry.rule.level}`">
-                      <span class="risk-level-dot" :style="{ background: levelColor(entry.rule.level) }"></span>
-                      {{ levelLabel(entry.rule.level) }}
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-left:2px;"><polygon points="6,9 12,15 18,9"/></svg>
+          <div v-for="group in sgroup.levelGroups" :key="group.level" class="risk-card">
+            <div class="risk-card-header" :class="`level-${group.level}`" @click="toggleLevel(group.level)">
+              <svg class="risk-expand-icon" :class="{ expanded: expandedLevels.has(group.level) }" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
+              <span class="risk-level-dot" :style="{ background: group.color }"></span>
+              <span class="risk-card-title">{{ $t(group.label) }}</span>
+              <span class="risk-tool-count">{{ group.items.length }}</span>
+            </div>
+            <div v-if="expandedLevels.has(group.level)"
+                 :data-level="group.level"
+                 class="risk-card-tools">
+              <div v-for="entry in group.items" :key="entry.name" :data-tool="entry.name" class="risk-tool-item">
+                <div class="risk-tool-head" @click="toggleTool(entry.name)">
+                  <svg class="risk-expand-icon sm" :class="{ expanded: expandedTools.has(entry.name) }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
+                  <svg class="risk-tool-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                  </svg>
+                  <span class="risk-tool-name">{{ entry.name }}</span>
+                  <div class="risk-tool-ops" @click.stop>
+                    <n-dropdown trigger="click" size="small" :options="levelMenuOptions" @select="(k: string) => changeLevel(entry.name, k as Level)">
+                      <n-button size="tiny" quaternary class="level-btn" :class="`level-${entry.rule.level}`">
+                        <span class="risk-level-dot" :style="{ background: levelColor(entry.rule.level) }"></span>
+                        {{ levelLabel(entry.rule.level) }}
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-left:2px;"><polygon points="6,9 12,15 18,9"/></svg>
+                      </n-button>
+                    </n-dropdown>
+                    <n-button v-if="entry.rule.levelSource === 'override'" size="tiny" quaternary type="error" class="panel-icon-btn sm"
+                      :title="$t('riskPanel.deleteOverride')" @click="removeOverride(entry.name)">
+                      <template #icon>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                      </template>
                     </n-button>
-                  </n-dropdown>
-                  <n-button v-if="entry.rule.source === 'override'" size="tiny" quaternary type="error" class="panel-icon-btn sm"
-                    :title="$t('riskPanel.deleteOverride')" @click="removeOverride(entry.name)">
-                    <template #icon>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-                      </svg>
-                    </template>
-                  </n-button>
+                  </div>
                 </div>
-              </div>
-              <div v-if="expandedTools.has(entry.name)" class="risk-tool-detail">
-                {{ entry.rule.reason || $t('riskPanel.noReason') }}
+                <div v-if="expandedTools.has(entry.name)" class="risk-tool-detail">
+                  {{ entry.rule.reason || $t('riskPanel.noReason') }}
+                </div>
               </div>
             </div>
           </div>
@@ -106,8 +117,15 @@ import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs'
 type Level = 'safe' | 'medium' | 'high'
-type RuleEntry = { name: string; rule: any }
-const props = defineProps<{ activePanel: Panel | null }>()
+type RuleEntry = { name: string; rule: any; source: string; server_id: string }
+type SourceGroup = { source: string; label: string; levelGroups: { level: Level; label: string; color: string; items: RuleEntry[] }[] }
+const props = defineProps<{
+  activePanel: Panel | null
+  nativeToolList?: { type: string; function: { name: string; description?: string; parameters?: any } }[]
+  skillToolList?: { type: string; function: { name: string; description?: string; parameters?: any } }[]
+  mcpToolList?: { type: string; function: { name: string; description?: string; parameters?: any } }[]
+  mcpServerGroups?: { server_id: string; tool_count: number; tools: { type: string; function: { name: string } }[]; error?: string }[]
+}>()
 const emit = defineEmits<{ (e: 'update:activePanel', value: Panel | null): void }>()
 const { t } = useI18n()
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000'
@@ -138,16 +156,32 @@ const groupMeta: Record<Level, { label: string; color: string }> = {
 
 const validLevels: Level[] = ['safe', 'medium', 'high']
 
-const groups = computed(() =>
-  validLevels
-    .map((level) => {
-      const items: RuleEntry[] = []
-      for (const [name, rule] of Object.entries(rules.value)) {
-        if ((rule as any).level === level) items.push({ name, rule })
-      }
-      return { level, label: groupMeta[level].label, color: groupMeta[level].color, items }
-    })
-  )
+const sourceMeta: Record<string, { label: string; icon: string }> = {
+  native: { label: 'riskPanel.groupNative', icon: 'plugins' },
+  skill: { label: 'riskPanel.groupSkill', icon: 'thunderbolt' },
+  mcp: { label: 'riskPanel.groupMcp', icon: 'link' },
+}
+
+function buildLevelGroups(entries: RuleEntry[]) {
+  return validLevels.map((level) => {
+    const items = entries.filter((e) => e.rule.level === level)
+    return { level, label: groupMeta[level].label, color: groupMeta[level].color, items }
+  }).filter((g) => g.items.length > 0)
+}
+
+const sourceGroups = computed<SourceGroup[]>(() => {
+  const buckets: Record<string, { name: string; rule: any; source: string; server_id: string }[]> = {}
+  for (const [name, rule] of Object.entries(rules.value)) {
+    const r = rule as any
+    const src = buckets[r.source] || (buckets[r.source] = [])
+    src.push({ name, rule: r, source: r.source, server_id: r.server_id || '' })
+  }
+  return Object.keys(buckets).map((source) => {
+    const meta = sourceMeta[source] || { label: 'riskPanel.groupMcp', icon: 'link' }
+    return { source, label: meta.label, levelGroups: buildLevelGroups(buckets[source]) }
+  })
+})
+
 function changeLevel(toolName: string, level: Level) {
   applyLevel(toolName, level)
 }
@@ -157,7 +191,7 @@ const levelMenuOptions = validLevels.map((lv) => ({
 }))
 async function applyLevel(toolName: string, level: Level, reason?: string) {
   const prev = rules.value[toolName] || ({} as any)
-  const r = reason !== undefined ? reason : (prev?.source === 'override' ? (prev?.reason || '') : '')
+  const r = reason !== undefined ? reason : (prev?.levelSource === 'override' ? (prev?.reason || '') : '')
   try {
     const res = await fetch(`${BACKEND_URL}/risk/override`, {
       method: 'POST',
@@ -165,8 +199,7 @@ async function applyLevel(toolName: string, level: Level, reason?: string) {
       body: JSON.stringify({ tool_name: toolName, level, reason: r }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    rules.value = data.rules || {}
+    await loadRules()
     ;(window as any).$message?.success?.(t('riskPanel.levelChanged', { tool: toolName, level: t(groupMeta[level].label) }))
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('riskPanel.levelFail', { msg: e.message }))
@@ -190,10 +223,52 @@ function toggleTool(name: string) {
 async function loadRules() {
   loading.value = true
   try {
-    const res = await fetch(`${BACKEND_URL}/risk/rules`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    rules.value = data.rules || {}
+    // 汇总三份工具清单,建立 { name -> { source, server_id } }
+    const sourceMap: Record<string, { source: string; server_id: string }> = {}
+    for (const t of props.nativeToolList || []) {
+      const n = t?.function?.name
+      if (n) sourceMap[n] = { source: 'native', server_id: '' }
+    }
+    for (const t of props.skillToolList || []) {
+      const n = t?.function?.name
+      if (n) sourceMap[n] = { source: 'skill', server_id: '' }
+    }
+    for (const t of props.mcpToolList || []) {
+      const n = t?.function?.name
+      if (n) sourceMap[n] = { source: 'mcp', server_id: '' }
+    }
+    // 若能拿到 server 归属信息则补充 server_id
+    for (const g of props.mcpServerGroups || []) {
+      for (const t of g?.tools || []) {
+        const n = t?.function?.name
+        if (n && sourceMap[n]?.source === 'mcp') sourceMap[n].server_id = g.server_id
+      }
+    }
+
+    const toolNames = Object.keys(sourceMap)
+    let rulesData: Record<string, any> = {}
+    if (toolNames.length > 0) {
+      const res = await fetch(`${BACKEND_URL}/risk/rules/full`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool_names: toolNames }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      rulesData = data.rules || {}
+    }
+    // 合并:levelSource = 等级来源(default/override,来自后端);source = 工具来源(native/skill/mcp,本地判定)
+    const merged: Record<string, any> = {}
+    for (const [name, rule] of Object.entries(rulesData)) {
+      const meta = sourceMap[name] || { source: 'native', server_id: '' }
+      merged[name] = {
+        ...rule,
+        levelSource: rule.source,          // 后端等级来源
+        source: meta.source,               // 工具来源,native/skill/mcp
+        server_id: meta.server_id,
+      }
+    }
+    rules.value = merged
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('riskPanel.loadFail', { msg: e.message }))
   } finally {
@@ -215,8 +290,7 @@ async function saveOverride() {
       body: JSON.stringify(form.value),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    rules.value = data.rules || {}
+    await loadRules()
     adding.value = false
     ;(window as any).$message?.success?.(t('riskPanel.addSuccess'))
   } catch (e: any) {
@@ -230,8 +304,7 @@ async function removeOverride(name: string) {
   try {
     const res = await fetch(`${BACKEND_URL}/risk/override/${encodeURIComponent(name)}`, { method: 'DELETE' })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    rules.value = data.rules || {}
+    await loadRules()
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('riskPanel.deleteFail', { msg: e.message }))
   }
@@ -266,6 +339,17 @@ function handleClose() {
 watch(() => props.activePanel, (panel) => {
   if (panel === 'risk') loadRules()
 })
+// 工具清单可能后于面板打开而异步到达,清单变化时若面板开着则重载
+watch(
+  () => [
+    props.nativeToolList?.length ?? 0,
+    props.skillToolList?.length ?? 0,
+    props.mcpToolList?.length ?? 0,
+  ],
+  () => {
+    if (props.activePanel === 'risk') loadRules()
+  }
+)
 defineExpose({ refresh: loadRules })
 </script>
 
@@ -420,6 +504,35 @@ defineExpose({ refresh: loadRules })
   gap:8px;
 }
 /* 等级卡片 */
+.risk-source-section {
+  margin-top: 12px;
+}
+.risk-source-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+.risk-source-header svg {
+  flex-shrink: 0;
+  color: var(--accent-300);
+}
+.risk-source-title {
+  color: var(--text-primary);
+}
+.risk-source-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  padding: 1px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
 .risk-card {
   margin-top:10px;
 }

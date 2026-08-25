@@ -680,12 +680,15 @@ onMounted(() => {
 
 /* ---- Edit Area ---- */
 .edit-area {
-  max-width: min(72%, 760px);
+  width: min(72%, 760px);
+  min-width: 200px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 .edit-input {
+  width: 100%;
   background: var(--bg-elevated);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-md, 8px);

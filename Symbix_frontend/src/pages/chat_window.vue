@@ -54,6 +54,10 @@
 
       <ToolsRiskPanel
         :active-panel="activePanel"
+        :native-tool-list="nativeToolList"
+        :skill-tool-list="skillToolList"
+        :mcp-tool-list="mcpToolList"
+        :mcp-server-groups="mcpServerGroups"
         @update:active-panel="activePanel = $event"
       />
 
@@ -444,6 +448,36 @@ async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools' | '
       console.log("获取MCP工具列表失败:", err)
     }
     // 按 server 分组获取 + 状态
+    await refreshMcpPanel()
+  } else if (panel === 'risk') {
+    // 风险面板需要全部真实工具全集(native + skill + mcp),先预取再交给面板
+    try {
+      const res = await fetch('http://127.0.0.1:8000/native/tools')
+      if (res.ok) {
+        const data = await res.json()
+        nativeToolList.value = data.tools || []
+      }
+    } catch (err) {
+      console.log('预取 Native 工具失败:', err)
+    }
+    try {
+      const res = await fetch('http://127.0.0.1:8000/skills/tools')
+      if (res.ok) {
+        const data = await res.json()
+        skillToolList.value = data.tools || []
+      }
+    } catch (err) {
+      console.log('预取 Skill 工具失败:', err)
+    }
+    try {
+      const res = await fetch('http://127.0.0.1:8000/mcp/tools')
+      if (res.ok) {
+        const data = await res.json()
+        mcpToolList.value = data.tools || []
+      }
+    } catch (err) {
+      console.log('预取 MCP 工具失败:', err)
+    }
     await refreshMcpPanel()
   }
 }

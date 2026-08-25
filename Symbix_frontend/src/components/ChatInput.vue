@@ -479,7 +479,8 @@ function handleInputKeydown(e: KeyboardEvent) {
   transition: background-color 5000s ease-in-out 0s;
 }
 .chat-input :deep(.n-input__placeholder) {
-  padding: 8px 4px !important;
+  padding: 8px 4px 6px 4px !important;
+  line-height: 1.55;
   color: var(--text-muted);
 }
 
