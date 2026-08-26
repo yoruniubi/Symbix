@@ -162,6 +162,7 @@ class JobRunner:
                 final_text = response.get("content") or final_text
 
             output_snippet = (final_text or "")[:200]
+            output_full = final_text or ""
             self.memory.add(sid, "assistant", final_text or "")
 
             self.checkpoint_recorder.emit_round(
@@ -172,13 +173,13 @@ class JobRunner:
             )
 
             self.storage.update_status(job_id, "ok", None, run_time)
-            self.storage.add_history(job_id, run_time, "ok", output_snippet or "")
+            self.storage.add_history(job_id, run_time, "ok", output_full or "")
             self._notify(job, final_text or "", "ok")
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.storage.update_status(job_id, "error", str(e), run_time)
-            self.storage.add_history(job_id, run_time, "error", output_snippet or "", str(e)[:300])
+            self.storage.add_history(job_id, run_time, "error", output_full or output_snippet or "", str(e) or "")
             self._notify(job, str(e), "error")
         finally:
             if 'original_system_prompt' in locals():

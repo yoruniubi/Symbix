@@ -45,30 +45,74 @@
 
         <template v-else>
           <div v-for="job in jobs" :key="job.id" class="job-item">
-            <div class="job-item-head"><strong>{{ job.name }}</strong><span class="job-state" :class="job.enabled ? 'enabled' : 'paused'">{{ job.enabled ? $t('jobPanel.active') : $t('jobPanel.paused') }}</span></div>
+            <div class="job-item-head">
+              <span class="job-name" :title="job.name">{{ job.name }}</span>
+              <div class="job-badges">
+                <!-- 运行状态徽章(enabled/paused) -->
+                <span class="job-state" :class="job.enabled ? 'enabled' : 'paused'">
+                  <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
+                  {{ job.enabled ? $t('jobPanel.active') : $t('jobPanel.paused') }}
+                </span>
+                <!-- 最近一次执行状态徽章 -->
+                <span v-if="job.last_status" class="job-state last" :class="`status-${job.last_status}`" :title="job.last_error || ''">
+                  <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
+                  {{ statusLabel(job.last_status) }}
+                </span>
+              </div>
+            </div>
             <div class="job-prompt">{{ job.prompt }}</div>
-            <div class="job-meta">{{ triggerLabel(job) }}</div>
-            <div class="job-meta">{{ job.next_run_time ? $t('jobPanel.nextRun', { time: formatDate(job.next_run_time) }) : $t('jobPanel.neverRun') }}</div>
-            <div v-if="job.last_status" class="job-last" :class="`status-${job.last_status}`">{{ statusLabel(job.last_status) }}<span v-if="job.last_error"> · {{ job.last_error }}</span></div>
+            <div class="job-meta">
+              <span class="job-meta-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {{ triggerLabel(job) }}
+              </span>
+              <span class="job-meta-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                {{ $t('jobPanel.nextRun', { time: job.next_run_time ? formatDate(job.next_run_time) : $t('jobPanel.neverRun') }) }}
+              </span>
+              <span v-if="job.last_run_time" class="job-meta-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 12 7 12 7 8 11 8 11 4 13 4 13 16 17 16"/><polyline points="3 17 3 20"/><line x1="7" y1="20" x2="7" y2="24"/><line x1="11" y1="20" x2="11" y2="24"/><line x1="15" y1="20" x2="15" y2="24"/></svg>
+                {{ $t('jobPanel.lastRun', { time: formatDate(job.last_run_time) }) }}
+              </span>
+            </div>
             <div class="job-actions">
-              <n-button size="tiny" quaternary @click="startEdit(job)">{{ $t('jobPanel.edit') }}</n-button>
-              <n-button size="tiny" quaternary @click="runNow(job.id)">{{ $t('jobPanel.runNow') }}</n-button>
-              <n-button size="tiny" quaternary @click="toggleJob(job)">{{ job.enabled ? $t('jobPanel.pause') : $t('jobPanel.resume') }}</n-button>
-              <n-button size="tiny" quaternary @click="openHistory(job.id)">{{ $t('jobPanel.history') }}</n-button>
-              <n-button size="tiny" quaternary type="error" @click="deleteJob(job.id)">{{ $t('jobPanel.delete') }}</n-button>
+              <n-button size="tiny" quaternary class="panel-icon-btn sm" :class="{ 'has-error': !!job.last_error }" :title="$t('jobPanel.edit')" @click="startEdit(job)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </n-button>
+              <n-button size="tiny" quaternary class="panel-icon-btn sm" :title="$t('jobPanel.runNow')" @click="runNow(job.id)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </n-button>
+              <n-button size="tiny" quaternary class="panel-icon-btn sm" :title="job.enabled ? $t('jobPanel.pause') : $t('jobPanel.resume')" @click="toggleJob(job)">
+                <svg v-if="job.enabled" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+              </n-button>
+              <n-button size="tiny" quaternary class="panel-icon-btn sm" :title="$t('jobPanel.history')" @click="openHistory(job.id)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 17 14"/></svg>
+              </n-button>
+              <n-button size="tiny" quaternary type="error" class="panel-icon-btn sm" :title="$t('jobPanel.delete')" @click="deleteJob(job.id)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+              </n-button>
             </div>
           </div>
           <n-empty v-if="!loading && jobs.length === 0" :description="$t('jobPanel.empty')" size="small" style="margin-top:32px" />
         </template>
       </div>
 
-      <n-modal v-model:show="historyVisible" preset="card" :title="$t('jobPanel.history')" style="width:min(560px,90vw)">
-        <div v-for="item in history" :key="`${item.run_time}-${item.job_id}`" class="history-item">
-          <div><span :class="`status-${item.status}`">{{ statusLabel(item.status) }}</span> · {{ formatDate(item.run_time) }}</div>
-          <div v-if="item.output_snippet" class="history-output">{{ item.output_snippet }}</div>
-          <div v-if="item.error" class="history-error">{{ item.error }}</div>
+      <n-modal v-model:show="historyVisible" preset="card" :title="$t('jobPanel.history')" class="job-history-modal" style="width:min(640px,92vw)">
+        <div class="history-list">
+          <div v-for="item in history" :key="`${item.run_time}-${item.job_id}`" class="history-item">
+            <div class="history-head">
+              <span class="job-state last" :class="`status-${item.status}`">
+                <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
+                {{ statusLabel(item.status) }}
+              </span>
+              <span class="history-time">{{ formatDate(item.run_time) }}</span>
+            </div>
+            <div v-if="item.output_snippet" class="history-output">{{ item.output_snippet }}</div>
+            <div v-if="item.error" class="history-error">{{ item.error }}</div>
+          </div>
+          <n-empty v-if="history.length === 0" :description="$t('jobPanel.noHistory')" size="small" />
         </div>
-        <n-empty v-if="history.length === 0" :description="$t('jobPanel.noHistory')" size="small" />
       </n-modal>
     </div>
   </transition>
@@ -81,7 +125,7 @@ import { useResizablePanel } from '@/composables/useResizablePanel'
 
 type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs'
 type TriggerType = 'cron' | 'interval' | 'date'
-type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string }
+type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string }
 type History = { job_id: string; run_time: string; status: 'ok' | 'error' | 'skipped'; output_snippet: string; error: string }
 
 const props = defineProps<{ activePanel: Panel | null }>()
@@ -188,7 +232,7 @@ async function saveJob() {
 async function runNow(id: string) {
   try {
     await request(`/jobs/${id}/run`, { method: 'POST' })
-    ;(window as any).$message?.success?.(t('jobPanel.runNow'))
+    ;(window as any).$message?.success?.(t('jobPanel.runSuccess'))
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('jobPanel.runFail', { msg: e.message }))
   }
@@ -340,6 +384,11 @@ defineExpose({ refresh: loadJobs })
   border:1px solid var(--border);
   border-radius:var(--radius-md);
   background:var(--surface-hover);
+  transition: border-color var(--duration-fast,120ms) ease, background var(--duration-fast,120ms) ease;
+}
+.job-item:hover {
+  border-color:var(--accent-border);
+  background:var(--surface-raised);
 }
 .job-field {
   margin-bottom:10px;
@@ -360,7 +409,7 @@ defineExpose({ refresh: loadJobs })
 .job-switch > span {
   margin:0;
 }
-.job-form-actions, .job-actions {
+.job-form-actions {
   display:flex;
   flex-wrap:wrap;
   gap:5px;
@@ -374,18 +423,52 @@ defineExpose({ refresh: loadJobs })
   font-size:13px;
   color:var(--text-primary);
 }
+.job-name {
+  font-weight:600;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.job-badges {
+  display:flex;
+  align-items:center;
+  gap:4px;
+  flex-shrink:0;
+}
 .job-state {
-  padding:2px 6px;
-  border-radius:5px;
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  padding:2px 7px;
+  border-radius:20px;
   font-size:10px;
+  font-weight:600;
+  white-space:nowrap;
+}
+.job-state.last {
+  font-weight:500;
+}
+.badge-dot {
+  width:6px;
+  height:6px;
+  fill:currentColor;
 }
 .enabled, .status-ok {
   color:var(--ok,#4ade80);
-  background:color-mix(in srgb,var(--ok,#4ade80) 12%,transparent);
+  background:color-mix(in srgb,var(--ok,#4ade80) 14%,transparent);
 }
-.paused, .status-skipped {
+.paused {
   color:var(--text-muted);
   background:var(--surface-raised);
+}
+.status-skipped {
+  color:var(--warn,#facc15);
+  background:color-mix(in srgb,var(--warn,#facc15) 14%,transparent);
+}
+.status-error {
+  color:var(--error,#f87171);
+  background:color-mix(in srgb,var(--error,#f87171) 14%,transparent);
 }
 .job-prompt, .history-output {
   margin-top:7px;
@@ -394,18 +477,91 @@ defineExpose({ refresh: loadJobs })
   white-space:pre-wrap;
   color:var(--text-secondary);
 }
-.job-meta, .job-last {
-  margin-top:5px;
+.job-meta {
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 12px;
+  margin-top:7px;
   font-size:11px;
   color:var(--text-muted);
 }
-.status-error, .history-error {
-  color:var(--error,#f87171);
+.job-meta-item {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  min-width:0;
+}
+.job-meta-item svg {
+  width:11px;
+  height:11px;
+  flex-shrink:0;
+  opacity:.8;
+}
+.job-actions {
+  display:flex;
+  align-items:center;
+  gap:2px;
+  margin-top:8px;
+  padding-top:8px;
+  border-top:1px solid var(--border);
+}
+.job-actions .panel-icon-btn {
+  width:24px!important;
+  height:24px!important;
+  min-width:24px!important;
+  border-radius:6px!important;
+}
+.job-actions .panel-icon-btn:hover {
+  color:var(--accent-500,#EF6B6E)!important;
+  background:var(--accent-soft)!important;
+}
+.job-actions .panel-icon-btn[type="error"]:hover {
+  color:var(--error,#f87171)!important;
 }
 .history-item {
-  padding:9px 0;
+  padding:10px 0;
   border-bottom:1px solid var(--border);
   font-size:12px;
+}
+.history-item:last-child {
+  border-bottom:none;
+}
+.history-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.history-time {
+  font-size:11px;
+  color:var(--text-muted);
+}
+.history-error {
+  margin-top:6px;
+  font-size:11px;
+  color:var(--error,#f87171);
+}
+.job-actions .panel-icon-btn.has-error {
+  color:var(--warn,#facc15)!important;
+}
+.job-history-modal :deep(.n-card-header) {
+  font-weight:600;
+}
+.job-history-modal .history-list {
+  max-height:60vh;
+  overflow-y:auto;
+}
+.job-history-modal .history-output {
+  font-family:var(--font-mono, monospace);
+  background:var(--surface-hover);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm,6px);
+  padding:8px 10px;
+  margin-top:6px;
+  font-size:11px;
+  line-height:1.5;
+  max-height:200px;
+  overflow-y:auto;
 }
 .panel-slide-enter-active {
   transition:all var(--duration-base,180ms) var(--ease-standard,ease);

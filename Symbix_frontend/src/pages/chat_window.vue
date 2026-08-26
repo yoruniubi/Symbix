@@ -550,7 +550,12 @@ function loadSession(id: string) {
   if (!session) return
   activeSessionId.value = id
   messages.value = [...session.messages]
-  nextTick(() => scrollToBottom())
+  // markstream-vue 是异步批量渲染,内容高度可能渲染完成才稳定。
+  // 用短暂延迟 + 多帧重试,确保切会话后能真正到底(而不是停在中间)。
+  scrollToBottom()
+  setTimeout(() => scrollToBottom(true), 120)
+  setTimeout(() => scrollToBottom(true), 350)
+  setTimeout(() => scrollToBottom(true), 800)
 }
 
 async function deleteSession(id: string) {
@@ -1329,9 +1334,12 @@ async function approveTool(msgIdx: number, approved: boolean) {
 }
 
 
-function scrollToBottom() {
+function scrollToBottom(instant: boolean = false) {
   if (messageListRef.value) {
-    messageListRef.value.scrollTop = messageListRef.value.scrollHeight
+    const el = messageListRef.value
+    // 显式 behavior 覆盖 CSS 的 scroll-behavior:smooth,
+    // 避免多次重试/新增消息时从旧位置平滑动画导致停在中间
+    el.scrollTo({ top: el.scrollHeight, behavior: instant ? 'auto' : 'smooth' })
   }
 }
 </script>

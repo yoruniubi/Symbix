@@ -1,16 +1,34 @@
 <template>
   <n-config-provider :theme="naiveTheme" :theme-overrides="themeOverrides">
     <n-message-provider :container-style="{ top: '48px' }">
-      <router-view />
+      <n-dialog-provider>
+        <ProviderBridge />
+      </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, defineComponent, h } from 'vue'
+import { useMessage, useDialog } from 'naive-ui'
+import { RouterView } from 'vue-router'
 import { useTheme } from '@/composables/useTheme'
+import type { MessageApi } from 'naive-ui'
 
 const { naiveTheme, themeOverrides, initTheme } = useTheme()
+
+// 把 Naive message/dialog 暴露到全局,供各 panel(ToolsRisk / JobPanel / Checkpoint)用
+// window.$message / window.$dialog。这样与 useMessage()/useDialog() 同源、可被组件树外层
+// (纯 JS handler)调用,消除之前 window.$message/$dialog 未定义导致的「弹窗/提示失效」。
+const ProviderBridge = defineComponent({
+  setup() {
+    const message = useMessage()
+    const dialog = useDialog()
+    ;(window as any).$message = message
+    ;(window as any).$dialog = dialog
+    return () => h(RouterView)
+  },
+})
 
 onMounted(() => {
   // Re-apply persisted mode so CSS vars + Naive stay in sync
@@ -33,7 +51,7 @@ html {
   transition: color-scheme 0.2s ease;
 }
 
-/* 调整 Naive UI message 位置，避免被 TitleBar 遮挡 */
+/* 调整 Naive UI message 位置,避免被 TitleBar 遮挡 */
 .n-message-container {
   top: 48px !important;
 }

@@ -59,7 +59,7 @@
         </n-form>
       </n-card>
       <!-- 界面语言设置卡片 -->
-      <n-card :title="t('setting.language')" class="setting-card">
+      <n-card :title="t('setting.language_settings')" class="setting-card">
         <n-form label-placement="top">
           <n-form-item :label="t('setting.language')">
             <n-select
