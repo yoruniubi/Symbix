@@ -173,7 +173,6 @@ const inputRef = ref<any>(null)
 const attachments = ref<AttachmentItem[]>([])
 const isRecording = ref(false)
 const showModelPopover = ref(false)
-let recordTimer: any = null
 
 const { t } = useI18n()
 
@@ -372,17 +371,42 @@ function toggleVoice() {
   }
 }
 
+// 实时流式 STT:后端 SenseVoice.cpp 直接吃麦克风,
+// 识别结果经 SSE /voice/stt/events 推过来,前端只负责展示。
+let sttSource: EventSource | null = null
+
 function startVoice() {
   isRecording.value = true
-  // Simulated voice recording - real impl would use Web Speech API
-  recordTimer = setTimeout(() => {
+  // 先订 SSE 再 start,避免引擎秒出结果时丢首句
+  sttSource = new EventSource(`${BACKEND_URL}/voice/stt/events`)
+  sttSource.onmessage = (ev) => {
+    try {
+      const { text } = JSON.parse(ev.data)
+      if (text) {
+        inputValue.value = (inputValue.value ? inputValue.value + ' ' : '') + text
+      }
+    } catch { /* ignore */ }
+  }
+  sttSource.onerror = () => {
+    // 连接断开(后端停了/reload)自动收尾
+    if (sttSource) {
+      sttSource.close()
+      sttSource = null
+    }
+  }
+  fetch(`${BACKEND_URL}/voice/stt/start`, { method: 'POST' }).catch(() => {
+    messageUi.error(t('chatInput.sttStartFail'))
     stopVoice()
-  }, 5000)
+  })
 }
 
 function stopVoice() {
   isRecording.value = false
-  if (recordTimer) clearTimeout(recordTimer)
+  if (sttSource) {
+    sttSource.close()
+    sttSource = null
+  }
+  fetch(`${BACKEND_URL}/voice/stt/stop`, { method: 'POST' }).catch(() => {})
 }
 
 function handleModelSelect(modelValue: string) {

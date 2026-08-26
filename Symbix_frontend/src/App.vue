@@ -55,4 +55,28 @@ html {
 .n-message-container {
   top: 48px !important;
 }
+
+/* ── Dialog 主题兜底:确保 discrete API(window.$dialog)生成的弹窗也走主题色 ──
+   theme.ts 已配 Dialog override,但某些实例可能拿不到 n-config-provider 的
+   theme ,这里用 CSS 变量兜底强制对齐。 */
+.n-dialog {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.n-dialog__header {
+  padding-bottom: 8px;
+}
+.n-dialog__title {
+  color: var(--text-primary) !important;
+  font-weight: 600;
+}
+.n-dialog__content {
+  color: var(--text-secondary) !important;
+}
+/* 主/确认按钮 → 主题珊瑚色 */
+.n-dialog__action .n-button--primary-type:not(.n-button--error-type) {
+  color: #fff;
+}
 </style>

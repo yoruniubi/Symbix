@@ -14,7 +14,7 @@ from application.state import (
     provider_registry,
     checkpoint_recorder,
 )
-from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs
+from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice
 
 
 def _force_close_sse(reason: str = "") -> None:
@@ -101,7 +101,7 @@ app.include_router(files.router)
 app.include_router(checkpoint.router)
 app.include_router(risk.router)
 app.include_router(jobs.router)
-
+app.include_router(voice.router)
 
 
 @app.get("/")

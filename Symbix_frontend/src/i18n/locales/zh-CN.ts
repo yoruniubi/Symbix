@@ -114,6 +114,7 @@ export default {
     uploadFile: '上传文件',
     voiceInput: '语音输入',
     listening: '🎤 正在聆听...',
+    sttStartFail: '语音识别启动失败',
     fileUploading: '上传中...',
     fileFailed: '失败',
     selectModel: '选择模型',

@@ -115,6 +115,7 @@ export default {
     uploadFile: 'Upload file',
     voiceInput: 'Voice input',
     listening: '🎤 Listening...',
+    sttStartFail: 'Failed to start speech recognition',
     fileUploading: 'Uploading...',
     fileFailed: 'Failed',
     selectModel: 'Select model',

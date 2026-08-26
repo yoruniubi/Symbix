@@ -23,6 +23,9 @@ backend/Symbix_sdk/config/history_list/
 backend/uploads/
 uploads/
 
+# stt dir
+backend/Symbix_sdk/stt/bin
+backend/Symbix_sdk/stt/model
 # MCP local install cache / node modules under backend if any
 backend/**/node_modules/
 

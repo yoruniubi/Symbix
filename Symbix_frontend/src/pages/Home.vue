@@ -627,6 +627,7 @@ const ACTION_ALIASES: Record<string, PetState> = {
   thinking: 'review',
   sad: 'failed',
   error: 'failed',
+  scheduled_job: 'jumping',  // 定时任务触发 → 开心跳一下
 }
 
 let petEventAbort: AbortController | null = null
@@ -668,7 +669,9 @@ function applyRemotePetAction(payload: {
 
   const state = resolvePetState(payload.action)
   if (!state) {
-    console.warn('[pet] unknown action:', payload.action)
+    // 未知 action 但有气泡时仍展示,避免定时任务等自定义事件消息丢失
+    if (payload.bubble) showBubble(payload.bubble, 3200)
+    else console.warn('[pet] unknown action:', payload.action)
     return
   }
   // 远程循环动作(waiting/running)不要强制回 idle;一次性动作播完回 idle
