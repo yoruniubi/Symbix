@@ -83,7 +83,7 @@ class SymbixClient:
             }
             return url, "custom_openai", headers, model_name
 
-        # 根据 litellm 前缀判断
+        # 根据模型前缀判断（由来已久的 ``<provider>/<model>`` 命名约定）
         if model.startswith("anthropic/"):
             model_name = model[len("anthropic/"):]
             url = "https://api.anthropic.com/v1/messages"
@@ -101,10 +101,11 @@ class SymbixClient:
             headers = {"Content-Type": "application/json"}
             return url, "gemini", headers, model_name
 
-        # 根据 litellm 前缀路由各 OpenAI 兼容 provider。
+        # 根据 provider 前缀路由各 OpenAI 兼容 provider。
         # 这里是需要频繁补全的表：新增 provider 时补一个 elif 即可。
         _PROVIDER_URLS = {
             "openai":   "https://api.openai.com/v1/chat/completions",
+            "deepseek": "https://api.deepseek.com/v1/chat/completions",
             "groq":     "https://api.groq.com/openai/v1/chat/completions",
             "mistral":  "https://api.mistral.ai/v1/chat/completions",
             "moonshot": "https://api.moonshot.cn/v1/chat/completions",  # Kimi
@@ -118,6 +119,8 @@ class SymbixClient:
             # Together / Fireworks / Anyscale 等可同此补充
             "together":  "https://api.together.xyz/v1/chat/completions",
             "fireworks": "https://api.fireworks.ai/inference/v1/chat/completions",
+            # Ollama 本地推理（默认 11434，可由 providers.json api_base 覆盖）
+            "ollama":    "http://localhost:11434/v1/chat/completions",
         }
         prefix = None
         model_name = model
@@ -238,110 +241,9 @@ class SymbixClient:
             messages.append({"role": "user", "content": user_input})
         return messages
 
-    # ── 非流式（保留 litellm，用于非流式场景）────────────────
-    def _prepare_litellm_endpoint(
-        self,
-        raw_model: str,
-        raw_base: Optional[str],
-    ) -> tuple[str, Optional[str], Optional[str]]:
-        """为 litellm 准备 (model, api_base, custom_llm_provider)。
-
-        注意：不能直接解包 _resolve_endpoint——它返回的是
-        (url, provider_type, headers, model_name)，字段语义不同。
-        """
-        if raw_base:
-            api_base_val = raw_base.rstrip("/")
-            # 自动补齐 /v1（与 _resolve_endpoint 行为一致）
-            if not api_base_val.endswith("/v1"):
-                api_base_val = api_base_val + "/v1"
-            # 自定义/中转走 OpenAI 兼容协议
-            if raw_model.startswith("openai/"):
-                model = raw_model[len("openai/"):]
-            else:
-                model = raw_model
-            return model, api_base_val, "openai"
-
-        # 无自定义 base：交给 litellm 按 model 前缀路由
-        return raw_model, None, None
-
-    async def chat(
-        self,
-        user_input: str,
-        history: list[dict] = None,
-        tools: Optional[list[dict]] = None,
-        registry=None,
-        override_api_key: str = None,
-        override_api_base: str = None,
-        override_model: str = None,
-        image_parts: Optional[list[dict]] = None,
-    ) -> dict:
-        import litellm
-        provider = self.registry.get_active()
-        raw_model = override_model or provider.model
-        raw_base = override_api_base or provider.api_base
-        model, api_base_val, custom_provider = self._prepare_litellm_endpoint(
-            raw_model, raw_base
-        )
-
-        api_key_val = override_api_key or provider.api_key
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
-
-        kwargs = {"model": model, "messages": messages}
-        if api_key_val:
-            kwargs["api_key"] = api_key_val
-        if api_base_val:
-            kwargs["api_base"] = api_base_val
-        if custom_provider:
-            kwargs["custom_llm_provider"] = custom_provider
-        # 能力位驱动的发送策略：不支持的坚决不发，避免 422/400。
-        caps = resolve_capabilities(raw_model, provider)
-        if tools and caps["supports_tools"]:
-            kwargs["tools"] = tools
-        if caps.get("supports_prompt_cache"):
-            # litellm/OpenAI 兼容接口可以让上游缓存前缀；此 key 在 OpenAI 与部分兼容服务可用。
-            kwargs["prompt_cache_key"] = (override_api_base or "symbix")
-        # 不支持视觉模型时，主动到光文本（防止 multimodal 不支持的端点 400）。
-        if image_parts and not caps["supports_vision"]:
-            # 过滵 image_parts 到文字描述，这里让 _build_messages 重传一次。
-            # 简单处理：直接删除最后一条 user 多模态 content，改为纯文本。
-            for m in messages:
-                if isinstance(m.get("content"), list):
-                    m["content"] = "".join(
-                        p.get("text", "") for p in m["content"] if p.get("type") == "text"
-                    ) or "[user message]"
-
-        print(">>> [chat] model:", model, "api_base:", api_base_val, "caps:", caps)
-        response = await litellm.acompletion(**kwargs)
-        message = response.choices[0].message
-        return {
-            "content": message.content,
-            "reasoning": getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None),
-            "tool_calls": message.tool_calls,
-            "model": response.model,
-        }
-
-    async def chat_with_tool_results(
-        self,
-        user_input: str,
-        history: list[dict] = None,
-        tools: Optional[list[dict]] = None,
-        registry=None,
-        tool_results: list[dict] = None,
-        override_api_key: str = None,
-        override_api_base: str = None,
-        override_model: str = None,
-        image_parts: Optional[list[dict]] = None,
-    ) -> dict:
-        import litellm
-        provider = self.registry.get_active()
-        raw_model = override_model or provider.model
-        raw_base = override_api_base or provider.api_base
-        model, api_base_val, custom_provider = self._prepare_litellm_endpoint(
-            raw_model, raw_base
-        )
-
-        api_key_val = override_api_key or provider.api_key
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
+    # ── 非流式（原生 HTTP，复用流式管道聚合；不再依赖 litellm）────────
+    def _build_tool_result_messages(self, messages: list[dict], tool_results: list[dict]) -> list[dict]:
+        """把工具执行结果回传拼成 assistant tool_calls + tool 消息，供续聊使用。"""
         messages.append({
             "role": "assistant",
             "content": None,
@@ -358,30 +260,95 @@ class SymbixClient:
                 "name": tr["name"],
                 "content": tr["content"],
             })
+        return messages
 
-        kwargs = {"model": model, "messages": messages}
-        if api_key_val:
-            kwargs["api_key"] = api_key_val
-        if api_base_val:
-            kwargs["api_base"] = api_base_val
-        if custom_provider:
-            kwargs["custom_llm_provider"] = custom_provider
-        # 能力位驱动（避免不支持 tool 的 provider 期诈发 tools 被拒）
+    async def _chat_raw(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        raw_model: str = None,
+        raw_base: str = None,
+        api_key: str = None,
+        caps: Optional[dict] = None,
+    ) -> dict:
+        """非流式核心：解析端点 + 分发到原生流式管道，聚合结果返回。
+
+        返回 dict：{"content", "reasoning", "tool_calls"(dict 列表 or None), "model", "error"}
+        tool_calls 每项为 {"id", "name", "arguments"}（与 chat_stream 的 done 事件一致）。
+        """
+        url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
+
+        if provider_type == "anthropic":
+            gen = self._stream_anthropic(url, headers, model_name, messages, tools)
+        elif provider_type == "gemini":
+            gen = self._stream_gemini(url, headers, messages, tools)
+        else:
+            gen = self._stream_openai_compat(url, headers, model_name, messages, tools, caps=caps)
+
+        async for evt in gen:
+            if evt.get("type") == "done":
+                return {
+                    "content": evt.get("content", ""),
+                    "reasoning": evt.get("reasoning"),
+                    "tool_calls": evt.get("tool_calls"),
+                    "model": model_name,
+                    "error": evt.get("error"),
+                }
+        # 流意外结束（无 done 事件）时兜底
+        return {"content": "", "reasoning": None, "tool_calls": None, "model": model_name}
+
+    async def chat(
+        self,
+        user_input: str,
+        history: list[dict] = None,
+        tools: Optional[list[dict]] = None,
+        registry=None,
+        override_api_key: str = None,
+        override_api_base: str = None,
+        override_model: str = None,
+        image_parts: Optional[list[dict]] = None,
+    ) -> dict:
+        provider = self.registry.get_active()
+        raw_model = override_model or provider.model
+        raw_base = override_api_base or provider.api_base
+        api_key_val = override_api_key or provider.api_key
+
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
         caps = resolve_capabilities(raw_model, provider)
-        if tools and caps["supports_tools"]:
-            kwargs["tools"] = tools
-        if caps.get("supports_prompt_cache"):
-            kwargs["prompt_cache_key"] = (override_api_base or "symbix")
+        # 不支持视觉模型时，主动降级为纯文本（防止 multimodal 端点 400）。
+        if image_parts and not caps.get("supports_vision"):
+            for m in messages:
+                if isinstance(m.get("content"), list):
+                    m["content"] = "".join(
+                        p.get("text", "") for p in m["content"] if p.get("type") == "text"
+                    ) or "[user message]"
 
-        print(">>> [tool_results] model:", model, "caps:", caps)
-        response = await litellm.acompletion(**kwargs)
-        message = response.choices[0].message
-        return {
-            "content": message.content,
-            "reasoning": getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None),
-            "tool_calls": message.tool_calls,
-            "model": response.model,
-        }
+        print(">>> [chat] model:", raw_model, "base:", raw_base, "caps:", caps)
+        return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps)
+
+    async def chat_with_tool_results(
+        self,
+        user_input: str,
+        history: list[dict] = None,
+        tools: Optional[list[dict]] = None,
+        registry=None,
+        tool_results: list[dict] = None,
+        override_api_key: str = None,
+        override_api_base: str = None,
+        override_model: str = None,
+        image_parts: Optional[list[dict]] = None,
+    ) -> dict:
+        provider = self.registry.get_active()
+        raw_model = override_model or provider.model
+        raw_base = override_api_base or provider.api_base
+        api_key_val = override_api_key or provider.api_key
+
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
+        messages = self._build_tool_result_messages(messages, tool_results)
+        caps = resolve_capabilities(raw_model, provider)
+
+        print(">>> [tool_results] model:", raw_model, "caps:", caps)
+        return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps)
 
     # ── 原生 HTTP 流式 SSE ────────────────────────────────────
     async def chat_stream(
@@ -396,7 +363,7 @@ class SymbixClient:
         image_parts: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
-        流式输出统一的 dict 事件，绕过 litellm：
+        流式输出统一的 dict 事件（原生 HTTP，不经过 litellm）:
         - {"type":"delta","content":"..."}
         - {"type":"reasoning","content":"..."}
         - {"type":"tool_call","id":"call_xx","name":"fn","arguments":"分片..."}

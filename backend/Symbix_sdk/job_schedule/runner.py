@@ -106,46 +106,46 @@ class JobRunner:
                 tool_results = []
 
                 for tc in response["tool_calls"]:
-                    fn = tc.function
+                    fn = tc  # dict: {id, name, arguments}
                     try:
-                        args = _json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
+                        args = _json.loads(fn.get("arguments")) if isinstance(fn.get("arguments"), str) else fn.get("arguments")
                     except Exception:
                         args = {}
 
                     # 频次反循环
-                    if fn.name in NONSTREAM_WRITE_TOOLS:
-                        write_counts[fn.name] = write_counts.get(fn.name, 0) + 1
-                        if write_counts[fn.name] > MAX_WRITE:
+                    if fn["name"] in NONSTREAM_WRITE_TOOLS:
+                        write_counts[fn["name"]] = write_counts.get(fn["name"], 0) + 1
+                        if write_counts[fn["name"]] > MAX_WRITE:
                             stop_hint = (
-                                f"[System] 工具 `{fn.name}` 已被调用 {write_counts[fn.name] - 1} 次。"
+                                f"[System] 工具 `{fn['name']}` 已被调用 {write_counts[fn['name']] - 1} 次。"
                                 "请停止重复调用,直接向用户总结已完成的工作,不要继续调用任何写入类工具。"
                             )
-                            tool_results.append({"tool_call_id": tc.id, "role": "tool", "name": fn.name,
-                                                 "content": stop_hint, "arguments": fn.arguments})
+                            tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],
+                                                 "content": stop_hint, "arguments": fn.get("arguments")})
                             response = {"content": stop_hint, "tool_calls": None, "reasoning": last_reasoning}
                             break
 
-                    risk_level, risk_reason = classify_tool_risk(fn.name, args)
+                    risk_level, risk_reason = classify_tool_risk(fn["name"], args)
 
                     # auto_safe:非 SAFE 跳过；否则非 SAFE 也跳过（后台无人审批，一律不执行写操作）
                     if risk_level != ToolRiskLevel.SAFE:
                         skip_msg = (
-                            f"[需人工处理] 定时任务自动跳过工具 {fn.name}（风险等级 {risk_level}）：{risk_reason}。"
+                            f"[需人工处理] 定时任务自动跳过工具 {fn['name']}（风险等级 {risk_level}）：{risk_reason}。"
                             f"请用户在界面上手动执行并确认。"
                         )
-                        tool_results.append({"tool_call_id": tc.id, "role": "tool", "name": fn.name,
-                                             "content": skip_msg, "arguments": fn.arguments})
-                        steps.append({"type": "tool_result", "tool_call_id": tc.id, "name": fn.name,
+                        tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],
+                                             "content": skip_msg, "arguments": fn.get("arguments")})
+                        steps.append({"type": "tool_result", "tool_call_id": fn["id"], "name": fn["name"],
                                       "content": skip_msg})
                         continue
 
                     _ctx_set_current(sid, ckpt_round_id)
-                    out = self.tool_registry.execute(fn.name, fn.arguments)
+                    out = self.tool_registry.execute(fn["name"], fn.get("arguments"))
                     if not isinstance(out, str):
                         out = _json.dumps(out, ensure_ascii=False)
-                    tool_results.append({"tool_call_id": tc.id, "role": "tool", "name": fn.name,
-                                         "content": out, "arguments": fn.arguments})
-                    steps.append({"type": "tool_result", "tool_call_id": tc.id, "name": fn.name,
+                    tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],
+                                         "content": out, "arguments": fn.get("arguments")})
+                    steps.append({"type": "tool_result", "tool_call_id": fn["id"], "name": fn["name"],
                                   "content": out})
 
                 response = await self.symbix_client.chat_with_tool_results(

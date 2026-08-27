@@ -350,39 +350,39 @@ async def chat(request: ChatRequest, http_request: Request):
                 "type": "tool_calls",
                 "reasoning": response.get("reasoning"),
                 "tool_calls": [
-                    {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
+                    {"id": tc["id"], "name": tc.get("name"), "arguments": tc.get("arguments")}
                     for tc in response["tool_calls"]
                 ],
             })
 
             for tc in response["tool_calls"]:
-                fn = tc.function
+                fn = tc  # dict: {id, name, arguments}
                 # 解析参数用于风险分级
                 try:
-                    args = _json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
+                    args = _json.loads(fn["arguments"]) if isinstance(fn.get("arguments"), str) else fn.get("arguments")
                 except Exception:
                     args = {}
 
                 # 频次反循环：多次同一写入工具 → 直接跳出循环并记录停止原因
-                if fn.name in NONSTREAM_WRITE_TOOLS:
-                    nonstream_name_counts[fn.name] = nonstream_name_counts.get(fn.name, 0) + 1
-                    if nonstream_name_counts[fn.name] > MAX_NS_WRITE:
+                if fn["name"] in NONSTREAM_WRITE_TOOLS:
+                    nonstream_name_counts[fn["name"]] = nonstream_name_counts.get(fn["name"], 0) + 1
+                    if nonstream_name_counts[fn["name"]] > MAX_NS_WRITE:
                         stop_hint = (
-                            f"[System] 工具 `{fn.name}` 已被调用 "
-                            f"{nonstream_name_counts[fn.name] - 1} 次。"
+                            f"[System] 工具 `{fn['name']}` 已被调用 "
+                            f"{nonstream_name_counts[fn['name']] - 1} 次。"
                             "请停止重复调用，直接向用户总结已完成的工作与原因，不要继续调用任何写入类工具。"
                         )
                         tool_results.append({
-                            "tool_call_id": tc.id,
+                            "tool_call_id": fn["id"],
                             "role": "tool",
-                            "name": fn.name,
+                            "name": fn["name"],
                             "content": stop_hint,
-                            "arguments": fn.arguments,
+                            "arguments": fn.get("arguments"),
                         })
                         steps.append({
                             "type": "tool_result",
-                            "tool_call_id": tc.id,
-                            "name": fn.name,
+                            "tool_call_id": fn["id"],
+                            "name": fn["name"],
                             "content": stop_hint,
                         })
                         # 强制跳出 while 循环
@@ -390,7 +390,7 @@ async def chat(request: ChatRequest, http_request: Request):
                         break
 
                 # 使用风险分级器判断是否需要审批
-                risk_level, risk_reason = classify_tool_risk(fn.name, args)
+                risk_level, risk_reason = classify_tool_risk(fn["name"], args)
                 
                 # SAFE 工具直接放行，MEDIUM/HIGH 需要审批
                 if risk_level != ToolRiskLevel.SAFE:
@@ -408,10 +408,10 @@ async def chat(request: ChatRequest, http_request: Request):
                         "round_count": round_count,
                         "act_mode": act_mode,
                         "act_plan": act_plan,
-                        "pending_tc": {"id": tc.id, "name": fn.name, "arguments": fn.arguments},
+                        "pending_tc": {"id": fn["id"], "name": fn["name"], "arguments": fn.get("arguments")},
                         "ckpt_round_id": ckpt_round_id,
                         "remaining_tcs": [
-                            {"id": r.id, "name": r.function.name, "arguments": r.function.arguments}
+                            {"id": r["id"], "name": r.get("name"), "arguments": r.get("arguments")}
                             for r in response["tool_calls"]
                         ],
                         "risk_level": risk_level,
@@ -420,7 +420,7 @@ async def chat(request: ChatRequest, http_request: Request):
 
                     # — checkpoint: 需审批工具被拦 → 记 skipped + round 未完待续
                     ckpt_tool_count += 1
-                    _emit_tool(request.session_id, ckpt_round_id, fn.name, fn.arguments,
+                    _emit_tool(request.session_id, ckpt_round_id, fn["name"], fn.get("arguments"),
                                risk_level, False, "", status="skipped",
                                error="awaiting user approval")
                     _emit_round_summary(
@@ -436,40 +436,40 @@ async def chat(request: ChatRequest, http_request: Request):
                         "risk_level": risk_level,
                         "risk_reason": risk_reason,
                         "tool": {
-                            "tool_call_id": tc.id,
-                            "name": fn.name,
-                            "arguments": fn.arguments,
+                            "tool_call_id": fn["id"],
+                            "name": fn["name"],
+                            "arguments": fn.get("arguments"),
                         },
                     })
                     return
 
                 _ctx_set_current(request.session_id, ckpt_round_id)
-                tool_output = tool_registry.execute(fn.name, fn.arguments)
+                tool_output = tool_registry.execute(fn["name"], fn.get("arguments"))
                 if not isinstance(tool_output, str):
                     tool_output = _json.dumps(tool_output, ensure_ascii=False)
                 tool_results.append({
-                    "tool_call_id": tc.id,
+                    "tool_call_id": fn["id"],
                     "role": "tool",
-                    "name": fn.name,
+                    "name": fn["name"],
                     "content": tool_output,
-                    "arguments": fn.arguments if hasattr(fn, "arguments") else "{}",
+                    "arguments": fn.get("arguments"),
                 })
                 steps.append({
                     "type": "tool_result",
-                    "tool_call_id": tc.id,
-                    "name": fn.name,
+                    "tool_call_id": fn["id"],
+                    "name": fn["name"],
                     "content": tool_output,
                 })
-                print(f"[MCP Tool] {fn.name} -> {tool_output[:200]}")
+                print(f"[MCP Tool] {fn['name']} -> {tool_output[:200]}")
                 # — checkpoint: 记一条工具调用 (非流 /chat 路径)
                 ckpt_tool_count += 1
                 if isinstance(tool_output, str) and tool_output.startswith("[Error"):
                     ckpt_failed += 1
-                    _emit_tool(request.session_id, ckpt_round_id, fn.name, fn.arguments,
+                    _emit_tool(request.session_id, ckpt_round_id, fn["name"], fn.get("arguments"),
                                risk_level, True, tool_output,
                                status="error", error=tool_output[:200])
                 else:
-                    _emit_tool(request.session_id, ckpt_round_id, fn.name, fn.arguments,
+                    _emit_tool(request.session_id, ckpt_round_id, fn["name"], fn.get("arguments"),
                                risk_level, True, tool_output)
 
             response = await symbix_client.chat_with_tool_results(

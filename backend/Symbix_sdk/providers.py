@@ -8,7 +8,7 @@ import shutil
 @dataclass
 class ProviderConfig:
     name: str
-    model: str          # litellm 格式，如 "anthropic/claude-sonnet-4-6" 或 "ollama/qwen2.5"
+    model: str          # Symbix 路由前缀格式，如 "anthropic/claude-sonnet-4-6" 或 "ollama/qwen2.5"
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     supports_streaming: Optional[bool] = None

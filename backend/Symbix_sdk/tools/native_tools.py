@@ -123,7 +123,7 @@ class NativeToolkit:
     # ---- 导出（给 registry / LLM 调用）----
 
     def get_openai_tools(self) -> list[dict]:
-        """返回 OpenAI function calling 格式的 tools 列表（含 native + skill），可直接传入 litellm"""
+        """返回 OpenAI function calling 格式的 tools 列表（含 native + skill），可直接发给上游模型"""
         result = []
         for name, schema in self.tool_schemas.items():
             result.append({

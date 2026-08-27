@@ -435,6 +435,16 @@ export function buildThemeOverrides(mode: ThemeMode = DEFAULT_THEME_MODE): Globa
       borderHoverSecondary: `1px solid ${a[600]}`,
       borderPressedSecondary: `1px solid ${a[700]}`,
       borderFocusSecondary: `1px solid ${a[500]}`,
+      colorWarning: a[500],
+      colorHoverWarning: a[600],
+      colorPressedWarning: a[700],
+      colorFocusWarning: a[500],
+      borderWarning: `1px solid ${a[500]}`,
+      borderHoverWarning: `1px solid ${a[600]}`,
+      borderPressedWarning: `1px solid ${a[700]}`,
+      borderFocusWarning: `1px solid ${a[500]}`,
+      textColorWarning: '#FFFFFF',
+      rippleColorWarning: a[500],
     },
 
     Input: {
