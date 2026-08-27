@@ -36,9 +36,12 @@ class STTProvider:
 class SenseVoiceProvider(STTProvider):
     """sense-voice-stream 子进程:stdout 每行一句,--use-vad 自动断句。
 
-    二进制与模型随包分发:
-      stt/bin/sense-voice-main.exe (+ dll)
+    流式 VAD 是【信号处理实现】(非模型),参数 chunk_size / min-mute 
+    / max-nomute-chunks 共同控制断句。二进制 + 模型随包分发:
+      stt/bin/sense-voice-stream(.exe) (+ dll)
       stt/model/sense-voice-small-q4_k.gguf
+
+    该 exe 未就位时 available() 返回 False,引擎优雅跳过,不阻断启动。
     """
 
     name = "sensevoice"
@@ -48,10 +51,26 @@ class SenseVoiceProvider(STTProvider):
         language: str = "auto",
         threads: int = 4,
         use_vad: bool = True,
+        chunk_size: int = 100,          # 流式 VAD chunk 大小(ms)
+        min_mute_chunks: int = 10,      # 静音最少块数 → 判定一句结束
+        max_nomute_chunks: int = 80,    # 最大非静音块数 → 强制切句
+        use_prefix: bool = False,       # sensevoice 额外信息(语种/情感/事件/itn)
+        use_itn: bool = True,           # 逆文本正则化(补标点)
+        capture_device: int = -1,       # -1 = 默认麦克风
+        no_gpu: bool = False,           # -ng 强制 CPU(默认按 CLI false)
+        flash_attn: bool = False,       # -fa flash attention 解码
     ) -> None:
         self.language = language
         self.threads = threads
         self.use_vad = use_vad
+        self.chunk_size = chunk_size
+        self.min_mute_chunks = min_mute_chunks
+        self.max_nomute_chunks = max_nomute_chunks
+        self.use_prefix = use_prefix
+        self.use_itn = use_itn
+        self.capture_device = capture_device
+        self.no_gpu = no_gpu
+        self.flash_attn = flash_attn
         self._process: Optional[asyncio.subprocess.Process] = None
         self._reader_task: Optional[asyncio.Task] = None
 
@@ -78,14 +97,32 @@ class SenseVoiceProvider(STTProvider):
         return self._resolve_binary() is not None and self._resolve_model() is not None
 
     def _build_cmd(self) -> list[str]:
+        bin_ = self._resolve_binary()
+        model = self._resolve_model()
+        assert bin_ and model
         cmd = [
-            self._resolve_binary() or "",
-            "-m", self._resolve_model() or "",
+            bin_,
+            "-m", model,
             "-l", self.language,
             "-t", str(self.threads),
         ]
-        if self.use_vad:
-            cmd.append("--use-vad")
+        if self.available() and self.use_vad:
+            cmd += [
+                "--use-vad",
+                "--chunk_size", str(self.chunk_size),
+                "-mmc", str(self.min_mute_chunks),
+                "-mnc", str(self.max_nomute_chunks),
+            ]
+        if self.use_prefix:
+            cmd.append("--use-prefix")
+        if self.use_itn:
+            cmd.append("--use-itn")
+        if self.no_gpu:
+            cmd.append("-ng")
+        if self.flash_attn:
+            cmd.append("-fa")
+        if self.capture_device >= 0:
+            cmd += ["-c", str(self.capture_device)]
         return cmd
 
     async def start_stream(self, on_result: OnResult) -> None:
@@ -206,6 +243,14 @@ class STTConfig:
     language: str = "auto"
     threads: int = 4
     use_vad: bool = True
+    chunk_size: int = 100
+    min_mute_chunks: int = 10
+    max_nomute_chunks: int = 80
+    use_prefix: bool = True        # sensevoice 补充语种/情感/事件信息
+    use_itn: bool = True           # 逆文本正则化(补标点)
+    capture_device: int = -1       # -1 = 默认麦克风
+    no_gpu: bool = False
+    flash_attn: bool = False
     # 云端凭据(占位)
     funasr_ws_url: str = ""
     openai_api_key: str = ""
@@ -219,6 +264,14 @@ class STTConfig:
             "language": self.language,
             "threads": self.threads,
             "use_vad": self.use_vad,
+            "chunk_size": self.chunk_size,
+            "min_mute_chunks": self.min_mute_chunks,
+            "max_nomute_chunks": self.max_nomute_chunks,
+            "use_prefix": self.use_prefix,
+            "use_itn": self.use_itn,
+            "capture_device": self.capture_device,
+            "no_gpu": self.no_gpu,
+            "flash_attn": self.flash_attn,
             "funasr_ws_url": self.funasr_ws_url,
             "openai_api_key": self.openai_api_key,
             "xfyun_app_id": self.xfyun_app_id,
@@ -237,7 +290,19 @@ class STTEngine:
     def _build_provider(self, name: str) -> STTProvider:
         cfg = self.config
         if name == SenseVoiceProvider.name:
-            return SenseVoiceProvider(language=cfg.language, threads=cfg.threads, use_vad=cfg.use_vad)
+            return SenseVoiceProvider(
+                language=cfg.language,
+                threads=cfg.threads,
+                use_vad=cfg.use_vad,
+                chunk_size=cfg.chunk_size,
+                min_mute_chunks=cfg.min_mute_chunks,
+                max_nomute_chunks=cfg.max_nomute_chunks,
+                use_prefix=cfg.use_prefix,
+                use_itn=cfg.use_itn,
+                capture_device=cfg.capture_device,
+                no_gpu=cfg.no_gpu,
+                flash_attn=cfg.flash_attn,
+            )
         if name == FunASRCloudProvider.name:
             return FunASRCloudProvider(ws_url=cfg.funasr_ws_url)
         if name == OpenAIWhisperStreamProvider.name:

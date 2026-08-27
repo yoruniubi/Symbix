@@ -5,6 +5,12 @@
 
 # AI provider credentials
 backend/Symbix_sdk/config/providers.json
+# Voice engine config (may contain cloud API keys: openai / xfyun ..., never commit)
+backend/Symbix_sdk/config/voice_config.json
+# TTS/STT local model & binaries (large, downloaded separately)
+backend/Symbix_sdk/tts/model
+backend/Symbix_sdk/stt/bin
+backend/Symbix_sdk/stt/model
 # User-defined local tool risk overrides
 backend/Symbix_sdk/config/risk_overrides.json
 # Conversation memory / SQLite
@@ -23,9 +29,6 @@ backend/Symbix_sdk/config/history_list/
 backend/uploads/
 uploads/
 
-# stt dir
-backend/Symbix_sdk/stt/bin
-backend/Symbix_sdk/stt/model
 # MCP local install cache / node modules under backend if any
 backend/**/node_modules/
 

@@ -164,86 +164,114 @@
 
       <!-- STT 设置卡片 -->
       <n-card :title="t('setting.stt')" class="setting-card">
-        <n-form :model="sttForm" label-placement="top">
-          <n-form-item :label="t('setting.sttProvider')">
+        <n-form :model="sttForm" label-placement="top" size="small">
+          <n-form-item :label="t('setting.voicePrimary')">
             <n-select
-              v-model:value="sttForm.provider"
-              :options="sttProviders"
+              v-model:value="sttForm.priority0"
+              :options="sttPrimaryOptions"
               :placeholder="t('setting.sttProviderPlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="API Key">
-            <n-input
-              v-model:value="sttForm.apiKey"
-              type="password"
-              show-password-on="click"
-              :placeholder="t('setting.sttApiKeyPlaceholder')"
-            />
-          </n-form-item>
-          <n-form-item :label="t('setting.sttModel')">
-            <n-input
-              v-model:value="sttForm.model"
-              :placeholder="t('setting.sttModelPlaceholder')"
+          <n-form-item :label="t('setting.voiceSecondary')">
+            <n-select
+              v-model:value="sttForm.priority1"
+              :options="sttSecondaryOptions"
+              :placeholder="t('setting.voiceSecondaryHint')"
+              clearable
             />
           </n-form-item>
           <n-form-item :label="t('setting.sttLanguage')">
             <n-select
               v-model:value="sttForm.language"
-              :options="languageOptions"
-              :placeholder="t('setting.sttLanguagePlaceholder')"
-              clearable
+              :options="sttLanguageOptions"
             />
+          </n-form-item>
+          <n-form-item :label="t('setting.sttThreads')">
+            <n-input-number v-model:value="sttForm.threads" :min="1" :max="32" />
+          </n-form-item>
+          <n-form-item :label="t('setting.sttDevice')">
+            <n-input-number v-model:value="sttForm.capture_device" :step="1" style="width:100%">
+              <template #prefix>{{ t('setting.sttDeviceDefault') }}</template>
+            </n-input-number>
+          </n-form-item>
+          <n-form-item :label="t('setting.sttVad')">
+            <n-space align="center" :wrap="false">
+              <n-switch v-model:value="sttForm.use_vad" />
+              <span class="hint-text">{{ t('setting.sttVadHint') }}</span>
+            </n-space>
+          </n-form-item>
+          <template v-if="sttForm.use_vad">
+            <n-form-item :label="t('setting.sttChunkSize')">
+              <n-input-number v-model:value="sttForm.chunk_size" :min="10" :max="1000" :step="10" />
+            </n-form-item>
+            <n-form-item :label="t('setting.sttMinMute')">
+              <n-input-number v-model:value="sttForm.min_mute_chunks" :min="1" :max="100" />
+            </n-form-item>
+            <n-form-item :label="t('setting.sttMaxNomute')">
+              <n-input-number v-model:value="sttForm.max_nomute_chunks" :min="1" :max="500" />
+            </n-form-item>
+          </template>
+          <n-form-item :label="t('setting.sttUsePrefix')">
+            <n-space align="center" :wrap="false">
+              <n-switch v-model:value="sttForm.use_prefix" />
+              <span class="hint-text">{{ t('setting.sttUsePrefixHint') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('setting.sttUseItn')">
+            <n-switch v-model:value="sttForm.use_itn" />
+          </n-form-item>
+          <n-form-item :label="t('setting.sttNoGpu')">
+            <n-switch v-model:value="sttForm.no_gpu" />
+          </n-form-item>
+          <n-form-item :label="t('setting.sttFlashAttn')">
+            <n-switch v-model:value="sttForm.flash_attn" />
           </n-form-item>
           <n-space justify="end">
             <n-button @click="resetStt">{{ t('setting.sttReset') }}</n-button>
-            <n-button type="primary" @click="saveStt">{{ t('setting.sttSave') }}</n-button>
+            <n-button type="primary" :loading="sttSaving" @click="saveStt">{{ t('setting.sttSave') }}</n-button>
           </n-space>
         </n-form>
       </n-card>
 
       <!-- TTS 设置卡片 -->
       <n-card :title="t('setting.tts')" class="setting-card">
-        <n-form :model="ttsForm" label-placement="top">
-          <n-form-item :label="t('setting.ttsProvider')">
+        <n-form :model="ttsForm" label-placement="top" size="small">
+          <n-form-item :label="t('setting.voicePrimary')">
             <n-select
-              v-model:value="ttsForm.provider"
-              :options="ttsProviders"
+              v-model:value="ttsForm.priority0"
+              :options="ttsPrimaryOptions"
               :placeholder="t('setting.ttsProviderPlaceholder')"
             />
           </n-form-item>
-          <n-form-item label="API Key">
-            <n-input
-              v-model:value="ttsForm.apiKey"
-              type="password"
-              show-password-on="click"
-              :placeholder="t('setting.ttsApiKeyPlaceholder')"
-            />
-          </n-form-item>
-          <n-form-item :label="t('setting.ttsModel')">
-            <n-input
-              v-model:value="ttsForm.model"
-              :placeholder="t('setting.ttsModelPlaceholder')"
+          <n-form-item :label="t('setting.voiceSecondary')">
+            <n-select
+              v-model:value="ttsForm.priority1"
+              :options="ttsSecondaryOptions"
+              :placeholder="t('setting.voiceSecondaryHint')"
+              clearable
             />
           </n-form-item>
           <n-form-item :label="t('setting.ttsVoice')">
             <n-select
               v-model:value="ttsForm.voice"
-              :options="voiceOptions"
+              :options="ttsVoiceOptions"
               :placeholder="t('setting.ttsVoicePlaceholder')"
+              filterable
             />
           </n-form-item>
           <n-form-item :label="t('setting.ttsSpeed')">
             <n-slider
               v-model:value="ttsForm.speed"
-              :min="0.25"
-              :max="4.0"
-              :step="0.25"
+              :min="0.5"
+              :max="2.0"
+              :step="0.05"
               :format-tooltip="(v: number) => v.toFixed(2) + 'x'"
             />
           </n-form-item>
-          <n-space justify="end">
+          <n-space justify="end" align="center">
+            <n-button :loading="ttsPreviewing" @click="previewTts">{{ t('setting.voicePreview') }}</n-button>
             <n-button @click="resetTts">{{ t('setting.ttsReset') }}</n-button>
-            <n-button type="primary" @click="saveTts">{{ t('setting.ttsSave') }}</n-button>
+            <n-button type="primary" :loading="ttsSaving" @click="saveTts">{{ t('setting.ttsSave') }}</n-button>
           </n-space>
         </n-form>
       </n-card>
@@ -266,6 +294,12 @@ import {
   type NotifySettings,
   type NotifySoundId,
 } from '@/composables/useNotify'
+import {
+  getVoiceConfig,
+  updateVoiceConfig,
+  previewTts as previewTtsApi,
+  type VoiceConfigResp,
+} from '@/utils/backend'
 
 const message = useMessage()
 const { t } = useI18n()
@@ -286,51 +320,162 @@ function onLocaleChange(value: string) {
 
 
 interface SttSettings {
-  provider: string
-  apiKey: string
-  model: string
-  language: string | null
+  priority0: string
+  priority1: string | null
+  language: string
+  threads: number
+  use_vad: boolean
+  chunk_size: number
+  min_mute_chunks: number
+  max_nomute_chunks: number
+  use_prefix: boolean
+  use_itn: boolean
+  capture_device: number
+  no_gpu: boolean
+  flash_attn: boolean
 }
 
 interface TtsSettings {
-  provider: string
-  apiKey: string
-  model: string
+  priority0: string
+  priority1: string | null
   voice: string
   speed: number
 }
 
-const sttProviders = [
-  { label: 'OpenAI Whisper', value: 'openai' },
-  { label: 'Azure Speech', value: 'azure' },
-  { label: 'Google Speech-to-Text', value: 'google' },
-  { label: 'Custom', value: 'custom' },
-]
+// 后端 /voice/config 返回的引擎可用状态
+const ttsStatus = ref<Record<string, { available: boolean; voices: { value: string; label: string }[] }>>({})
+const sttStatus = ref<Record<string, { available: boolean; cloud: boolean }>>({})
 
-const ttsProviders = [
-  { label: 'OpenAI TTS', value: 'openai' },
-  { label: 'Azure Speech', value: 'azure' },
-  { label: 'Google Text-to-Speech', value: 'google' },
-  { label: 'Edge TTS', value: 'edge' },
-  { label: 'Custom', value: 'custom' },
-]
-const languageOptions = computed(() => [
+const STT_ENGINE_LABELS: Record<string, string> = {
+  sensevoice: 'SenseVoice (本地)',
+  funasr: 'FunASR (云)',
+  openai: 'OpenAI Whisper (云)',
+  xfyun: '讯飞听写 (云)',
+}
+const TTS_ENGINE_LABELS: Record<string, string> = {
+  piper: 'Piper (本地)',
+  edge: 'Edge-TTS (云)',
+}
+
+function defaultStt(): SttSettings {
+  return {
+    priority0: 'sensevoice',
+    priority1: null,
+    language: 'auto',
+    threads: 4,
+    use_vad: true,
+    chunk_size: 100,
+    min_mute_chunks: 10,
+    max_nomute_chunks: 80,
+    use_prefix: true,
+    use_itn: true,
+    capture_device: -1,
+    no_gpu: false,
+    flash_attn: false,
+  }
+}
+function defaultTts(): TtsSettings {
+  return { priority0: 'piper', priority1: 'edge', voice: '', speed: 1.0 }
+}
+
+const sttForm = ref<SttSettings>(defaultStt())
+const ttsForm = ref<TtsSettings>(defaultTts())
+const notifyForm = ref<NotifySettings>({ ...defaultSettings })
+const sttSaving = ref(false)
+const ttsSaving = ref(false)
+const ttsPreviewing = ref(false)
+
+// STT 语言下拉(对齐 SenseVoice: zh/en/yue/ja/ko + auto)
+const sttLanguageOptions = computed(() => [
   { label: t('setting.langAuto'), value: 'auto' },
-  { label: t('setting.langZhCN'), value: 'zh-CN' },
-  { label: t('setting.langZhTW'), value: 'zh-TW' },
+  { label: t('setting.langZhCN'), value: 'zh' },
+  { label: t('setting.sttLangYue'), value: 'yue' },
   { label: t('setting.langEn'), value: 'en' },
   { label: t('setting.langJa'), value: 'ja' },
   { label: t('setting.langKo'), value: 'ko' },
 ])
 
-const voiceOptions = [
-  { label: 'Alloy', value: 'alloy' },
-  { label: 'Echo', value: 'echo' },
-  { label: 'Fable', value: 'fable' },
-  { label: 'Onyx', value: 'onyx' },
-  { label: 'Nova', value: 'nova' },
-  { label: 'Shimmer', value: 'shimmer' },
-]
+const sttPrimaryOptions = computed(() =>
+  Object.entries(sttStatus.value).map(([name, info]) => ({
+    label: `${STT_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+    value: name,
+    disabled: !info.available,
+  })),
+)
+const sttSecondaryOptions = computed(() =>
+  Object.entries(sttStatus.value)
+    .filter(([name]) => name !== sttForm.value.priority0)
+    .map(([name, info]) => ({
+      label: `${STT_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+      value: name,
+      disabled: !info.available,
+    })),
+)
+const ttsPrimaryOptions = computed(() =>
+  Object.entries(ttsStatus.value).map(([name, info]) => ({
+    label: `${TTS_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+    value: name,
+    disabled: !info.available,
+  })),
+)
+const ttsSecondaryOptions = computed(() =>
+  Object.entries(ttsStatus.value)
+    .filter(([name]) => name !== ttsForm.value.priority0)
+    .map(([name, info]) => ({
+    label: `${TTS_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+    value: name,
+    disabled: !info.available,
+  })),
+)
+
+// 主引擎对应音色列表(piper/edge 不同)
+const ttsVoiceOptions = computed(() => {
+  const cur = ttsForm.value.priority0
+  const s = ttsStatus.value[cur]
+  return (s?.voices || []).filter(v => !!v.value)
+})
+
+// 主/备引擎改变后,音色不再匹配则清空
+function fixTtsVoice() {
+  const cur = ttsForm.value.voice
+  if (cur && !ttsVoiceOptions.value.some(o => o.value === cur)) {
+    ttsForm.value.voice = ttsVoiceOptions.value[0]?.value || ''
+  }
+}
+
+async function loadVoiceConfig() {
+  try {
+    const cfg: VoiceConfigResp = await getVoiceConfig()
+    ttsStatus.value = cfg.status?.tts || {}
+    sttStatus.value = cfg.status?.stt || {}
+    const stt = cfg.stt || {}
+    sttForm.value = {
+      priority0: stt.priority?.[0] || 'sensevoice',
+      priority1: stt.priority?.[1] || null,
+      language: stt.language || 'auto',
+      threads: stt.threads ?? 4,
+      use_vad: stt.use_vad ?? true,
+      chunk_size: stt.chunk_size ?? 100,
+      min_mute_chunks: stt.min_mute_chunks ?? 10,
+      max_nomute_chunks: stt.max_nomute_chunks ?? 80,
+      use_prefix: stt.use_prefix ?? true,
+      use_itn: stt.use_itn ?? true,
+      capture_device: stt.capture_device ?? -1,
+      no_gpu: stt.no_gpu ?? false,
+      flash_attn: stt.flash_attn ?? false,
+    }
+    const tts = cfg.tts || {}
+    ttsForm.value = {
+      priority0: tts.priority?.[0] || 'piper',
+      priority1: tts.priority?.[1] || null,
+      voice: (tts as any).voice_piper || (tts as any).voice_edge || '',
+      speed: tts.speed ?? 1.0,
+    }
+    fixTtsVoice()
+  } catch {
+    message.error(t('setting.voiceLoadFail'))
+  }
+}
 
 const soundOptions = computed<{ label: string; value: NotifySoundId }[]>(() => [
   { label: t('setting.soundRandom'), value: 'random' }, { label: t('setting.soundBreeze'), value: 'breeze' },
@@ -343,27 +488,6 @@ const soundOptions = computed<{ label: string; value: NotifySoundId }[]>(() => [
   { label: t('setting.soundRain'), value: 'rain' }, { label: t('setting.soundNone'), value: 'none' },
 ])
 
-
-
-const defaultStt: SttSettings = {
-  provider: 'openai',
-  apiKey: '',
-  model: 'whisper-1',
-  language: 'auto',
-}
-
-const defaultTts: TtsSettings = {
-  provider: 'openai',
-  apiKey: '',
-  model: 'tts-1',
-  voice: 'alloy',
-  speed: 1.0,
-}
-
-const sttForm = ref<SttSettings>({ ...defaultStt })
-const ttsForm = ref<TtsSettings>({ ...defaultTts })
-const notifyForm = ref<NotifySettings>({ ...defaultSettings })
-
 /** 滑块用 0–100，内部存 0–1 */
 const notifyVolumePercent = computed({
   get: () => Math.round((notifyForm.value.volume ?? 0.38) * 100),
@@ -372,25 +496,13 @@ const notifyVolumePercent = computed({
     notifyForm.value.volume = Math.min(1, Math.max(0, v / 100))
   },
 })
-
-const STT_KEY = 'symbix_stt_settings'
-const TTS_KEY = 'symbix_tts_settings'
-
 onMounted(() => {
   loadNotifySettings()
   notifyForm.value = { ...notifySettings.value }
-
-  try {
-    const savedStt = localStorage.getItem(STT_KEY)
-    if (savedStt) sttForm.value = JSON.parse(savedStt)
-  } catch {}
-  try {
-    const savedTts = localStorage.getItem(TTS_KEY)
-    if (savedTts) ttsForm.value = JSON.parse(savedTts)
-  } catch {}
+  loadVoiceConfig()
 })
-async function saveNotify() {
 
+async function saveNotify() {
   saveNotifySettings({ ...notifyForm.value })
   if (notifyForm.value.desktopNotify) {
     const perm = await requestDesktopNotifyPermission()
@@ -433,29 +545,88 @@ async function testNotify() {
 }
 
 
-function saveStt() {
-  localStorage.setItem(STT_KEY, JSON.stringify(sttForm.value))
-  message.success(t('setting.sttSaved'))
+function buildSttPatch() {
+  const f = sttForm.value
+  const priority = [f.priority0, ...(f.priority1 ? [f.priority1] : [])].filter(Boolean) as string[]
+  return {
+    priority,
+    language: f.language,
+    threads: f.threads,
+    use_vad: f.use_vad,
+    chunk_size: f.chunk_size,
+    min_mute_chunks: f.min_mute_chunks,
+    max_nomute_chunks: f.max_nomute_chunks,
+    use_prefix: f.use_prefix,
+    use_itn: f.use_itn,
+    capture_device: f.capture_device,
+    no_gpu: f.no_gpu,
+    flash_attn: f.flash_attn,
+  }
+}
+function buildTtsPatch() {
+  const f = ttsForm.value
+  const priority = [f.priority0, ...(f.priority1 ? [f.priority1] : [])].filter(Boolean) as string[]
+  const patch: Record<string, unknown> = { priority, speed: f.speed }
+  // 音色按主引擎名字存到对应字段
+  patch[`voice_${f.priority0}`] = f.voice
+  return patch
+}
+
+async function saveStt() {
+  sttSaving.value = true
+  try {
+    await updateVoiceConfig({ stt: buildSttPatch() })
+    await loadVoiceConfig()
+    message.success(t('setting.voiceSaved'))
+  } catch (e) {
+    message.error(t('setting.voiceLoadFail'))
+  } finally {
+    sttSaving.value = false
+  }
 }
 
 function resetStt() {
-  sttForm.value = { ...defaultStt }
-  localStorage.removeItem(STT_KEY)
+  sttForm.value = defaultStt()
   message.info(t('setting.sttResetInfo'))
 }
 
-function saveTts() {
-  localStorage.setItem(TTS_KEY, JSON.stringify(ttsForm.value))
-  message.success(t('setting.ttsSaved'))
+async function saveTts() {
+  ttsSaving.value = true
+  try {
+    await updateVoiceConfig({ tts: buildTtsPatch() })
+    await loadVoiceConfig()
+    message.success(t('setting.voiceSaved'))
+  } catch (e) {
+    message.error(t('setting.voiceLoadFail'))
+  } finally {
+    ttsSaving.value = false
+  }
 }
 
 function resetTts() {
-  ttsForm.value = { ...defaultTts }
-  localStorage.removeItem(TTS_KEY)
+  ttsForm.value = defaultTts()
+  fixTtsVoice()
   message.info(t('setting.ttsResetInfo'))
 }
-</script>
 
+let ttsAudio: HTMLAudioElement | null = null
+async function previewTts() {
+  ttsPreviewing.value = true
+  try {
+    // 先保存当前设置,保证试听用新音色/语速
+    await updateVoiceConfig({ tts: buildTtsPatch() })
+    const url = await previewTtsApi(t('setting.voicePreviewText'), ttsForm.value.speed)
+    if (ttsAudio) { ttsAudio.pause(); ttsAudio = null }
+    ttsAudio = new Audio(url)
+    ttsAudio.onended = () => { URL.revokeObjectURL(url) }
+    await ttsAudio.play()
+  } catch (e) {
+    message.error(t('setting.voicePreviewFail'))
+  } finally {
+    ttsPreviewing.value = false
+  }
+}
+</script>
 <style scoped>
 .setting-page {
   height: 100vh;
@@ -478,6 +649,11 @@ function resetTts() {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
+}
+
+.hint-text {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .inline-row {

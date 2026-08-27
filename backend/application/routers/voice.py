@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import asyncio
 import json
 import os.path as osp
@@ -90,6 +89,22 @@ async def synthesize(req: TTSRequest):
 _subscribers: set[asyncio.Queue] = set()
 
 
+def _clean_sensevoice(text: str) -> str:
+    """洗掉 sense-voice --use-prefix 带出的元数据标记。
+
+    形如 "<|zh|><|NEUTRAL|><|Speech|>你好世界",只保留正文。
+    逐个去掉 <|...|> / em <|zh|> ... </|zh|> 包裹,并规整空格。
+    """
+    import re
+
+    t = text
+    # 剥掉成对的 em 包裹 <|zh|>xxx</|zh|> (保留内部正文)
+    t = re.sub(r"<\|[^>]+?\|>(.*?)</\|[^>]+?\|>", r"\1", t, flags=re.S)
+    # 剥掉残留的 <|xxx|>
+    t = re.sub(r"<\|[^>]*?\|>", "", t)
+    return t.strip()
+
+
 def _broadcast(text: str) -> None:
     for q in list(_subscribers):
         try:
@@ -100,7 +115,9 @@ def _broadcast(text: str) -> None:
 
 async def _on_result(text: str) -> None:
     """SenseVoice pump 在事件循环内读子进程 stdout,直接广播即可。"""
-    _broadcast(text)
+    cleaned = _clean_sensevoice(text)
+    if cleaned:
+        _broadcast(cleaned)
 
 
 @router.post("/voice/stt/start")
