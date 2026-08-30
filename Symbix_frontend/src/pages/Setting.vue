@@ -229,6 +229,17 @@
                 <n-switch v-model:value="sttForm.flash_attn" />
               </n-form-item>
             </n-collapse-item>
+            <n-collapse-item :title="t('setting.cloudApi')" name="stt-cloud">
+              <n-form-item :label="t('setting.cloudBaseUrl')">
+                <n-input v-model:value="sttForm.openai_base_url" :placeholder="t('setting.cloudBaseUrlPlaceholderStt')" />
+              </n-form-item>
+              <n-form-item :label="t('setting.cloudApiKey')">
+                <n-input v-model:value="sttForm.openai_api_key" type="password" show-password-on="click" :placeholder="t('setting.cloudApiKeyPlaceholder')" />
+              </n-form-item>
+              <n-form-item :label="t('setting.cloudModel')">
+                <n-input v-model:value="sttForm.openai_model" :placeholder="t('setting.cloudModelPlaceholderStt')" />
+              </n-form-item>
+            </n-collapse-item>
           </n-collapse>
           <n-space justify="end">
             <n-button @click="resetStt">{{ t('setting.sttReset') }}</n-button>
@@ -272,6 +283,19 @@
               :format-tooltip="(v: number) => v.toFixed(2) + 'x'"
             />
           </n-form-item>
+          <n-collapse>
+            <n-collapse-item :title="t('setting.cloudApi')" name="tts-cloud">
+              <n-form-item :label="t('setting.cloudBaseUrl')">
+                <n-input v-model:value="ttsForm.openai_base_url" :placeholder="t('setting.cloudBaseUrlPlaceholderTts')" />
+              </n-form-item>
+              <n-form-item :label="t('setting.cloudApiKey')">
+                <n-input v-model:value="ttsForm.openai_api_key" type="password" show-password-on="click" :placeholder="t('setting.cloudApiKeyPlaceholder')" />
+              </n-form-item>
+              <n-form-item :label="t('setting.cloudModel')">
+                <n-input v-model:value="ttsForm.openai_model" :placeholder="t('setting.cloudModelPlaceholderTts')" />
+              </n-form-item>
+            </n-collapse-item>
+          </n-collapse>
           <n-space justify="end" align="center">
             <n-select
               v-model:value="ttsPreviewEngine"
@@ -344,6 +368,9 @@ interface SttSettings {
   capture_device: number
   no_gpu: boolean
   flash_attn: boolean
+  openai_base_url: string
+  openai_api_key: string
+  openai_model: string
 }
 
 interface TtsSettings {
@@ -351,6 +378,9 @@ interface TtsSettings {
   priority1: string | null
   voice: string
   speed: number
+  openai_base_url: string
+  openai_api_key: string
+  openai_model: string
 }
 
 // 后端 /voice/config 返回的引擎可用状态
@@ -360,12 +390,12 @@ const sttStatus = ref<Record<string, { available: boolean; cloud: boolean }>>({}
 const STT_ENGINE_LABELS: Record<string, string> = {
   sensevoice: 'SenseVoice (本地)',
   funasr: 'FunASR (云)',
-  openai: 'OpenAI Whisper (云)',
+  openai: 'OpenAI 兼容 (云)',
   xfyun: '讯飞听写 (云)',
 }
 const TTS_ENGINE_LABELS: Record<string, string> = {
-  piper: 'Piper (本地)',
   edge: 'Edge-TTS (云)',
+  openai: 'OpenAI 兼容 (云)',
 }
 
 function defaultStt(): SttSettings {
@@ -383,10 +413,13 @@ function defaultStt(): SttSettings {
     capture_device: -1,
     no_gpu: false,
     flash_attn: false,
+    openai_base_url: '',
+    openai_api_key: '',
+    openai_model: 'whisper-1',
   }
 }
 function defaultTts(): TtsSettings {
-  return { priority0: 'piper', priority1: 'edge', voice: '', speed: 1.0 }
+  return { priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1' }
 }
 
 const sttForm = ref<SttSettings>(defaultStt())
@@ -439,7 +472,7 @@ const ttsSecondaryOptions = computed(() =>
   })),
 )
 
-// 主引擎对应音色列表(piper/edge 不同)
+// 主引擎对应音色列表(edge/openai 不同)
 const ttsVoiceOptions = computed(() => {
   const cur = ttsForm.value.priority0
   const s = ttsStatus.value[cur]
@@ -474,13 +507,19 @@ async function loadVoiceConfig() {
       capture_device: stt.capture_device ?? -1,
       no_gpu: stt.no_gpu ?? false,
       flash_attn: stt.flash_attn ?? false,
+      openai_base_url: stt.openai_base_url || '',
+      openai_api_key: stt.openai_api_key || '',
+      openai_model: stt.openai_model || 'whisper-1',
     }
     const tts = cfg.tts || {}
     ttsForm.value = {
-      priority0: tts.priority?.[0] || 'piper',
+      priority0: tts.priority?.[0] || 'edge',
       priority1: tts.priority?.[1] || null,
-      voice: (tts as any).voice_piper || (tts as any).voice_edge || '',
+      voice: (tts as any).voice_edge || (tts as any).voice_openai || '',
       speed: tts.speed ?? 1.0,
+      openai_base_url: (tts as any).openai_base_url || '',
+      openai_api_key: (tts as any).openai_api_key || '',
+      openai_model: (tts as any).openai_model || 'tts-1',
     }
     fixTtsVoice()
   } catch {
@@ -572,6 +611,9 @@ function buildSttPatch() {
     capture_device: f.capture_device,
     no_gpu: f.no_gpu,
     flash_attn: f.flash_attn,
+    openai_base_url: f.openai_base_url,
+    openai_api_key: f.openai_api_key,
+    openai_model: f.openai_model,
   }
 }
 function buildTtsPatch() {
@@ -579,7 +621,10 @@ function buildTtsPatch() {
   const priority = [f.priority0, ...(f.priority1 ? [f.priority1] : [])].filter(Boolean) as string[]
   const patch: Record<string, unknown> = { priority, speed: f.speed }
   // 音色按主引擎名字存到对应字段
-  patch[`voice_${f.priority0}`] = f.voice
+  if (f.voice) patch[`voice_${f.priority0}`] = f.voice
+  patch.openai_base_url = f.openai_base_url
+  patch.openai_api_key = f.openai_api_key
+  patch.openai_model = f.openai_model
   return patch
 }
 

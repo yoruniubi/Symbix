@@ -8,9 +8,12 @@ export const BACKEND_URL = 'http://127.0.0.1:8000'
 export interface VoiceConfigResp {
   tts: {
     priority: string[]
-    voice_piper: string
     voice_edge: string
+    voice_openai: string
     speed: number
+    openai_base_url: string
+    openai_api_key: string
+    openai_model: string
   }
   stt: {
     priority: string[]
@@ -25,8 +28,10 @@ export interface VoiceConfigResp {
     capture_device: number
     no_gpu: boolean
     flash_attn: boolean
-    funasr_ws_url: string
+    openai_base_url: string
     openai_api_key: string
+    openai_model: string
+    funasr_ws_url: string
     xfyun_app_id: string
     xfyun_api_key: string
     xfyun_api_secret: string

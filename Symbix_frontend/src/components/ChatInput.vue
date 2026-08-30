@@ -367,8 +367,73 @@ function toggleVoice() {
   if (isRecording.value) {
     stopVoice()
   } else {
-    startVoice()
+    // 异步判断 STT 主引擎:openai(云端文件式)走浏览器录音上传,sensevoice 走 SSE 流式
+    checkSttModeAndStart()
   }
+}
+
+// 云端(STT 主引擎 = openai):浏览器麦克风录音,松手→上传 /voice/stt/upload。
+let sttCloudMode = false
+let cloudRecorder: MediaRecorder | null = null
+let cloudStream: MediaStream | null = null
+let cloudChunks: Blob[] = []
+
+async function checkSttModeAndStart() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/voice/config`)
+    if (res.ok) {
+      const cfg = await res.json()
+      sttCloudMode = cfg?.stt?.priority?.[0] === 'openai'
+    }
+  } catch {
+    sttCloudMode = false
+  }
+  if (sttCloudMode) startCloudVoice()
+  else startVoice()
+}
+
+function startCloudVoice() {
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    messageUi.error(t('chatInput.sttStartFail'))
+    return
+  }
+  isRecording.value = true
+  cloudChunks = []
+  navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+    cloudStream = stream
+    try {
+      cloudRecorder = new MediaRecorder(stream)
+    } catch {
+      cloudRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    }
+    cloudRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) cloudChunks.push(e.data)
+    }
+    cloudRecorder.onstop = () => {
+      const mime = cloudRecorder?.mimeType || 'audio/webm'
+      const blob = new Blob(cloudChunks, { type: mime })
+      const fd = new FormData()
+      fd.append('file', blob, mime.includes('wav') ? 'audio.wav' : 'audio.webm')
+      fetch(`${BACKEND_URL}/voice/stt/upload`, { method: 'POST', body: fd })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(String(r.status))
+          const j = await r.json()
+          if (j.text) {
+            inputValue.value = (inputValue.value ? inputValue.value + ' ' : '') + j.text
+          }
+        })
+        .catch(() => messageUi.error(t('chatInput.sttStartFail')))
+      if (cloudStream) {
+        cloudStream.getTracks().forEach((t) => t.stop())
+        cloudStream = null
+      }
+      cloudRecorder = null
+    }
+    cloudRecorder.start()
+  }).catch(() => {
+    messageUi.error(t('chatInput.sttStartFail'))
+    isRecording.value = false
+  })
 }
 
 // 实时流式 STT:后端 SenseVoice.cpp 直接吃麦克风,
@@ -402,6 +467,13 @@ function startVoice() {
 
 function stopVoice() {
   isRecording.value = false
+  if (sttCloudMode) {
+    // 云端文件式:停录 → onstop 触发上传
+    if (cloudRecorder && cloudRecorder.state !== 'inactive') {
+      cloudRecorder.stop()
+    }
+    return
+  }
   if (sttSource) {
     sttSource.close()
     sttSource = null
@@ -424,6 +496,14 @@ function handleInputKeydown(e: KeyboardEvent) {
 // 组件卸载时释放所有 blob URL
 onBeforeUnmount(() => {
   attachments.value.forEach(revokePreview)
+  if (sttSource) {
+    sttSource.close()
+    sttSource = null
+  }
+  if (cloudStream) {
+    cloudStream.getTracks().forEach((t) => t.stop())
+    cloudStream = null
+  }
 })
 </script>
 

@@ -90,6 +90,22 @@ class JobScheduler:
             self._scheduler.shutdown(wait=False)
             log.info("JobScheduler stopped")
 
+    def purge(self) -> None:
+        """清空 jobstore 里所有 job(启动对齐用)。
+
+        注意: APScheduler 的 scheduler.remove_all_jobs() 在未启动(STATE_STOPPED)
+        时只清内存 pending 列表、不删持久化行。这里必须直接调用 jobstore 的
+        remove_all_jobs(),才能真正清掉 sqlite apscheduler_jobs 残留。
+        """
+        try:
+            store = self._scheduler._jobstores.get("default")
+            if store is not None:
+                store.remove_all_jobs()
+            self._scheduler.remove_all_jobs()
+            log.info("JobScheduler jobstore purged")
+        except Exception as e:
+            log.warning("JobScheduler purge failed: %s", e)
+
     def add_job(self, job: dict) -> None:
         trigger = build_trigger(job["trigger_type"], job["trigger_config"])
         self._scheduler.add_job(

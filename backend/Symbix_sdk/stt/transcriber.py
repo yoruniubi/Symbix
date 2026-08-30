@@ -188,23 +188,60 @@ class FunASRCloudProvider(STTProvider):
 
 
 class OpenAIWhisperStreamProvider(STTProvider):
-    """OpenAI /v1/audio/transcriptions 是文件式接口;流式需分段轮询。
+    """OpenAI 兼容 /v1/audio/transcriptions 文件式接口(云端/自建网关)。
 
-    TODO: 后续接 WhisperStreaming 或等用户给 key 再定方案。
+    配合前端:浏览器录音(MediaRecorder)→ 上传 wav → 后端 httpx 转发。
+    自建服务: base_url 指向你的网关(如 one-api / new-api / vllm / 自建),
+    api_key 为空时也可匿名调用(部分本地服务不需要 key)。
     """
 
     name = "openai"
     cloud = True
 
-    def __init__(self, api_key: str = "", model: str = "whisper-1") -> None:
+    def __init__(self, api_key: str = "", base_url: str = "", model: str = "whisper-1") -> None:
         self.api_key = api_key
-        self.model = model
+        self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        self.model = model or "whisper-1"
 
     def available(self) -> bool:
-        return bool(self.api_key)
+        # 空 base_url = 官方,必须有 key;自建网关(base_url 非官方)才允许匿名
+        if self.base_url == "https://api.openai.com/v1":
+            return bool(self.api_key)
+        return bool(self.base_url)
 
+    def _headers(self) -> dict:
+        h = {"Accept": "application/json"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
+
+    async def transcribe_file(self, audio: bytes, filename: str = "audio.wav") -> str:
+        """把上传的音频转发给 OpenAI 兼容转录接口,返回纯文本。"""
+        try:
+            import httpx
+        except Exception as e:
+            raise STTProviderError(f"httpx 未安装: {e}") from e
+
+        url = f"{self.base_url}/audio/transcriptions"
+        files = {"file": (filename, audio, "audio/wav" if filename.endswith(".wav") else "audio/webm")}
+        data = {"model": self.model}
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.post(url, headers=self._headers(), files=files, data=data)
+        except Exception as e:
+            raise STTProviderError(f"OpenAI 转录请求失败: {e}") from e
+        if r.status_code != 200:
+            raise STTProviderError(f"OpenAI 转录返回 {r.status_code}: {r.text[:300]}")
+        try:
+            payload = r.json()
+        except Exception:
+            raise STTProviderError("OpenAI 转录返回非 JSON")
+        text = payload.get("text") or payload.get("choices", [{}])[0].get("text") or ""
+        return text.strip()
+
+    # 流式接口保持“未接入”占位;文件式由 /voice/stt/upload 直接调 transcribe_file
     async def start_stream(self, on_result: OnResult) -> None:
-        raise STTProviderError("OpenAI Whisper 流式尚未接入")
+        raise STTProviderError("OpenAI 兼容引擎为文件式接口,请用前端录音上传(已自动处理)")
 
 
 class XfyunProvider(STTProvider):
@@ -251,9 +288,12 @@ class STTConfig:
     capture_device: int = -1       # -1 = 默认麦克风
     no_gpu: bool = False
     flash_attn: bool = False
-    # 云端凭据(占位)
-    funasr_ws_url: str = ""
+    # 云端凭据(OpenAI 兼容文件式接口)
     openai_api_key: str = ""
+    openai_base_url: str = ""        # 空 = 官方 https://api.openai.com/v1
+    openai_model: str = "whisper-1"
+    # 兼容占位(保留但不再用于流式)
+    funasr_ws_url: str = ""
     xfyun_app_id: str = ""
     xfyun_api_key: str = ""
     xfyun_api_secret: str = ""
@@ -272,6 +312,9 @@ class STTConfig:
             "capture_device": self.capture_device,
             "no_gpu": self.no_gpu,
             "flash_attn": self.flash_attn,
+            "openai_api_key": self.openai_api_key,
+            "openai_base_url": self.openai_base_url,
+            "openai_model": self.openai_model,
             "funasr_ws_url": self.funasr_ws_url,
             "openai_api_key": self.openai_api_key,
             "xfyun_app_id": self.xfyun_app_id,
@@ -306,7 +349,11 @@ class STTEngine:
         if name == FunASRCloudProvider.name:
             return FunASRCloudProvider(ws_url=cfg.funasr_ws_url)
         if name == OpenAIWhisperStreamProvider.name:
-            return OpenAIWhisperStreamProvider(api_key=cfg.openai_api_key)
+            return OpenAIWhisperStreamProvider(
+                api_key=cfg.openai_api_key,
+                base_url=cfg.openai_base_url,
+                model=cfg.openai_model,
+            )
         if name == XfyunProvider.name:
             return XfyunProvider(app_id=cfg.xfyun_app_id, api_key=cfg.xfyun_api_key, api_secret=cfg.xfyun_api_secret)
         raise STTProviderError(f"未知 STT 引擎: {name}")
@@ -314,7 +361,11 @@ class STTEngine:
     def status(self) -> dict:
         out = {}
         for name, cls in PROVIDER_CLASSES.items():
-            inst = cls() if cls is SenseVoiceProvider else self._build_provider(name)
+            if cls is SenseVoiceProvider:
+                inst = cls()
+            else:
+                # 云端 provider 需要配置参数,用当前配置构造(否则 available 恒 false)
+                inst = self._build_provider(name)
             out[name] = {"available": inst.available(), "cloud": cls.cloud}
         return out
 

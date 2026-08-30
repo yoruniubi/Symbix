@@ -89,6 +89,14 @@ class JobStorage:
             cur = c.execute("DELETE FROM job_meta WHERE id=?", (job_id,))
             return cur.rowcount > 0
 
+    def delete_history(self, job_id: str) -> None:
+        """删除某 job 的全部历史记录(随 job 删除一并清理)。"""
+        with self._conn() as c:
+            try:
+                c.execute("DELETE FROM job_history WHERE job_id=?", (job_id,))
+            except sqlite3.Error:
+                pass
+
     def update_status(self, job_id: str, status: str, error: Optional[str], run_time: datetime) -> None:
         with self._conn() as c:
             c.execute(

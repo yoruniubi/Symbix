@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from application.services.memory_ops import format_sse
 from application.services.pet_action import LOOP_ACTIONS, SSE_SHUTDOWN, normalize_pet_action, pet_action
+from Symbix_sdk.color_extract import extract_palette_b64, palette_to_hint
 
 
 # 前端静态资源目录（相对于 backend 运行目录）
@@ -68,8 +69,9 @@ except Exception as e:
 router = APIRouter(tags=["pet"])
 
 class PetGenerateRequest(BaseModel):
-    name: str = Field(..., description="皮肤名称（将用作文件夹名）")
-    prompt: str = Field(..., description="外观描述，用于生成 rig 和动画")
+    name: str = Field(..., description="皮肤名称(将用作文件夹名)")
+    prompt: str = Field(..., description="外观描述,用于生成 rig 和动画")
+    ref_image: Optional[str] = Field(None, description="参考图 base64 dataURL;无视觉模型时自动提取主色注入提示词")
 
 
 class PetActionRequest(BaseModel):
@@ -304,8 +306,20 @@ async def pet_generate(req: PetGenerateRequest):
         def progress(msg: str):
             print(f"[pet-forge] {msg}")
 
+        # 无视觉模型也可用:若带参考图,提取主色拼进 prompt,让 SVG 颜色尽量贴合
+        effective_prompt = req.prompt
+        color_tag = ""
+        if req.ref_image:
+            try:
+                hexes = extract_palette_b64(req.ref_image)
+                color_tag = palette_to_hint(hexes)
+            except Exception as e:
+                print(f"[pet-forge] 参考图取色失败(忽略): {e}")
+        if color_tag:
+            effective_prompt = f"{req.prompt}\n\n{color_tag}"
+
         svg_text = generate_rig(
-            description=req.prompt,
+            description=effective_prompt,
             name=folder_name,
             max_retries=3,
             progress=progress,
@@ -320,13 +334,22 @@ async def pet_generate(req: PetGenerateRequest):
         states = generate_states_all(
             part_ids=part_ids,
             name=folder_name,
-            description=req.prompt,
+            description=effective_prompt,
             max_retries=3,
             progress=progress,
             apply_mirrors=True,
         )
 
-        # 4. 打包主题（会做最终校验）
+        # 4. 打包主题(会做最终校验);有参考图取色则用其作为 palette 落盘
+        palette_dict = None
+        if color_tag and req.ref_image:
+            try:
+                hexes = extract_palette_b64(req.ref_image)
+                from Symbix_sdk.color_extract import colors_to_pet_slots
+
+                palette_dict = colors_to_pet_slots(hexes) or None
+            except Exception as e:
+                print(f"[pet-forge] palette 落盘失败(忽略,用默认色): {e}")
         theme = pack_theme(
             name=folder_name,
             svg_text=svg_text,
@@ -334,7 +357,8 @@ async def pet_generate(req: PetGenerateRequest):
             out_dir=work_dir,
             version="1.0.0",
             description=req.prompt,
-            # schema_path 可选，不传
+            palette=palette_dict,
+            # schema_path 可选,不传
         )
 
         # 5. 将工作目录内容复制到 public/pet/{folder_name}

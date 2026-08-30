@@ -3,6 +3,7 @@ import asyncio
 import httpx
 from typing import AsyncGenerator, Optional
 from .providers import ProviderRegistry, ProviderConfig, resolve_capabilities
+from .color_extract import extract_palette_b64, palette_to_hint
 
 
 def _sanitize_tools(tools: list[dict]) -> list[dict]:
@@ -207,11 +208,19 @@ class SymbixClient:
         messages.extend(history)
         if image_parts:
             if not supports_vision:
-                # 模型不支持视觉 → 降级为文字描述，避免 multimodal payload 被 400。
-                image_summary = ", ".join(
-                    f"[图片: {p.get('filename') or p.get('mime') or 'unknown'}]"
-                    for p in image_parts if isinstance(p, dict)
-                )
+                # 模型不支持视觉 → 降级为文字描述,避免 multimodal payload 被 400。
+                # 同时用 Pylette/Pillow 提取主色,拼进提示,让 skill LLM 生成 SVG 时颜色尽量贴合参考图。
+                image_summary_parts = []
+                for p in image_parts:
+                    if not isinstance(p, dict):
+                        continue
+                    filename = p.get('filename') or p.get('mime') or 'unknown'
+                    label = f"[图片: {filename}]"
+                    # 尝试提取主色:失败静默,不影响降级文本
+                    hexes = extract_palette_b64(p.get('base64') or '')
+                    hint = palette_to_hint(hexes)
+                    image_summary_parts.append(label + (f"({hint})" if hint else ""))
+                image_summary = ", ".join(image_summary_parts)
                 messages.append({
                     "role": "user",
                     "content": f"{user_input or ''}\n{image_summary}".strip(),

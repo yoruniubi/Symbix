@@ -42,7 +42,7 @@ class VoiceConfigManager:
             os.replace(tmp, self.path)
 
     def apply_tts_patch(self, patch: dict) -> None:
-        """部分更新 TTS 配置(priority/voice_piper/voice_edge/speed)。"""
+        """部分更新 TTS 配置(priority/voice_*/speed/openai_*)。"""
         allowed = set(TTSConfig().to_dict().keys())
         for k, v in (patch or {}).items():
             if k in allowed and v is not None:

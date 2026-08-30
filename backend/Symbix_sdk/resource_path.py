@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 
 # 相对资源根的固定布局(与源码目录保持一致,方便打包脚本整目录搬运)
-_TTS_MODEL_DIR = "Symbix_sdk/tts/model"
 _STT_BIN_DIR = "Symbix_sdk/stt/bin"
 _STT_MODEL_DIR = "Symbix_sdk/stt/model"
 
@@ -25,10 +24,6 @@ def resource_root() -> Path:
 def resource(rel: str) -> Path:
     """拼出资源绝对路径(不保证存在,调用方自行判断)。"""
     return resource_root() / rel
-
-
-def tts_model_dir() -> Path:
-    return resource(_TTS_MODEL_DIR)
 
 
 def stt_bin_dir() -> Path:

@@ -41,10 +41,18 @@ class JobManager:
             _set_manager_ref(self)
 
     def start(self) -> None:
-        """恢复并启动：把已启用 job 重新装上调度。"""
+        """恢复并启动:先把 apscheduler jobstore 与 job_meta 对齐,再装启用的 job。
+
+        背景: job_meta 是业务真相源;apscheduler_jobs 是 APScheduler 的持久化副本。
+        若两者不一致(前端已删但 jobstore 残留),旧 job 会在重启后幽灵复恢。
+        这里以 job_meta 为准重建 jobstore,保证一致性。
+        """
         if self.runner is None:
-            raise RuntimeError("JobManager.build() 未调用（缺少业务依赖）")
-        for job in self.storage.list_meta():
+            raise RuntimeError("JobManager.build() 未调用(缺少业务依赖)")
+        jobs = self.storage.list_meta()
+        # 以 job_meta 为准:清掉 apscheduler 残留 job,再重新装载启用项
+        self.scheduler.purge()
+        for job in jobs:
             if job.get("enabled", True):
                 try:
                     self.scheduler.add_job(job)
@@ -92,8 +100,14 @@ class JobManager:
         return self._to_out(existing)
 
     def delete(self, job_id: str) -> bool:
+        # 1) APScheduler 内存 job + 它的持久化行(sqlite apscheduler_jobs 表)
+        #    remove_job 会同步删掉 SQLAlchemyJobStore 里的持久化行
         self.scheduler.remove_job(job_id)
-        return self.storage.delete_meta(job_id)
+        # 2) 业务 meta 表
+        deleted = self.storage.delete_meta(job_id)
+        # 3) 历史记录一并清理,避免删了 job 还残留 history 行
+        self.storage.delete_history(job_id)
+        return deleted
 
     def pause(self, job_id: str) -> dict:
         existing = self.storage.get_meta(job_id)

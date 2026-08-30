@@ -2,12 +2,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os.path as osp
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from Symbix_sdk.config.voice_config import VoiceConfigManager
 from Symbix_sdk.tts.synthesizer import tts_engine, TTSProviderError
-from Symbix_sdk.stt.transcriber import stt_engine, STTProviderError
+from Symbix_sdk.stt.transcriber import (
+    stt_engine,
+    STTProviderError,
+    OpenAIWhisperStreamProvider,
+)
 
 router = APIRouter(tags=["voice"])
 
@@ -30,7 +34,7 @@ async def get_voice_config():
         "tts": voice_cfg.tts.to_dict(),
         "stt": voice_cfg.stt.to_dict(),
         "status": {
-            "tts": tts_engine.status(),
+            "tts": await tts_engine.status(),
             "stt": stt_engine.status(),
         },
     }
@@ -46,6 +50,7 @@ async def update_voice_config(patch: VoiceConfigPatch):
     if patch.tts:
         voice_cfg.apply_tts_patch(patch.tts)
         tts_engine.config = voice_cfg.tts
+        tts_engine.reload()  # 清 provider 缓存,让新 api_key/base_url 生效
     if patch.stt:
         # STT 改动时若正在录音,先停掉旧引擎,下次 start 用新参数
         await stt_engine.stop()
@@ -59,7 +64,7 @@ async def update_voice_config(patch: VoiceConfigPatch):
 class TTSRequest(BaseModel):
     text: str
     speed: float | None = None  # 覆盖默认语速(0.5~2.0)
-    engine: str | None = None   # 指定试听引擎(如 "piper"/"edge"),不传则按优先级链
+    engine: str | None = None   # 指定试听引擎(如 "edge"/"openai"),不传则按优先级链
 
 
 @router.post("/voice/tts")
@@ -123,12 +128,43 @@ async def _on_result(text: str) -> None:
 
 @router.post("/voice/stt/start")
 async def stt_start():
-    """拉起流式识别(按手动优先级选引擎)。"""
+    """拉起流式识别(仅本地流式引擎能用;云端文件式走 upload)。"""
     try:
         name = await stt_engine.start(_on_result)
         return {"status": "ok", "engine": name}
     except STTProviderError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/voice/stt/upload")
+async def stt_upload(file: UploadFile = File(...)):
+    """前端录音 → 上传音频 → 交给 OpenAI 兼容转录接口(自建网关/官方)。
+
+    命中 openai 引擎则转发;否则 400 提示。返回 {text}。
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="空音频")
+    name = file.filename or "audio.wav"
+    # 找优先级里第一个 openai 引擎(云端文件式)
+    provider = None
+    for eng in stt_engine.config.priority:
+        if eng == OpenAIWhisperStreamProvider.name:
+            provider = stt_engine._build_provider(eng)
+            break
+    if provider is None or not provider.available():
+        raise HTTPException(
+            status_code=400,
+            detail="STT 未配置 OpenAI 兼容引擎(请在设置里填 base_url/api_key,并把 openai 加入优先级)",
+        )
+    try:
+        text = await provider.transcribe_file(raw, name)
+    except STTProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    # 同时广播给 SSE 订阅者(聊天输入框能直接看到)
+    if text:
+        _broadcast(text)
+    return {"text": text}
 
 
 @router.post("/voice/stt/stop")
