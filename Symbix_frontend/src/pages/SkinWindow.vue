@@ -134,12 +134,14 @@
               :placeholder="t('skinWindow.modalPromptPlaceholder')"
             />
           </n-form-item>
-          <n-form-item :label="t('skinWindow.modalRefImage')">
+          <n-form-item :label="t('skinWindow.modalRefImage')" :show-feedback="false">
             <n-upload
+              v-if="!skillForm.refImage"
+              ref="refUploadRef"
               :max="1"
               accept="image/*"
               :default-upload="false"
-              :show-file-list="true"
+              :show-file-list="false"
               class="ref-upload"
               @change="handleRefImageChange"
             >
@@ -155,9 +157,10 @@
                 </div>
               </n-upload-dragger>
             </n-upload>
-            <div v-if="skillForm.refImage" class="ref-image-preview">
+            <div v-else class="ref-image-preview">
               <img :src="skillForm.refImage.dataUrl" alt="ref" />
-              <n-button quaternary size="tiny" @click="skillForm.refImage = null">{{ t('skinWindow.modalRefImageClear') }}</n-button>
+              <div class="ref-image-name">{{ skillForm.refImage.name }}</div>
+              <n-button quaternary size="tiny" @click="clearRefImage">{{ t('skinWindow.modalRefImageClear') }}</n-button>
             </div>
           </n-form-item>
         </n-form>
@@ -293,6 +296,7 @@ const availablePets = ref<PetSkin[]>([
 ])
 
 const showSkillModal = ref(false)
+const refUploadRef = ref(null) // n-upload 实例引用,清文件列表用
 const skillForm = ref<{
   name: string
   prompt: string
@@ -354,6 +358,17 @@ async function handleRefImageChange(options: any) {
     }
   }
   reader.readAsDataURL(raw)
+}
+
+/** 清除参考图:先清 naive 内部文件列表(否则同文件無法再选),再置空 */
+function clearRefImage() {
+  try {
+    const upload: any = refUploadRef.value
+    upload?.clear?.()
+  } catch (e) {
+    // ignore
+  }
+  skillForm.value.refImage = null
 }
 
 async function triggerSkillGenerate() {
@@ -967,26 +982,46 @@ onMounted(() => {
 
 .ref-image-preview {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 8px;
-  margin-top: 6px;
+  margin: 8px auto 0;
+  width: 100%;
 }
 .ref-image-preview img {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: 6px;
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  border-radius: 8px;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
+  background: var(--bg-elevated, #2B2523);
+  display: block;
+}
+.ref-image-name {
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ref-image-preview .n-button {
+  margin-top: 2px;
 }
 
-/* 参考图拖拽上传区，宽度限制为 40.5%（与表单其他控件视觉重量平衡） */
+/* 参考图拖拽上传区：与上方输入控件的间距拉大一点,让上传区稍微下挪 */
 .ref-upload {
   width: 40.5%;
-  margin: 0 auto;
+  margin: 8px auto 0;
+  display: block;
 }
 .ref-upload :deep(.n-upload-trigger) {
   display: block;
   width: 100%;
+}
+/* 消除 n-form-item 的 feedback 占位(feedback-wrapper 空高度不再撑大 gap) */
+.skill-modal :deep(.n-form-item-feedback-wrapper) {
+  display: none !important;
 }
 /* n-upload-dragger 本身是一个虚线椎间子；它与面板风格统一：背景 + 边框 + 圆角 */
 .ref-upload :deep(.n-upload-dragger) {

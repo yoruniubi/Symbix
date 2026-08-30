@@ -53,11 +53,14 @@ export async function updateVoiceConfig(patch: { tts?: Record<string, unknown>; 
 }
 
 /** 试听 TTS:返回 Blob URL 供 <audio> 播放。 */
-export async function previewTts(text: string, speed?: number): Promise<string> {
+export async function previewTts(text: string, speed?: number, engine?: string): Promise<string> {
+  const body: Record<string, unknown> = { text }
+  if (speed !== undefined) body.speed = speed
+  if (engine) body.engine = engine
   const res = await fetch(`${BACKEND_URL}/voice/tts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, speed }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`POST /voice/tts ${res.status}`)
   const blob = await res.blob()

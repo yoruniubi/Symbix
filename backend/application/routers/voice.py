@@ -59,6 +59,7 @@ async def update_voice_config(patch: VoiceConfigPatch):
 class TTSRequest(BaseModel):
     text: str
     speed: float | None = None  # 覆盖默认语速(0.5~2.0)
+    engine: str | None = None   # 指定试听引擎(如 "piper"/"edge"),不传则按优先级链
 
 
 @router.post("/voice/tts")
@@ -71,7 +72,7 @@ async def synthesize(req: TTSRequest):
     if req.speed is not None:
         tts_engine.config.speed = max(0.5, min(2.0, req.speed))
     try:
-        result = await tts_engine.synthesize(text[:2000])
+        result = await tts_engine.synthesize(text[:2000], engine=req.engine)
     except TTSProviderError as e:
         raise HTTPException(status_code=503, detail=str(e))
     finally:

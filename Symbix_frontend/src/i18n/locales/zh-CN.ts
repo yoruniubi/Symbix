@@ -460,10 +460,13 @@ export default {
     voicePreview: '试听',
     voicePreviewText: '你好,这是 Symbix 语音合成试听。',
     voicePreviewFail: '试听失败',
+    voicePreviewEngine: '试听引擎',
+    voicePreviewEngineDefault: '跟随主引擎',
     voiceLoadFail: '语音配置加载失败',
     voiceSaved: '语音配置已保存',
     voiceEngineAvail: '可用',
     voiceEngineUnavail: '未就绪',
+    advancedSettings: '高级设置',
     // STT 细化
     sttThreads: '解码线程数',
     sttVad: '流式 VAD(信号处理)',

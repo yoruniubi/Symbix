@@ -228,10 +228,12 @@ class TTSEngine:
             }
         return out
 
-    async def synthesize(self, text: str) -> TTSResult:
+    async def synthesize(self, text: str, engine: str | None = None) -> TTSResult:
         cfg = self.config
         errors: list[str] = []
-        for name in cfg.priority:
+        # 指定试听引擎:只用这一个,不降级
+        order = [engine] if engine else list(cfg.priority)
+        for name in order:
             try:
                 p = self._provider(name)
                 if not p.available():

@@ -186,46 +186,50 @@
               :options="sttLanguageOptions"
             />
           </n-form-item>
-          <n-form-item :label="t('setting.sttThreads')">
-            <n-input-number v-model:value="sttForm.threads" :min="1" :max="32" />
-          </n-form-item>
-          <n-form-item :label="t('setting.sttDevice')">
-            <n-input-number v-model:value="sttForm.capture_device" :step="1" style="width:100%">
-              <template #prefix>{{ t('setting.sttDeviceDefault') }}</template>
-            </n-input-number>
-          </n-form-item>
           <n-form-item :label="t('setting.sttVad')">
             <n-space align="center" :wrap="false">
               <n-switch v-model:value="sttForm.use_vad" />
               <span class="hint-text">{{ t('setting.sttVadHint') }}</span>
             </n-space>
           </n-form-item>
-          <template v-if="sttForm.use_vad">
-            <n-form-item :label="t('setting.sttChunkSize')">
-              <n-input-number v-model:value="sttForm.chunk_size" :min="10" :max="1000" :step="10" />
-            </n-form-item>
-            <n-form-item :label="t('setting.sttMinMute')">
-              <n-input-number v-model:value="sttForm.min_mute_chunks" :min="1" :max="100" />
-            </n-form-item>
-            <n-form-item :label="t('setting.sttMaxNomute')">
-              <n-input-number v-model:value="sttForm.max_nomute_chunks" :min="1" :max="500" />
-            </n-form-item>
-          </template>
-          <n-form-item :label="t('setting.sttUsePrefix')">
-            <n-space align="center" :wrap="false">
-              <n-switch v-model:value="sttForm.use_prefix" />
-              <span class="hint-text">{{ t('setting.sttUsePrefixHint') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('setting.sttUseItn')">
-            <n-switch v-model:value="sttForm.use_itn" />
-          </n-form-item>
-          <n-form-item :label="t('setting.sttNoGpu')">
-            <n-switch v-model:value="sttForm.no_gpu" />
-          </n-form-item>
-          <n-form-item :label="t('setting.sttFlashAttn')">
-            <n-switch v-model:value="sttForm.flash_attn" />
-          </n-form-item>
+          <n-collapse>
+            <n-collapse-item :title="t('setting.advancedSettings')" name="stt-advanced">
+              <n-form-item :label="t('setting.sttThreads')">
+                <n-input-number v-model:value="sttForm.threads" :min="1" :max="32" />
+              </n-form-item>
+              <n-form-item :label="t('setting.sttDevice')">
+                <n-input-number v-model:value="sttForm.capture_device" :step="1" style="width:100%">
+                  <template #prefix>{{ t('setting.sttDeviceDefault') }}</template>
+                </n-input-number>
+              </n-form-item>
+              <template v-if="sttForm.use_vad">
+                <n-form-item :label="t('setting.sttChunkSize')">
+                  <n-input-number v-model:value="sttForm.chunk_size" :min="10" :max="1000" :step="10" />
+                </n-form-item>
+                <n-form-item :label="t('setting.sttMinMute')">
+                  <n-input-number v-model:value="sttForm.min_mute_chunks" :min="1" :max="100" />
+                </n-form-item>
+                <n-form-item :label="t('setting.sttMaxNomute')">
+                  <n-input-number v-model:value="sttForm.max_nomute_chunks" :min="1" :max="500" />
+                </n-form-item>
+              </template>
+              <n-form-item :label="t('setting.sttUsePrefix')">
+                <n-space align="center" :wrap="false">
+                  <n-switch v-model:value="sttForm.use_prefix" />
+                  <span class="hint-text">{{ t('setting.sttUsePrefixHint') }}</span>
+                </n-space>
+              </n-form-item>
+              <n-form-item :label="t('setting.sttUseItn')">
+                <n-switch v-model:value="sttForm.use_itn" />
+              </n-form-item>
+              <n-form-item :label="t('setting.sttNoGpu')">
+                <n-switch v-model:value="sttForm.no_gpu" />
+              </n-form-item>
+              <n-form-item :label="t('setting.sttFlashAttn')">
+                <n-switch v-model:value="sttForm.flash_attn" />
+              </n-form-item>
+            </n-collapse-item>
+          </n-collapse>
           <n-space justify="end">
             <n-button @click="resetStt">{{ t('setting.sttReset') }}</n-button>
             <n-button type="primary" :loading="sttSaving" @click="saveStt">{{ t('setting.sttSave') }}</n-button>
@@ -269,6 +273,13 @@
             />
           </n-form-item>
           <n-space justify="end" align="center">
+            <n-select
+              v-model:value="ttsPreviewEngine"
+              :options="ttsPreviewEngineOptions"
+              size="small"
+              style="width:180px"
+              :placeholder="t('setting.voicePreviewEngine')"
+            />
             <n-button :loading="ttsPreviewing" @click="previewTts">{{ t('setting.voicePreview') }}</n-button>
             <n-button @click="resetTts">{{ t('setting.ttsReset') }}</n-button>
             <n-button type="primary" :loading="ttsSaving" @click="saveTts">{{ t('setting.ttsSave') }}</n-button>
@@ -610,12 +621,23 @@ function resetTts() {
 }
 
 let ttsAudio: HTMLAudioElement | null = null
+// 试听引擎选择:默认空 = 跟随主引擎;可选指定本地/云端单独试听
+const ttsPreviewEngine = ref<string>('')
+const ttsPreviewEngineOptions = computed(() => [
+  { label: t('setting.voicePreviewEngineDefault'), value: '' },
+  ...Object.entries(ttsStatus.value).map(([name, info]) => ({
+    label: `${TTS_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+    value: name,
+    disabled: !info.available,
+  })),
+])
 async function previewTts() {
   ttsPreviewing.value = true
   try {
     // 先保存当前设置,保证试听用新音色/语速
     await updateVoiceConfig({ tts: buildTtsPatch() })
-    const url = await previewTtsApi(t('setting.voicePreviewText'), ttsForm.value.speed)
+    const engine = ttsPreviewEngine.value || undefined
+    const url = await previewTtsApi(t('setting.voicePreviewText'), ttsForm.value.speed, engine)
     if (ttsAudio) { ttsAudio.pause(); ttsAudio = null }
     ttsAudio = new Audio(url)
     ttsAudio.onended = () => { URL.revokeObjectURL(url) }

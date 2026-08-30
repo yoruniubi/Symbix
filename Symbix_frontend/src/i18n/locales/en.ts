@@ -461,10 +461,13 @@ export default {
     voicePreview: 'Preview',
     voicePreviewText: 'Hello, this is a Symbix voice preview.',
     voicePreviewFail: 'Preview failed',
+    voicePreviewEngine: 'Preview engine',
+    voicePreviewEngineDefault: 'Follow primary',
     voiceLoadFail: 'Failed to load voice config',
     voiceSaved: 'Voice config saved',
     voiceEngineAvail: 'Ready',
     voiceEngineUnavail: 'Not ready',
+    advancedSettings: 'Advanced settings',
     // STT detail
     sttThreads: 'Decode threads',
     sttVad: 'Streaming VAD (signal-based)',
