@@ -7,6 +7,7 @@ export const BACKEND_URL = 'http://127.0.0.1:8000'
 
 export interface VoiceConfigResp {
   tts: {
+    enabled: boolean
     priority: string[]
     voice_edge: string
     voice_openai: string
@@ -16,6 +17,7 @@ export interface VoiceConfigResp {
     openai_model: string
   }
   stt: {
+    enabled: boolean
     priority: string[]
     language: string
     threads: number
@@ -70,4 +72,18 @@ export async function previewTts(text: string, speed?: number, engine?: string):
   if (!res.ok) throw new Error(`POST /voice/tts ${res.status}`)
   const blob = await res.blob()
   return URL.createObjectURL(blob)
+}
+
+/** 全局 TTS 朗读:创建 <audio> 自动播放并自动释放。
+ *  已有播放在播则先停止旧的再播新的。
+ */
+let _speakAudio: HTMLAudioElement | null = null
+export function speak(text: string) {
+  if (_speakAudio) { _speakAudio.pause(); _speakAudio = null }
+  previewTts(text).then(url => {
+    const audio = new Audio(url)
+    audio.onended = () => { URL.revokeObjectURL(url); _speakAudio = null }
+    audio.play().catch(() => { /* 自动播放被浏览器阻止,静默忽略 */ })
+    _speakAudio = audio
+  })
 }

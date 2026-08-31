@@ -248,6 +248,7 @@ PROVIDER_CLASSES: dict[str, type[TTSProvider]] = {
 class TTSConfig:
     """用户手动配置:优先级从高到低 + 各引擎默认音色/语速。"""
 
+    enabled: bool = True
     priority: list[str] = field(default_factory=lambda: ["edge"])
     voice_edge: str = "zh-CN-XiaoxiaoNeural"
     speed: float = 1.0
@@ -259,6 +260,7 @@ class TTSConfig:
 
     def to_dict(self) -> dict:
         return {
+            "enabled": self.enabled,
             "priority": list(self.priority),
             "voice_edge": self.voice_edge,
             "speed": self.speed,

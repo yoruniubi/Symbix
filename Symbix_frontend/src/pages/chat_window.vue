@@ -120,9 +120,11 @@
         :model-options="modelOptions"
         :current-model="currentModel"
         :session-id="activeSessionId"
+        :voice-enabled="voiceEnabled"
         @send="sendMessage"
         @update:model="setModel"
         @stop="handleStopGeneration"
+        @update:voice-enabled="voiceEnabled = $event"
       />
     </div>
 
@@ -185,6 +187,7 @@ const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
+import { speak } from '@/utils/backend'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
 
@@ -192,6 +195,8 @@ const { messages, sessions, activeSessionId, persistSessions, getActiveSession }
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
+/** 朗读开关：AI 回复后自动朗读 */
+const voiceEnabled = ref(false)
 /** 标记是否为用户主动中断（避免 abort 导致的错误被当成真实错误处理） */
 let userAborted = false
 interface Skill {
@@ -797,15 +802,18 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     const active = sessions.value.find(s => s.id === currentSessionId)
     if (active) active.messages = [...messages.value]
     await saveSessionToLocalMarkdown()
-    // 流式结束且不在等待审批时,触发任务完成提醒
+    // 流式结束且不在等待审批时，触发任务完成提醒
     if (!assistantMsg.approval_id) {
       publishAgentStatus('complete')
       const preview = (assistantMsg.content || '').slice(0, 80).replace(/\s+/g, ' ')
       void notifyTaskComplete({
         title: 'Symbix · 任务完成',
-        body: preview || '我在这里,任务已经完成啦~',
+        body: preview || '我在这里，任务已经完成啦~',
       })
-
+      // 朗读开关打开时，自动朗读 AI 回复
+      if (voiceEnabled.value && assistantMsg.content) {
+        speak(assistantMsg.content)
+      }
     }
 
   } catch (e: any) {

@@ -70,9 +70,6 @@
                 </n-button>
               </n-input-group>
             </n-form-item>
-             <div v-if="form.model" style="margin-top: 6px; font-size: 11px; color: var(--text-muted);">
-                 {{ t('modelSetting.litellmLabel') }}<span style="color: var(--accent-300);">{{ form.model }}</span>
-              </div>
 
             <!-- 系统提示词 -->
             <n-form-item :label="t('modelSetting.systemPrompt')">
@@ -130,9 +127,9 @@ interface Provider {
   id: string
   name: string
   icon: string
-  baseUrl: string        // 官方地址，空字符串表示 litellm 自动处理
+  baseUrl: string        // 官方地址,空字符串表示自动处理
   needsBase: boolean     // 是否需要显示 baseUrl 输入框
-  models: string[]       // litellm 格式的 model string
+  models: string[]       // model string 列表
 }
 
 // 简洁单色 SVG 图标（currentColor，随卡片选中态变色）

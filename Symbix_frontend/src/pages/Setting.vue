@@ -164,7 +164,11 @@
 
       <!-- STT 设置卡片 -->
       <n-card :title="t('setting.stt')" class="setting-card">
-        <n-form :model="sttForm" label-placement="top" size="small">
+        <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
+          <span class="hint-text">{{ t('setting.sttEnabledHint') }}</span>
+          <n-switch v-model:value="sttForm.enabled" />
+        </n-space>
+        <n-form :model="sttForm" label-placement="top" size="small" :disabled="!sttForm.enabled">
           <n-form-item :label="t('setting.voicePrimary')">
             <n-select
               v-model:value="sttForm.priority0"
@@ -250,7 +254,11 @@
 
       <!-- TTS 设置卡片 -->
       <n-card :title="t('setting.tts')" class="setting-card">
-        <n-form :model="ttsForm" label-placement="top" size="small">
+        <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
+          <span class="hint-text">{{ t('setting.ttsEnabledHint') }}</span>
+          <n-switch v-model:value="ttsForm.enabled" />
+        </n-space>
+        <n-form :model="ttsForm" label-placement="top" size="small" :disabled="!ttsForm.enabled">
           <n-form-item :label="t('setting.voicePrimary')">
             <n-select
               v-model:value="ttsForm.priority0"
@@ -297,13 +305,6 @@
             </n-collapse-item>
           </n-collapse>
           <n-space justify="end" align="center">
-            <n-select
-              v-model:value="ttsPreviewEngine"
-              :options="ttsPreviewEngineOptions"
-              size="small"
-              style="width:180px"
-              :placeholder="t('setting.voicePreviewEngine')"
-            />
             <n-button :loading="ttsPreviewing" @click="previewTts">{{ t('setting.voicePreview') }}</n-button>
             <n-button @click="resetTts">{{ t('setting.ttsReset') }}</n-button>
             <n-button type="primary" :loading="ttsSaving" @click="saveTts">{{ t('setting.ttsSave') }}</n-button>
@@ -355,6 +356,7 @@ function onLocaleChange(value: string) {
 
 
 interface SttSettings {
+  enabled: boolean
   priority0: string
   priority1: string | null
   language: string
@@ -374,6 +376,7 @@ interface SttSettings {
 }
 
 interface TtsSettings {
+  enabled: boolean
   priority0: string
   priority1: string | null
   voice: string
@@ -400,6 +403,7 @@ const TTS_ENGINE_LABELS: Record<string, string> = {
 
 function defaultStt(): SttSettings {
   return {
+    enabled: true,
     priority0: 'sensevoice',
     priority1: null,
     language: 'auto',
@@ -419,7 +423,7 @@ function defaultStt(): SttSettings {
   }
 }
 function defaultTts(): TtsSettings {
-  return { priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1' }
+  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1' }
 }
 
 const sttForm = ref<SttSettings>(defaultStt())
@@ -494,6 +498,7 @@ async function loadVoiceConfig() {
     sttStatus.value = cfg.status?.stt || {}
     const stt = cfg.stt || {}
     sttForm.value = {
+      enabled: stt.enabled ?? true,
       priority0: stt.priority?.[0] || 'sensevoice',
       priority1: stt.priority?.[1] || null,
       language: stt.language || 'auto',
@@ -513,6 +518,7 @@ async function loadVoiceConfig() {
     }
     const tts = cfg.tts || {}
     ttsForm.value = {
+      enabled: (tts as any).enabled ?? true,
       priority0: tts.priority?.[0] || 'edge',
       priority1: tts.priority?.[1] || null,
       voice: (tts as any).voice_edge || (tts as any).voice_openai || '',
@@ -598,7 +604,8 @@ async function testNotify() {
 function buildSttPatch() {
   const f = sttForm.value
   const priority = [f.priority0, ...(f.priority1 ? [f.priority1] : [])].filter(Boolean) as string[]
-  return {
+    return {
+    enabled: f.enabled,
     priority,
     language: f.language,
     threads: f.threads,
@@ -619,7 +626,7 @@ function buildSttPatch() {
 function buildTtsPatch() {
   const f = ttsForm.value
   const priority = [f.priority0, ...(f.priority1 ? [f.priority1] : [])].filter(Boolean) as string[]
-  const patch: Record<string, unknown> = { priority, speed: f.speed }
+    const patch: Record<string, unknown> = { enabled: f.enabled, priority, speed: f.speed }
   // 音色按主引擎名字存到对应字段
   if (f.voice) patch[`voice_${f.priority0}`] = f.voice
   patch.openai_base_url = f.openai_base_url
@@ -666,23 +673,13 @@ function resetTts() {
 }
 
 let ttsAudio: HTMLAudioElement | null = null
-// 试听引擎选择:默认空 = 跟随主引擎;可选指定本地/云端单独试听
-const ttsPreviewEngine = ref<string>('')
-const ttsPreviewEngineOptions = computed(() => [
-  { label: t('setting.voicePreviewEngineDefault'), value: '' },
-  ...Object.entries(ttsStatus.value).map(([name, info]) => ({
-    label: `${TTS_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
-    value: name,
-    disabled: !info.available,
-  })),
-])
+
 async function previewTts() {
   ttsPreviewing.value = true
   try {
     // 先保存当前设置,保证试听用新音色/语速
     await updateVoiceConfig({ tts: buildTtsPatch() })
-    const engine = ttsPreviewEngine.value || undefined
-    const url = await previewTtsApi(t('setting.voicePreviewText'), ttsForm.value.speed, engine)
+    const url = await previewTtsApi(t('setting.voicePreviewText'), ttsForm.value.speed)
     if (ttsAudio) { ttsAudio.pause(); ttsAudio = null }
     ttsAudio = new Audio(url)
     ttsAudio.onended = () => { URL.revokeObjectURL(url) }

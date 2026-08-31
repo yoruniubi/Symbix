@@ -276,6 +276,7 @@ PROVIDER_CLASSES: dict[str, type[STTProvider]] = {
 class STTConfig:
     """手动优先级 + 各引擎参数(persist 到 voice_config.json)。"""
 
+    enabled: bool = True
     priority: list[str] = field(default_factory=lambda: ["sensevoice"])
     language: str = "auto"
     threads: int = 4
@@ -300,6 +301,7 @@ class STTConfig:
 
     def to_dict(self) -> dict:
         return {
+            "enabled": self.enabled,
             "priority": list(self.priority),
             "language": self.language,
             "threads": self.threads,

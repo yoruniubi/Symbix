@@ -250,7 +250,7 @@ class SymbixClient:
             messages.append({"role": "user", "content": user_input})
         return messages
 
-    # ── 非流式（原生 HTTP，复用流式管道聚合；不再依赖 litellm）────────
+    # ── 非流式（原生 HTTP，复用流式管道聚合）────────
     def _build_tool_result_messages(self, messages: list[dict], tool_results: list[dict]) -> list[dict]:
         """把工具执行结果回传拼成 assistant tool_calls + tool 消息，供续聊使用。"""
         messages.append({
@@ -372,7 +372,7 @@ class SymbixClient:
         image_parts: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
-        流式输出统一的 dict 事件（原生 HTTP，不经过 litellm）:
+        流式输出统一的 dict 事件（原生 HTTP）:
         - {"type":"delta","content":"..."}
         - {"type":"reasoning","content":"..."}
         - {"type":"tool_call","id":"call_xx","name":"fn","arguments":"分片..."}

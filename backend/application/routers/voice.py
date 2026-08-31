@@ -69,6 +69,8 @@ class TTSRequest(BaseModel):
 
 @router.post("/voice/tts")
 async def synthesize(req: TTSRequest):
+    if not voice_cfg.tts.enabled:
+        raise HTTPException(status_code=403, detail="TTS 功能已关闭")
     text = (req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text 不能为空")
@@ -128,6 +130,8 @@ async def _on_result(text: str) -> None:
 
 @router.post("/voice/stt/start")
 async def stt_start():
+    if not voice_cfg.stt.enabled:
+        raise HTTPException(status_code=403, detail="STT 功能已关闭")
     """拉起流式识别(仅本地流式引擎能用;云端文件式走 upload)。"""
     try:
         name = await stt_engine.start(_on_result)
@@ -138,6 +142,8 @@ async def stt_start():
 
 @router.post("/voice/stt/upload")
 async def stt_upload(file: UploadFile = File(...)):
+    if not voice_cfg.stt.enabled:
+        raise HTTPException(status_code=403, detail="STT 功能已关闭")
     """前端录音 → 上传音频 → 交给 OpenAI 兼容转录接口(自建网关/官方)。
 
     命中 openai 引擎则转发;否则 400 提示。返回 {text}。
