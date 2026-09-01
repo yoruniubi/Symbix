@@ -106,6 +106,7 @@ export default {
     toolWriteFile: 'Write file',
     toolDeleteFile: 'Delete file',
     toolExecuteCommand: 'Execute command',
+    toolAskClarifyingQuestion: 'Ask user',
   },
 
   // ===== Chat Input =====

@@ -105,6 +105,7 @@ export default {
     toolWriteFile: '写入文件',
     toolDeleteFile: '删除文件',
     toolExecuteCommand: '执行命令',
+    toolAskClarifyingQuestion: '向用户提问',
   },
 
   // ===== Chat Input =====
