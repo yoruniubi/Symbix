@@ -890,17 +890,19 @@ function handleSSEEvent(
     }
 
     case 'tool_result': {
+      // 拒绝审批的 tool_result 带 approved:false → 标 rejected，否则会覆盖掉 steps 事件里的 rejected 状态
+      const status = evt.approved === false ? 'rejected' : 'done'
       const target = steps.find((s: any) => s.id === evt.id)
       if (target) {
         target.result = evt.content || ''
-        target.status = 'done'
+        target.status = status
       } else {
         steps.push({
           id: evt.id || '',
           name: evt.name || '(result)',
           arguments: '',
           result: evt.content || '',
-          status: 'done',
+          status,
         })
       }
       msg.steps = steps.map((s: any) => ({
@@ -911,17 +913,28 @@ function handleSSEEvent(
       break
     }
 
-    case 'steps':
-      msg.steps = mapBackendSteps(evt.steps || [], undefined)
+    case 'steps': {
+      // 用后端完整 steps 重建 msg.steps,同时同步局部聚合数组 —
+      // 否则后续 tool_result 在旧局部数组里找不到 target,会 push 孤儿 step(参数为空)。
+      const mapped = mapBackendSteps(evt.steps || [], undefined)
+      msg.steps = mapped
+      steps.length = 0
+      steps.push(...mapped)
       nextTick(() => scrollToBottom())
       break
+    }
 
     case 'await_approval':
       msg.approval_id = evt.approval_id
-      msg.risk_level = evt.risk_level  // 新增：保存风险等级
-      msg.risk_reason = evt.risk_reason  // 新增：保存风险原因
+      msg.risk_level = evt.risk_level  // 新增:保存风险等级
+      msg.risk_reason = evt.risk_reason  // 新增:保存风险原因
       if (msg.steps && msg.steps.length > 0) {
-        const pendingStep = msg.steps.find((s: any) => s.name === evt.tool?.name)
+        // 优先按 id 精确匹配;找不到再回退到 name(且排除已拒绝/已完成的 step),
+        // 避免同名工具多轮出现时误标旧 step 为待审批。
+        let pendingStep = msg.steps.find((s: any) => evt.tool?.id && s.id === evt.tool.id)
+        if (!pendingStep) pendingStep = msg.steps.find((s: any) =>
+          s.name === evt.tool?.name && s.status !== 'rejected' && s.status !== 'done',
+        )
         if (pendingStep) pendingStep.status = 'awaiting_approval'
       }
       // 发送通知提醒用户审批

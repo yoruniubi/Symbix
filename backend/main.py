@@ -122,7 +122,11 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
         log_level="info",
-        # 即使仍有顽固连接，最多等 1s 后强制结束，避免卡死开发流程
+        # Windows + reload 下 uvicorn 默认强制 SelectorEventLoop,会导致
+        # STT(SenseVoice 子进程)启动失败(create_subprocess_exec 不支持)。
+        # 用自定义 loop factory 强制 ProactorEventLoop,让热重载与 STT 共存。
+        loop="loop_proactor:force_proactor",
+        # 即使仍有顽固连接,最多等 1s 后强制结束,避免卡死开发流程
         timeout_graceful_shutdown=1,
         timeout_keep_alive=5,
     )

@@ -13,88 +13,88 @@
 
         <div class="scrollable-form">
           <n-form :model="form" label-placement="top">
-
-            <!-- 厂商选择 -->
-            <n-form-item :label="t('modelSetting.provider')" style="padding:10px">
-              <div class="provider-grid">
-                <div
-                  v-for="p in providers"
-                  :key="p.id"
-                  class="provider-card"
-                  :class="{ active: selectedProvider === p.id }"
-                  @click="selectProvider(p)"
-                >
-                  <span class="provider-icon" v-html="p.icon"></span>
-                  <span class="provider-name">{{ p.name }}</span>
-                </div>
-              </div>
-            </n-form-item>
-
-            <!-- API Key -->
-            <n-form-item :label="t('modelSetting.apiKey')">
-              <n-input
-                v-model:value="form.apiKey"
-                type="password"
-                show-password-on="click"
-                :placeholder="t('modelSetting.apiKeyPlaceholder')"
-              />
-            </n-form-item>
-
-            <!-- Base URL：仅自定义或需要中转时显示 -->
-            <n-form-item :label="t('modelSetting.baseUrl')" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
-              <n-input
-                v-model:value="form.baseUrl"
-                :placeholder="selectedProvider === 'custom' ? t('modelSetting.baseUrlPlaceholder') : t('modelSetting.baseUrlOptional')"
-              />
-            </n-form-item>
-
-            <!-- 模型选择 -->
-            <n-form-item :label="t('modelSetting.model')">
-              <n-input-group>
-                <n-select
-                  v-model:value="form.model"
-                  :options="modelOptions"
-                  :loading="fetchingModels"
-                  filterable
-                  tag
-                  :placeholder="t('modelSetting.modelPlaceholder')"
-                  style="flex: 1"
-                />
-                <n-button
-                  v-if="selectedProvider === 'custom'"
-                  :loading="fetchingModels"
-                  @click="handleFetchModels"
-                  style="width: 110px; flex-shrink: 0;"
-                >
-                  {{ fetchingModels ? t('modelSetting.fetching') : t('modelSetting.fetchModels') }}
-                </n-button>
-              </n-input-group>
-            </n-form-item>
-
-            <!-- 系统提示词 -->
-            <n-form-item :label="t('modelSetting.systemPrompt')">
-              <n-input
-                v-model:value="form.systemPrompt"
-                type="textarea"
-                :autosize="{ minRows: 3, maxRows: 8 }"
-                :placeholder="t('modelSetting.systemPromptPlaceholder')"
-              />
-              <template #extra>
-                <div class="preset-tags">
-                  <n-tag
-                    v-for="preset in systemPromptPresets"
-                    :key="preset.label"
-                    size="small"
-                    :type="form.systemPrompt === preset.text ? 'primary' : 'default'"
-                    :bordered="false"
-                    style="cursor: pointer; margin-right: 6px; margin-bottom: 4px;"
-                    @click="applySystemPromptPreset(preset)"
+            <div class="form-section">
+              <n-form-item :label="t('modelSetting.provider')" style="padding:10px">
+                <div class="provider-grid">
+                  <div
+                    v-for="p in providers"
+                    :key="p.id"
+                    class="provider-card"
+                    :class="{ active: selectedProvider === p.id }"
+                    @click="selectProvider(p)"
                   >
-                    {{ preset.label }}
-                  </n-tag>
+                    <span class="provider-icon" v-html="p.icon"></span>
+                    <span class="provider-name">{{ p.name }}</span>
+                  </div>
                 </div>
-              </template>
-            </n-form-item>
+              </n-form-item>
+            </div>
+
+            <div class="form-section">
+              <n-form-item :label="t('modelSetting.apiKey')">
+                <n-input
+                  v-model:value="form.apiKey"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('modelSetting.apiKeyPlaceholder')"
+                />
+              </n-form-item>
+            </div>
+            <div class="form-section">
+              <n-form-item :label="t('modelSetting.baseUrl')" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
+                <n-input
+                  v-model:value="form.baseUrl"
+                  :placeholder="selectedProvider === 'custom' ? t('modelSetting.baseUrlPlaceholder') : t('modelSetting.baseUrlOptional')"
+                />
+              </n-form-item>
+            </div>
+            <div class="form-section">
+              <n-form-item :label="t('modelSetting.model')">
+                <n-input-group>
+                  <n-select
+                    v-model:value="form.model"
+                    :options="modelOptions"
+                    filterable
+                    tag
+                    :placeholder="t('modelSetting.modelPlaceholder')"
+                    style="flex: 1"
+                  />
+                  <n-button
+                    v-if="selectedProvider === 'custom'"
+                    :loading="fetchingModels"
+                    @click="handleFetchModels"
+                    style="width: 110px; flex-shrink: 0;"
+                  >
+                    {{ fetchingModels ? t('modelSetting.fetching') : t('modelSetting.fetchModels') }}
+                  </n-button>
+                </n-input-group>
+              </n-form-item>
+            </div>
+            <div class="form-section">
+              <n-form-item :label="t('modelSetting.systemPrompt')">
+                <n-input
+                  v-model:value="form.systemPrompt"
+                  type="textarea"
+                  :autosize="{ minRows: 3, maxRows: 8 }"
+                  :placeholder="t('modelSetting.systemPromptPlaceholder')"
+                />
+                <template #extra>
+                  <div class="preset-tags">
+                    <n-tag
+                      v-for="preset in systemPromptPresets"
+                      :key="preset.label"
+                      size="small"
+                      :type="form.systemPrompt === preset.text ? 'primary' : 'default'"
+                      :bordered="false"
+                      style="cursor: pointer; margin-right: 6px; margin-bottom: 4px;"
+                      @click="applySystemPromptPreset(preset)"
+                    >
+                      {{ preset.label }}
+                    </n-tag>
+                  </div>
+                </template>
+              </n-form-item>
+            </div>
 
             <n-space justify="end" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border);">
               <n-button @click="handleReset">{{ t('modelSetting.reset') }}</n-button>
@@ -116,7 +116,6 @@ import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
 import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
-
 const router = useRouter()
 const message = useMessage()
 const { t } = useI18n()
@@ -576,11 +575,28 @@ function handleReset() {
   margin-top: 4px;
 }
 
-/* 隐藏 Naive UI n-form-item 占位的空白反馈区，避免出现多余的空条 */
 .scrollable-form :deep(.n-form-item-feedback-wrapper) {
   display: none !important;
 }
 .scrollable-form :deep(.n-form-item .n-form-item-feedback) {
   display: none !important;
+}
+
+/* 表单项分组:三块之间用留白隔开 */
+.form-section {
+  margin-bottom: 22px;
+}
+.form-section:last-of-type {
+  margin-bottom: 0;
+}
+
+/* 同一块内相邻的 n-form-item 之间留一点间距,避免紧贴 */
+.form-section > :deep(.n-form-item + .n-form-item) {
+  margin-top: 10px;
+}
+
+/* label 与输入框间距:直接覆盖 label padding(顶部留白略小、底部间隙稍大) */
+.form-section :deep(.n-form-item-label) {
+  padding: 4px 0 9px 2px;
 }
 </style>

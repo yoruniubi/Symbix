@@ -74,13 +74,44 @@ export async function previewTts(text: string, speed?: number, engine?: string):
   return URL.createObjectURL(blob)
 }
 
+/** 剥离 markdown 语法,返回纯文本(用于 TTS 朗读) */
+function stripMarkdown(text: string): string {
+  return text
+    // 移除代码块
+    .replace(/```[\s\S]*?```/g, '')
+    // 移除行内代码
+    .replace(/`([^`]+)`/g, '$1')
+    // 移除标题符号
+    .replace(/^#{1,6}\s+/gm, '')
+    // 移除加粗/斜体
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    // 移除链接,保留文本
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // 移除图片
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
+    // 移除列表符号
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    // 移除引用符号
+    .replace(/^>\s+/gm, '')
+    // 移除多余空行
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 /** 全局 TTS 朗读:创建 <audio> 自动播放并自动释放。
  *  已有播放在播则先停止旧的再播新的。
  */
 let _speakAudio: HTMLAudioElement | null = null
 export function speak(text: string) {
   if (_speakAudio) { _speakAudio.pause(); _speakAudio = null }
-  previewTts(text).then(url => {
+  // 剥离 markdown 符号,避免朗读出 ✳✳、#、* 等
+  const plainText = stripMarkdown(text)
+  if (!plainText) return
+  previewTts(plainText).then(url => {
     const audio = new Audio(url)
     audio.onended = () => { URL.revokeObjectURL(url); _speakAudio = null }
     audio.play().catch(() => { /* 自动播放被浏览器阻止,静默忽略 */ })

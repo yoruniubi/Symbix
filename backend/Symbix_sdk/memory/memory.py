@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 from datetime import datetime
 from threading import Lock
 
@@ -118,11 +119,59 @@ class ConversationMemory:
         return [{"id": i, "role": r, "content": c} for i, r, c in rows]
 
     def clear_session(self, session_id: str):
-        """清除指定 session 的消息和摘要"""
+        """清除指定 session 的消息、摘要和 checkpoint 记录（含孤儿 blob 文件）"""
         with self._lock:
+            # 先收集本 session 引用的 blob hash（checkpoint_records.payload 里 hash_before/hash_after）
+            my_hashes = self._collect_blob_hashes(session_id)
             self.conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             self.conn.execute("DELETE FROM session_summaries WHERE session_id = ?", (session_id,))
+            # checkpoint_records 与对话历史强绑定，删除对话时一并清除
+            self.conn.execute("DELETE FROM checkpoint_records WHERE session_id = ?", (session_id,))
             self.conn.commit()
+            # 删除后全库剩余的 blob 引用；本 session 独有且不再被引用的 hash → 孤儿，删文件
+            if my_hashes:
+                remaining = self._collect_blob_hashes(None)
+                orphans = my_hashes - remaining
+                if orphans:
+                    self._delete_blob_files(orphans)
+
+    def _collect_blob_hashes(self, session_id: str | None) -> set[str]:
+        """从 checkpoint_records 的 payload 里收集 blob hash（内容寻址，12 位）。
+        session_id=None 时扫全库。"""
+        hashes: set[str] = set()
+        try:
+            if session_id is not None:
+                rows = self.conn.execute(
+                    "SELECT payload FROM checkpoint_records WHERE session_id = ?",
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute("SELECT payload FROM checkpoint_records").fetchall()
+            for (payload_json,) in rows:
+                try:
+                    payload = json.loads(payload_json)
+                    for key in ("hash_before", "hash_after"):
+                        h = payload.get(key)
+                        if isinstance(h, str) and len(h) == 12:
+                            hashes.add(h)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return hashes
+
+    def _delete_blob_files(self, hashes: set[str]):
+        """删除 blob 文件。blob 目录与 memory.db 同级为 checkpoint_blobs/。"""
+        if not hashes:
+            return
+        try:
+            from Symbix_sdk.checkpoint.blob_store import BlobStore
+            blob_dir = os.path.join(os.path.dirname(os.path.abspath(self.db_path)), "checkpoint_blobs")
+            store = BlobStore(blob_dir)
+            for h in hashes:
+                store.delete(h)
+        except Exception as e:
+            print(f"[Memory] blob cleanup failed: {e}")
 
     # ─── 上下文压缩 / 摘要 ──────────────────────────────────
 

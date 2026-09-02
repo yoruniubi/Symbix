@@ -85,6 +85,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
 
 import { useI18n } from 'vue-i18n'
+import { speak } from '@/utils/backend'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -655,7 +656,12 @@ function applyRemotePetAction(payload: {
   action?: string
   bubble?: string
   loop?: boolean
+  source?: string
 }) {
+  // 定时任务通知:朗读其摘要(bubble)
+  if ((payload.source === 'schedule' || payload.action === 'scheduled_job') && payload.bubble) {
+    speak(payload.bubble)
+  }
   // 工作模式下忽略远程动作(仅接收 bubble 消息)
   if (petMode.value === 'work') {
     if (payload.bubble) showBubble(payload.bubble, 3200)

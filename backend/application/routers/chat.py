@@ -640,6 +640,18 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 # 先把已执行的步骤发给前端
                 yield format_sse({"type": "steps", "steps": steps})
 
+                # 拒绝审批时补发 tool_result 事件,让前端立刻把对应 step 标记为 rejected,
+                # 避免残留 awaiting_approval 的 step-card(旧 step 被后续同名工具误标)。
+                if not req.approve:
+                    pending = ctx["pending_tc"]
+                    yield format_sse({
+                        "type": "tool_result",
+                        "id": pending["id"],
+                        "name": pending["name"],
+                        "content": f"[用户拒绝执行工具 {pending['name']}]",
+                        "approved": False,
+                    })
+
                 # 构建含 tool_results 的 messages
                 msgs = symbix_client._build_messages(
                     history,
