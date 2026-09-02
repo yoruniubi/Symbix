@@ -97,8 +97,8 @@
           </svg>
           <span class="editor-filename">{{ selectedFile.name }}</span>
           <div class="editor-actions">
-            <n-button size="tiny" type="primary" @click="saveFile">{{ $t('filePanel.save') }}</n-button>
-            <n-button size="tiny" quaternary type="error" @click="deleteFile">{{ $t('filePanel.delete') }}</n-button>
+            <n-button size="small" type="primary" :loading="savingFile" @click="saveFile">{{ $t('filePanel.save') }}</n-button>
+            <n-button size="small" @click="deleteFile">{{ $t('filePanel.delete') }}</n-button>
           </div>
         </div>
         <textarea v-model="selectedFile.content" spellcheck="false" />
@@ -131,6 +131,7 @@ const entries = ref<FileEntry[]>([])
 const currentPath = ref('.')
 const selectedFile = ref<SelectedFile | null>(null)
 const loading = ref(false)
+const savingFile = ref(false)
 const error = ref('')
 const { t } = useI18n()
 const { width: panelWidth, isResizing, startResize } = useResizablePanel({
@@ -232,6 +233,7 @@ async function openEntry(entry: FileEntry) {
 
 async function saveFile() {
   if (!selectedFile.value) return
+  savingFile.value = true
 
   try {
     await request('/api/files/write', {
@@ -241,6 +243,8 @@ async function saveFile() {
     })
   } catch (err: any) {
     error.value = err.message || t('filePanel.fileSaveError')
+  } finally {
+    savingFile.value = false
   }
 }
 

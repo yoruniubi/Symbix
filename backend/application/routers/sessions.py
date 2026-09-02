@@ -1,6 +1,7 @@
 """会话 Markdown 导出 / 重命名 / 标题生成 / 用户画像。"""
 import os
 import json as _json
+import shutil
 from fastapi import APIRouter, HTTPException
 
 from application.schemas import (
@@ -17,6 +18,7 @@ from application.state import (
     SDK_CONFIG_DIR,
     SESSION_INDEX_PATH,
 )
+from Symbix_sdk.tools.file_pipeline import get_uploads_root
 
 router = APIRouter(tags=["sessions"])
 
@@ -95,7 +97,7 @@ async def save_markdown(payload: SessionPayload):
 
 @router.post("/api/delete_markdown")
 async def delete_markdown(req: DeleteMarkdownRequest):
-    """按 session_id 删除 Markdown + memory 中的消息/摘要"""
+    """按 session_id 删除 Markdown + memory 中的消息/摘要 + 关联附件(uploads/) + checkpoint/blob"""
     sid = req.session_id or "default"
     file_path = _get_md_path(sid)
     if os.path.exists(file_path):
@@ -107,6 +109,29 @@ async def delete_markdown(req: DeleteMarkdownRequest):
         memory.clear_session(sid)
     except Exception as e:
         print(f"[Memory] clear_session failed: {e}")
+    # 解绑关联的定时任务(任务本体保留,仅断开 session_id 引用,下一次运行自动新建 schedule__ 会话)
+    try:
+        from application.state import job_manager
+        released = job_manager.release_session(sid)
+        if released:
+            print(f"[Jobs] released session {sid} from jobs: {released}")
+    except Exception as e:
+        print(f"[Jobs] release_session failed: {e}")
+    # 级联清理附件目录 uploads/{sanitized_sid}/
+    try:
+        from Symbix_sdk.tools.file_pipeline import session_upload_dir
+        upload_dir = session_upload_dir(sid)
+        if os.path.isdir(upload_dir):
+            for name in os.listdir(upload_dir):
+                p = os.path.join(upload_dir, name)
+                if os.path.isfile(p) or os.path.islink(p):
+                    os.remove(p)
+                elif os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+            os.rmdir(upload_dir)
+            print(f"[Uploads] removed {upload_dir}")
+    except Exception as e:
+        print(f"[Uploads] cleanup failed: {e}")
     return {"status": "success", "message": f"Deleted: {sid}.md"}
 
 
@@ -181,5 +206,118 @@ async def generate_title(req: GenerateTitleRequest):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        # 返回 200 但标记为跳过，避免前端触发 500
+        # 返回 200 但标记为跳过,避免前端触发 500
         return {"status": "skipped", "reason": str(e)}
+
+
+# ============ 孤儿数据清理 ============
+
+@router.get("/api/orphans/scan")
+async def scan_orphans():
+    """扫描并返回孤儿数据清单(只读,不删除):
+    - checkpoint_records 有记录但 messages 没有的 session(checkpoint 孤儿)
+    - history_list 下不在 sessions_index.json 里的 .md 文件(旧文件名会话遗留)
+    - uploads/ 下不在任何会话里的目录(理论上 delete_markdown 已级联清理,双保险)
+    - checkpoint_blobs 里不再被任何记录引用的 blob 文件
+    """
+    scan = {"orphan_checkpoint_sessions": [], "orphan_md_files": [], "orphan_upload_dirs": [], "orphan_blobs": []}
+    try:
+        import sqlite3
+        db_path = memory.db_path
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        # 1) checkpoint 孤儿 session
+        ckpt_rows = cur.execute(
+            "SELECT DISTINCT session_id FROM checkpoint_records WHERE session_id NOT IN (SELECT DISTINCT session_id FROM messages)"
+        ).fetchall()
+        for (sid,) in ckpt_rows:
+            n = cur.execute("SELECT COUNT(*) FROM checkpoint_records WHERE session_id=?", (sid,)).fetchone()[0]
+            scan["orphan_checkpoint_sessions"].append({"session_id": sid, "records": n})
+        # 2) MD 孤儿文件
+        for f in sorted(os.listdir(SDK_CONFIG_DIR)):
+            if f.endswith(".md"):
+                sid = f[:-3]
+                idx = _load_index()
+                if sid not in idx:
+                    scan["orphan_md_files"].append(f)
+        # 3) uploads 孤儿目录(有子目录但不在 messages 表 session 里)
+        up_root = get_uploads_root()
+        if os.path.isdir(up_root):
+            for d in sorted(os.listdir(up_root)):
+                p = os.path.join(up_root, d)
+                if os.path.isdir(p) and d not in {r[0] for r in cur.execute("SELECT DISTINCT session_id FROM messages")}:
+                    scan["orphan_upload_dirs"].append(d)
+        # 4) blob 孤儿
+        blobs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "checkpoint_blobs")
+        if os.path.isdir(blobs_dir):
+            referenced = set()
+            for (payload_json,) in cur.execute("SELECT payload FROM checkpoint_records").fetchall():
+                try:
+                    p = _json.loads(payload_json)
+                    for k in ("hash_before", "hash_after"):
+                        h = p.get(k)
+                        if isinstance(h, str) and len(h) == 12:
+                            referenced.add(h)
+                except Exception:
+                    pass
+            for f in sorted(os.listdir(blobs_dir)):
+                if f[:12] not in referenced:
+                    scan["orphan_blobs"].append(f)
+        conn.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "detail": str(e)}
+    scan["status"] = "ok"
+    return scan
+
+
+@router.post("/api/orphans/clean")
+async def clean_orphans():
+    """清理孤儿数据:删除 checkpoint 孤儿记录(含 blob 回收)/ 孤儿 MD / 孤儿 uploads 目录。"""
+    result = {"status": "ok", "cleaned": {"checkpoint_sessions": [], "md_files": [], "upload_dirs": [], "blobs": []}}
+    try:
+        scan = await scan_orphans()
+        if scan.get("status") != "ok":
+            return scan
+        # 1) checkpoint 孤儿:复用 clear_session(会收集并回收 blob)
+        for item in scan["orphan_checkpoint_sessions"]:
+            sid = item["session_id"]
+            try:
+                memory.clear_session(sid)
+                result["cleaned"]["checkpoint_sessions"].append(sid)
+            except Exception as e:
+                print(f"[CleanOrphans] clear_session {sid} failed: {e}")
+        # 2) 孤儿 MD 文件
+        for f in scan["orphan_md_files"]:
+            p = os.path.join(SDK_CONFIG_DIR, f)
+            try:
+                os.remove(p)
+                result["cleaned"]["md_files"].append(f)
+            except Exception as e:
+                print(f"[CleanOrphans] remove {f} failed: {e}")
+        # 3) 孤儿 uploads 目录
+        up_root = get_uploads_root()
+        for d in scan["orphan_upload_dirs"]:
+            p = os.path.join(up_root, d)
+            try:
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                    result["cleaned"]["upload_dirs"].append(d)
+            except Exception as e:
+                print(f"[CleanOrphans] remove upload dir {d} failed: {e}")
+        # 4) 孤儿 blob 文件
+        blobs_dir = os.path.join(os.path.dirname(os.path.abspath(memory.db_path)), "checkpoint_blobs")
+        for f in scan["orphan_blobs"]:
+            p = os.path.join(blobs_dir, f)
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+                    result["cleaned"]["blobs"].append(f)
+            except Exception as e:
+                print(f"[CleanOrphans] remove blob {f} failed: {e}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "detail": str(e)}
+    return result

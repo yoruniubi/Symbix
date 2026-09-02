@@ -153,6 +153,17 @@ class JobManager:
     def history(self, job_id: str, limit: int = 20) -> list[dict]:
         return self.storage.list_history(job_id, limit)
 
+    def release_session(self, session_id: str) -> list[str]:
+        """会话被删除时解绑:找到所有关联该 session 的定时任务,解除其 session_id 引用。
+        返回受影响 job id 列表(未删除任务本体,只断开引用)。"""
+        released = []
+        for job in self.storage.list_meta():
+            if job.get("session_id") == session_id:
+                job["session_id"] = None
+                self.storage.upsert_meta(job)
+                released.append(job["id"])
+        return released
+
     def _to_out(self, job: dict) -> dict:
         out = dict(job)
         out["next_run_time"] = self.scheduler.get_next_run(job["id"])
