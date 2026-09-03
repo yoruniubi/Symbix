@@ -143,6 +143,7 @@
     <AddMcpModal
       :show="showAddMcpModal"
       :installing="installingMcp"
+      :oauth-waiting="oauthWaiting"
       :mode="mcpAddMode"
       :form="mcpForm"
       @update:show="showAddMcpModal = $event"
@@ -221,10 +222,12 @@ const hasApiKey = computed(() => !!settings.value.apiKey)
 // 添加 Skill / MCP 弹窗
 const showAddSkillModal = ref(false)
 const showAddMcpModal = ref(false)
+/** OAuth 浏览器授权等待中(弹窗内显示提示) */
+const oauthWaiting = ref(false)
 const creatingSkill = ref(false)
 const installingMcp = ref(false)
 const skillAddMode = ref<'github' | 'custom'>('github')
-const mcpAddMode = ref<'raw' | 'remote' | 'npm'>('raw')
+const mcpAddMode = ref<'raw' | 'remote'>('raw')
 const mcpStatusMap = ref<Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>>({})
 const refreshingMcp = ref(false)
 const refreshingSkill = ref(false)
@@ -246,7 +249,8 @@ const mcpForm = ref({
   package_name: '',
   argsText: '',
   url: '',
-  transport: 'sse',
+  transport: 'streamable_http',
+  apiKey: '',
   headersText: '',
   rawJson: '',
 })
@@ -1136,6 +1140,30 @@ async function submitCreateSkill() {
   }
 }
 
+/**
+ * 轮询 OAuth 连接状态(浏览器授权期间前端等待)。
+ * 返回 'ok'(连接成功)或错误消息字符串。
+ * 轮询中会保持弹窗打开并显示浏览器授权提示。
+ */
+async function waitOauthConnect(serverId: string): Promise<string> {
+  // 每 2s 轮询一次,最多 150s(与后端任务超时一致)
+  const maxAttempts = 75
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    try {
+      const res = await fetch(`${BACKEND_URL}/mcp/oauth/status/${encodeURIComponent(serverId)}`)
+      if (!res.ok) continue
+      const st = await res.json().catch(() => ({}))
+      if (st.status === 'ok') return 'ok'
+      if (st.status === 'error') return st.message || 'OAuth authorization failed'
+      // 仍在 authorizing/connecting,继续等
+    } catch {
+      // 网络抖动,继续
+    }
+  }
+  return 'OAuth authorization timeout'
+}
+
 async function submitInstallMcp() {
   installingMcp.value = true
   try {
@@ -1153,20 +1181,24 @@ async function submitInstallMcp() {
         messageUi.warning(t('addMcpModal.invalidJson', { msg: e.message || e }))
         return
       }
-      // 接受两种写法：
+      // 接受三种写法:
       // (1) 直接 {"server_xxx": {"command": ...}}
       // (2) {"mcpServers": {"server_xxx": {...}}}
+      // (3) {"mcpServers": {...}, "mcp_api_key": {"server_xxx": "sk-..."}}
       const servers = parsed?.mcpServers && typeof parsed.mcpServers === 'object'
         ? parsed.mcpServers
-        : parsed
+        : (parsed?.mcpServers === undefined ? parsed : {})
       if (!servers || typeof servers !== 'object' || Array.isArray(servers) || Object.keys(servers).length === 0) {
         messageUi.warning(t('addMcpModal.needServers'))
         return
       }
+      const mcpApiKeys = parsed?.mcp_api_key && typeof parsed.mcp_api_key === 'object'
+        ? parsed.mcp_api_key
+        : undefined
       const res = await fetch(`${BACKEND_URL}/mcp/servers/raw`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ servers }),
+        body: JSON.stringify({ servers, mcp_api_key: mcpApiKeys }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
@@ -1187,63 +1219,58 @@ async function submitInstallMcp() {
         messageUi.warning(t('addMcpModal.needServerId'))
         return
       }
-      if (mcpAddMode.value === 'remote') {
-        const url = mcpForm.value.url.trim()
-        if (!url) {
-          messageUi.warning(t('addMcpModal.needUrl'))
-          return
-        }
-        let headers: Record<string, string> = {}
-        const ht = mcpForm.value.headersText.trim()
-        if (ht) {
-          try {
-            headers = JSON.parse(ht)
-          } catch {
-            messageUi.warning(t('addMcpModal.needHeadersJson'))
-            return
-          }
-        }
-        const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            server_id: serverId,
-            url,
-            transport: mcpForm.value.transport || 'sse',
-            headers,
-          }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-        if (data.connected) messageUi.success(data.message || t('mcpPanel.addSuccess'))
-        else messageUi.warning(data.message || t('mcpPanel.addSaved'))
-      } else {
-        // npm 模式：npx -y <pkg> [args...]
-        const packageName = mcpForm.value.package_name.trim()
-        if (!packageName) {
-          messageUi.warning(t('addMcpModal.needPackage'))
-          return
-        }
-        const args = mcpForm.value.argsText.trim().split(/\s+/).filter(Boolean)
-        const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            server_id: serverId,
-            package_name: packageName,
-            args,
-          }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
-        if (data.connected) messageUi.success(data.message || t('mcpPanel.addNpmSuccess', { serverId }))
-        else messageUi.warning(data.message || t('mcpPanel.addNpmWarning'))
+      // 远程 URL 模式:支持 streamable_http(默认)/ sse,可选 API Key(Bearer)或自定义 headers
+      const url = mcpForm.value.url.trim()
+      if (!url) {
+        messageUi.warning(t('addMcpModal.needUrl'))
+        return
       }
+      let headers: Record<string, string> = {}
+      const ht = mcpForm.value.headersText.trim()
+      if (ht) {
+        try {
+          headers = JSON.parse(ht)
+        } catch {
+          messageUi.warning(t('addMcpModal.needHeadersJson'))
+          return
+        }
+      }
+      const res = await fetch(`${BACKEND_URL}/mcp/servers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server_id: serverId,
+          url,
+          transport: mcpForm.value.transport || 'streamable_http',
+          headers,
+          api_key: mcpForm.value.apiKey.trim(),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+      // OAuth 场景:后端返回 oauth_pending,浏览器窗口已弹出,需要轮询授权结果
+      if (data.status === 'oauth_pending') {
+        // 等待后台 OAuth 任务完成(浏览器登录 -> 自动连接)
+        oauthWaiting.value = true
+        const pollResult = await waitOauthConnect(serverId)
+        oauthWaiting.value = false
+        if (pollResult === 'ok') {
+          messageUi.success(t('addMcpModal.oauthDone'))
+        } else {
+          messageUi.warning(t('addMcpModal.oauthError', { msg: pollResult || t('mcpPanel.statusOffline') }))
+          showAddMcpModal.value = false
+          mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'streamable_http', apiKey: '', headersText: '', rawJson: '' }
+          await refreshMcpPanel()
+          return
+        }
+      } else if (data.connected) messageUi.success(data.message || t('mcpPanel.addSuccess'))
+      else messageUi.warning(data.message || t('mcpPanel.addSaved'))
     }
     showAddMcpModal.value = false
-    mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'sse', headersText: '', rawJson: '' }
+    mcpForm.value = { server_id: '', package_name: '', argsText: '', url: '', transport: 'streamable_http', apiKey: '', headersText: '', rawJson: '' }
     await refreshMcpPanel()
   } catch (e: any) {
+    oauthWaiting.value = false
     messageUi.error(t('mcpPanel.addFail', { msg: e.message || e }))
   } finally {
     installingMcp.value = false

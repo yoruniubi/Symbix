@@ -11,7 +11,6 @@
     <n-tabs :value="mode" type="segment" size="small" style="margin-bottom: 12px;" @update:value="emit('update:mode', $event)">
       <n-tab-pane name="raw" :tab="t('addMcpModal.tabRaw')" />
       <n-tab-pane name="remote" :tab="t('addMcpModal.tabRemote')" />
-      <n-tab-pane name="npm" :tab="t('addMcpModal.tabNpm')" />
     </n-tabs>
     <n-form label-placement="top" size="small">
       <template v-if="mode === 'raw'">
@@ -27,9 +26,9 @@
         <p class="add-modal-hint">{{ t('addMcpModal.rawJsonHint') }}</p>
       </template>
       <template v-else-if="mode === 'remote'">
-      <n-form-item :label="t('addMcpModal.serverIdLabel')" required>
-        <n-input v-model:value="form.server_id" :placeholder="t('addMcpModal.serverIdPlaceholder')" />
-      </n-form-item>
+        <n-form-item :label="t('addMcpModal.serverIdLabel')" required>
+          <n-input v-model:value="form.server_id" :placeholder="t('addMcpModal.serverIdPlaceholder')" />
+        </n-form-item>
         <n-form-item :label="t('addMcpModal.remoteUrlLabel')" required>
           <n-input v-model:value="form.url" :placeholder="t('addMcpModal.remoteUrlPlaceholder')" />
         </n-form-item>
@@ -39,27 +38,32 @@
             :options="[ { label: 'Streamable HTTP', value: 'streamable_http' },{ label: 'SSE', value: 'sse' }]"
           />
         </n-form-item>
+        <p class="add-modal-hint" style="margin-top:-8px;">{{ t('addMcpModal.transportHint') }}</p>
+        <n-form-item :label="t('addMcpModal.apiKeyLabel')">
+          <n-input
+            v-model:value="form.apiKey"
+            type="password"
+            show-password-on="click"
+            :placeholder="t('addMcpModal.apiKeyPlaceholder')"
+          />
+        </n-form-item>
+        <p class="add-modal-hint" style="margin-top:-8px;">
+          {{ t('addMcpModal.apiKeyHint') }}
+        </p>
         <n-form-item :label="t('addMcpModal.headersLabel')">
           <n-input v-model:value="form.headersText" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" :placeholder="t('addMcpModal.headersPlaceholder')" />
         </n-form-item>
-      </template>
-      <template v-else>
-        <n-form-item :label="t('addMcpModal.serverIdLabel')" required>
-          <n-input v-model:value="form.server_id" :placeholder="t('addMcpModal.serverIdPlaceholder')" />
-        </n-form-item>
-        <n-form-item :label="t('addMcpModal.npmPackageLabel')" required>
-          <n-input v-model:value="form.package_name" :placeholder="t('addMcpModal.npmPackagePlaceholder')" />
-        </n-form-item>
-        <n-form-item :label="t('addMcpModal.argsLabel')">
-          <n-input v-model:value="form.argsText" :placeholder="t('addMcpModal.argsPlaceholder')" />
-        </n-form-item>
+        <p class="add-modal-hint" style="margin-top:-8px;">{{ t('addMcpModal.oauthHint') }}</p>
       </template>
     </n-form>
+    <n-alert v-if="oauthWaiting" type="info" :show-icon="false" style="margin-top: 12px;">
+      {{ t('addMcpModal.oauthPending') }}
+    </n-alert>
     <template #footer>
       <n-space justify="end">
         <n-button @click="emit('update:show', false)">{{ t('addMcpModal.cancel') }}</n-button>
         <n-button type="primary" :loading="installing" @click="emit('submit')">
-          {{ mode === 'remote' ? t('addMcpModal.connect') : (mode === 'npm' ? t('addMcpModal.install') : t('addMcpModal.add')) }}
+          {{ mode === 'remote' ? t('addMcpModal.connect') : t('addMcpModal.add') }}
         </n-button>
       </n-space>
     </template>
@@ -74,13 +78,15 @@ const { t } = useI18n()
 defineProps<{
   show: boolean
   installing: boolean
-  mode: 'remote' | 'npm'| 'raw'
+  oauthWaiting?: boolean
+  mode: 'remote' | 'raw'
   form: {
     server_id: string
     package_name: string
     argsText: string
     url: string
     transport: string
+    apiKey: string
     headersText: string
     rawJson: string
   }
@@ -88,7 +94,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
-  (e: 'update:mode', value: 'raw' | 'remote' | 'npm'): void
+  (e: 'update:mode', value: 'raw' | 'remote'): void
   (e: 'submit'): void
 }>()
 </script>

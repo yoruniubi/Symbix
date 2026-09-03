@@ -92,12 +92,13 @@ class InstallNpmRequest(BaseModel):
 
 
 class AddMcpServerRequest(BaseModel):
-    """统一添加 MCP：本地 npm/command 或远程 URL。"""
+    """统一添加 MCP:本地 npm/command 或远程 URL。"""
     server_id: str
     # 远程
     url: str = ""
     transport: str = "sse"
     headers: dict = {}
+    api_key: str = ""
     # 本地 npm
     package_name: str = ""
     args: list[str] = []
@@ -106,7 +107,7 @@ class AddMcpServerRequest(BaseModel):
 
 
 class AddMcpServersRawRequest(BaseModel):
-    """直接粘贴一段 mcpServers JSON 片段，后端 merge 进 mcp_config.json。
+    """直接粘贴一段 MCP 配置合并写入。
 
     客户端传形如:
     {
@@ -116,8 +117,11 @@ class AddMcpServersRawRequest(BaseModel):
       }
     }
     覆盖同名 server_id。
+    写法 1/2 的 key 会存入顶层 mcp_api_key 并自动转 Bearer;写法 3 原样进 headers。
     """
     servers: dict[str, dict]
+    mcp_api_key: dict[str, str] = {}
+
 
 
 class CreateSkillRequest(BaseModel):

@@ -10,6 +10,7 @@ from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.memory.memory_store import MemoryStore
 from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import McpServerManager
+from Symbix_sdk.mcp.oauth import TokenStore, ensure_oauth_token
 from Symbix_sdk.tools.registry import ToolRegistry
 from Symbix_sdk.skill.registry import SkillRegistry
 from Symbix_sdk.checkpoint import init_recorder as _init_checkpoint_recorder
@@ -70,6 +71,80 @@ mcp_installer = McpInstaller(
     config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json")
 )
 mcp_manager = McpServerManager()
+# OAuth token 持久化(含 access/refresh token,不入 git)
+mcp_oauth_store = TokenStore(
+    path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_oauth.json")
+)
+# OAuth 连接任务状态(server_id -> 状态 dict)
+_mcp_oauth_tasks: dict = {}
+
+def _set_oauth_status(server_id: str, status: str, message: str = ""):
+    _mcp_oauth_tasks[server_id] = {
+        "server_id": server_id,
+        "status": status,
+        "message": message,
+    }
+
+def get_mcp_oauth_status(server_id: str) -> dict:
+    """获取某 server 的 OAuth 连接任务状态。"""
+    st = _mcp_oauth_tasks.get(server_id)
+    if st:
+        return dict(st)
+    # 回退:看连接状态
+    if server_id in mcp_manager.servers:
+        return {"server_id": server_id, "status": "connected"}
+    return {"server_id": server_id, "status": "idle"}
+
+def start_oauth_connect(
+    server_id: str,
+    url: str,
+    config: dict,
+    timeout_seconds: int = 150,
+):
+    """在后台线程执行带 OAuth 的远程连接(含浏览器授权,可能耗时)。
+
+    调用方同步拿到 "oauth_pending" 后,前端轮询 get_mcp_oauth_status。
+    """
+    import threading
+    import time
+
+    def _run():
+        _set_oauth_status(server_id, "connecting", "正在连接远程服务...")
+        try:
+            # 组装带 OAuth 能力的连接配置
+            cfg = dict(config)
+            headers = dict(cfg.get("headers") or {})
+            # 已有 API Key 时不走 OAuth(API Key 优先)
+            api_key = mcp_config.get_api_key(server_id)
+            if api_key and not headers.get("Authorization"):
+                headers["Authorization"] = f"Bearer {api_key}"
+                cfg["headers"] = headers
+                # 有 key 直接同步连
+                ok = mcp_manager.add_from_config(server_id, cfg)
+                _set_oauth_status(server_id, "ok" if ok else "error",
+                                  "连接成功" if ok else ("连接失败:" + str(getattr(mcp_manager.servers.get(server_id), "last_error", "")) or ""))
+                return
+            cfg["headers"] = headers
+            cfg["oauth"] = True
+            cfg["oauth_store"] = mcp_oauth_store
+
+            def cb(status: str):
+                _set_oauth_status(server_id, status)
+
+            cfg["oauth_status_cb"] = cb
+            _set_oauth_status(server_id, "authorizing", "请在浏览器中完成登录授权...")
+            ok = mcp_manager.add_from_config(server_id, cfg)
+            if ok:
+                _set_oauth_status(server_id, "ok", "连接成功")
+            else:
+                err = getattr(mcp_manager.servers.get(server_id), "last_error", "连接失败")
+                _set_oauth_status(server_id, "error", str(err))
+        except Exception as e:
+            _set_oauth_status(server_id, "error", str(e))
+
+    threading.Thread(target=_run, daemon=True, name=f"mcp-oauth-{server_id}").start()
+    return {"server_id": server_id, "status": "oauth_pending"}
+
 
 
 def initialize_mcp_servers():
@@ -77,7 +152,15 @@ def initialize_mcp_servers():
     servers = mcp_config.get_servers()
     for server_id, config in servers.items():
         try:
-            success = mcp_manager.add_from_config(server_id, config or {})
+            cfg = dict(config or {})
+            # 远程服务:若顶层 mcp_api_key 有该 server 的 key,注入 Authorization: Bearer
+            if cfg.get("url"):
+                key = mcp_config.get_api_key(server_id)
+                if key:
+                    headers = dict(cfg.get("headers") or {})
+                    headers.setdefault("Authorization", f"Bearer {key}")
+                    cfg["headers"] = headers
+            success = mcp_manager.add_from_config(server_id, cfg)
             if success:
                 print(f"[MCP] Started server: {server_id}")
             else:

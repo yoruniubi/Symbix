@@ -216,9 +216,13 @@ class McpServerClient:
 class McpRemoteClient:
     """通过 HTTP / SSE URL 与远程 MCP server 通信的客户端。
 
-    兼容两类远程服务：
-    1. 直接 JSON-RPC HTTP POST（url 接收 initialize / tools/*）
-    2. SSE 传输：先 GET 建立 SSE，从 event: endpoint 拿到 POST 地址
+    兼容两类远程服务:
+    1. 直接 JSON-RPC HTTP POST(url 接收 initialize / tools/*)
+    2. SSE 传输:先 GET 建立 SSE,从 event: endpoint 拿到 POST 地址
+
+    OAuth:当 allow_oauth=True 时,若服务返回 401 且无有效 Bearer,
+    会尝试 OAuth 浏览器授权(playwright Edge)获取 token 后重试。
+    注意:OAuth 需要用户操作浏览器,是阻塞等待,调用方应确保在后台线程执行。
     """
 
     transport = "remote"
@@ -229,11 +233,17 @@ class McpRemoteClient:
         url: str,
         headers: Optional[Dict[str, str]] = None,
         transport: str = "sse",
+        allow_oauth: bool = False,
+        oauth_store=None,
+        oauth_status_cb: Optional[callable] = None,
     ):
         self.server_id = server_id
         self.url = (url or "").rstrip("/")
         self.headers = dict(headers or {})
         self.transport_hint = (transport or "sse").lower()
+        self.allow_oauth = allow_oauth
+        self.oauth_store = oauth_store
+        self.oauth_status_cb = oauth_status_cb
         self._tools_cache: Optional[List[dict]] = None
         self._message_url: Optional[str] = None
         self._session_id: Optional[str] = None
@@ -241,6 +251,7 @@ class McpRemoteClient:
         self._sse_thread: Optional[threading.Thread] = None
         self._client: Optional[httpx.Client] = None
         self.last_error: Optional[str] = None
+        self.oauth_triggered = False
 
     def start(self) -> bool:
         if not self.url:
@@ -252,6 +263,22 @@ class McpRemoteClient:
                 ok = self._initialize_http()
             else:
                 ok = self._initialize_sse() or self._initialize_http()
+            # OAuth:若连接失败且是鉴权问题,尝试浏览器授权后重连
+            if not ok and self.allow_oauth and self._looks_like_auth_error():
+                token = self._try_oauth()
+                if token:
+                    # 带上 token 重试
+                    self.headers.setdefault("Authorization", f"Bearer {token}")
+                    print(f"[MCP] OAuth 授权成功,重试连接 '{self.server_id}'")
+                    try:
+                        self._client.close()
+                    except Exception:
+                        pass
+                    self._client = httpx.Client(timeout=30.0, follow_redirects=True)
+                    if self.transport_hint in ("http", "streamable-http", "jsonrpc"):
+                        ok = self._initialize_http()
+                    else:
+                        ok = self._initialize_sse() or self._initialize_http()
             if ok:
                 print(f"[MCP] Remote server '{self.server_id}' connected: {self.url}")
             return ok
@@ -260,6 +287,48 @@ class McpRemoteClient:
             print(f"[MCP] Failed to connect remote server '{self.server_id}': {e}")
             self.stop()
             return False
+
+    def _looks_like_auth_error(self) -> bool:
+        """判断 last_error 是否属于需要 OAuth 的鉴权类错误。"""
+        msg = (self.last_error or "").lower()
+        return (
+            "401" in msg
+            or "unauthorized" in msg
+            or "403" in msg
+            or "authentication" in msg
+            or "oauth" in msg
+        )
+
+    def _try_oauth(self) -> Optional[str]:
+        """触发 OAuth 浏览器授权,返回 access_token(失败 None)。"""
+        if self.oauth_status_cb:
+            self.oauth_status_cb("authorizing")
+        try:
+            from Symbix_sdk.mcp.oauth import ensure_oauth_token, TokenStore
+
+            store = self.oauth_store
+            if store is None:
+                # 默认存储位置
+                import os
+
+                base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                store = TokenStore(os.path.join(base, "config", "mcp_oauth.json"))
+                self.oauth_store = store
+            token = ensure_oauth_token(
+                server_id=self.server_id,
+                url=self.url,
+                token_store=store,
+                on_status=self.oauth_status_cb,
+            )
+            if token:
+                self.oauth_triggered = True
+            return token
+        except Exception as e:
+            self.last_error = f"OAuth 授权失败: {e}"
+            print(f"[MCP] OAuth failed for '{self.server_id}': {e}")
+            if self.oauth_status_cb:
+                self.oauth_status_cb("error")
+            return None
 
     def _build_headers(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         headers = {
@@ -530,13 +599,24 @@ class McpServerManager:
         url: str,
         headers: Optional[Dict[str, str]] = None,
         transport: str = "sse",
+        allow_oauth: bool = False,
+        oauth_store=None,
+        oauth_status_cb: Optional[callable] = None,
     ) -> bool:
         """添加并连接远程 MCP server"""
         if server_id in self.servers:
             print(f"[MCP] Server '{server_id}' already exists, replacing")
             self.remove_server(server_id)
 
-        client = McpRemoteClient(server_id, url, headers=headers, transport=transport)
+        client = McpRemoteClient(
+            server_id,
+            url,
+            headers=headers,
+            transport=transport,
+            allow_oauth=allow_oauth,
+            oauth_store=oauth_store,
+            oauth_status_cb=oauth_status_cb,
+        )
         if client.start():
             self.servers[server_id] = client
             return True
@@ -548,9 +628,26 @@ class McpServerManager:
             return False
         url = config.get("url") or config.get("serverUrl")
         if url:
-            headers = config.get("headers") or {}
+            headers = dict(config.get("headers") or {})
             transport = config.get("transport") or config.get("type") or "sse"
-            return self.add_remote_server(server_id, url, headers=headers, transport=str(transport))
+            # 兼容两种 api_key 来源:
+            # 1) config 内直接带 api_key 字段(raw JSON 粘贴模式)
+            # 2) 顶层 mcp_api_key 集中存放(调用方在 config 里塞入 api_key 字段)
+            api_key = config.get("api_key") or config.get("mcp_api_key")
+            if api_key and not headers.get("Authorization"):
+                headers["Authorization"] = f"Bearer {api_key}"
+            allow_oauth = bool(config.get("oauth") or config.get("allow_oauth"))
+            oauth_store = config.get("oauth_store")
+            oauth_status_cb = config.get("oauth_status_cb")
+            return self.add_remote_server(
+                server_id,
+                url,
+                headers=headers,
+                transport=str(transport),
+                allow_oauth=allow_oauth,
+                oauth_store=oauth_store,
+                oauth_status_cb=oauth_status_cb,
+            )
         command = config.get("command")
         args = config.get("args") or []
         if command:

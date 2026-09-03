@@ -2,7 +2,12 @@
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--browser", "msedge"]
+      "args": [
+        "@playwright/mcp@latest",
+        "--browser",
+        "msedge"
+      ]
     }
-  }
+  },
+  "mcp_api_key": {}
 }

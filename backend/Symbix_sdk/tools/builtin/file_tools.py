@@ -4,7 +4,6 @@ import os
 import re as _re
 import shutil
 import subprocess
-
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed, parse_file_path
 from Symbix_sdk.checkpoint import get_recorder, get_current
 
@@ -457,7 +456,7 @@ def search_file_with_name(
         "message": f"找到 {len(results)} 个匹配文件",
     }
 # ---------------------------------------------------------------------------
-# 工具 schema 注册表（供 tool_setup.py 统一注册）
+# 工具 schema 注册表 (供 tool_setup.py 统一注册)
 # ---------------------------------------------------------------------------
 
 FILE_TOOLS_SCHEMAS = {
