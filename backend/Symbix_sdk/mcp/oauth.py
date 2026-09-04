@@ -376,6 +376,7 @@ def ensure_oauth_token(
     handler = OAuthBrowserHandler(
         callback_port=callback_port, timeout_seconds=timeout_seconds
     )
+
     storage = token_store.make_storage(server_id)
 
     import asyncio
