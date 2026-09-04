@@ -38,7 +38,6 @@
             :options="[ { label: 'Streamable HTTP', value: 'streamable_http' },{ label: 'SSE', value: 'sse' }]"
           />
         </n-form-item>
-        <p class="add-modal-hint" style="margin-top:-8px;">{{ t('addMcpModal.transportHint') }}</p>
         <n-form-item :label="t('addMcpModal.apiKeyLabel')">
           <n-input
             v-model:value="form.apiKey"
@@ -47,9 +46,6 @@
             :placeholder="t('addMcpModal.apiKeyPlaceholder')"
           />
         </n-form-item>
-        <p class="add-modal-hint" style="margin-top:-8px;">
-          {{ t('addMcpModal.apiKeyHint') }}
-        </p>
         <n-form-item :label="t('addMcpModal.headersLabel')">
           <n-input v-model:value="form.headersText" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" :placeholder="t('addMcpModal.headersPlaceholder')" />
         </n-form-item>
