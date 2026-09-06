@@ -110,7 +110,7 @@
         text
         class="tool-btn voice-btn"
         :class="{ 'voice-on': props.voiceEnabled }"
-        @click="emit('update:voice-enabled', !props.voiceEnabled)"
+        @click="toggleVoiceRead"
         :title="props.voiceEnabled ? t('chatInput.voiceReadOn') : t('chatInput.voiceRead')"
       >
         <n-icon size="20">
@@ -158,6 +158,7 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { stopSpeak } from '@/utils/backend'
 
 export interface AttachmentItem {
   name: string
@@ -396,6 +397,18 @@ function toggleVoice() {
   }
 }
 
+/** 朗读开关:切换时给 toast 反馈;关闭时同时打断正在播放的音频。 */
+function toggleVoiceRead() {
+  const next = !props.voiceEnabled
+  if (next) {
+    messageUi.success(t('chatInput.voiceReadOn'))
+  } else {
+    stopSpeak()
+    messageUi.info(t('chatInput.voiceReadOff'))
+  }
+  emit('update:voice-enabled', next)
+}
+
 // 云端(STT 主引擎 = openai):浏览器麦克风录音,松手→上传 /voice/stt/upload。
 let sttCloudMode = false
 let cloudRecorder: MediaRecorder | null = null
@@ -407,6 +420,11 @@ async function checkSttModeAndStart() {
     const res = await fetch(`${BACKEND_URL}/voice/config`)
     if (res.ok) {
       const cfg = await res.json()
+      // STT 未启用:给明确提示而不是无声失败
+      if (cfg?.stt?.enabled === false) {
+        messageUi.error(t('chatInput.sttDisabled'))
+        return
+      }
       sttCloudMode = cfg?.stt?.priority?.[0] === 'openai'
     }
   } catch {
@@ -446,7 +464,7 @@ function startCloudVoice() {
             inputValue.value = (inputValue.value ? inputValue.value + ' ' : '') + j.text
           }
         })
-        .catch(() => messageUi.error(t('chatInput.sttStartFail')))
+        .catch(() => messageUi.error(t('chatInput.sttRecognizeFail')))
       if (cloudStream) {
         cloudStream.getTracks().forEach((t) => t.stop())
         cloudStream = null
@@ -454,6 +472,8 @@ function startCloudVoice() {
       cloudRecorder = null
     }
     cloudRecorder.start()
+    // 录音真正拉起后再提示,避免假成功
+    messageUi.success(t('chatInput.voiceInputOn'))
   }).catch(() => {
     messageUi.error(t('chatInput.sttStartFail'))
     isRecording.value = false
@@ -463,11 +483,19 @@ function startCloudVoice() {
 // 实时流式 STT:后端 SenseVoice.cpp 直接吃麦克风,
 // 识别结果经 SSE /voice/stt/events 推过来,前端只负责展示。
 let sttSource: EventSource | null = null
+/** SSE 是否成功连上(用于区分“启动失败”与“正常结束”)。 */
+let sttOpened = false
 
 function startVoice() {
   isRecording.value = true
+  sttOpened = false
   // 先订 SSE 再 start,避免引擎秒出结果时丢首句
   sttSource = new EventSource(`${BACKEND_URL}/voice/stt/events`)
+  sttSource.onopen = () => {
+    // SSE 连通 = 后端流式识别已在跑,此时提示“正在聆听”才有意义
+    sttOpened = true
+    messageUi.success(t('chatInput.voiceInputOn'))
+  }
   sttSource.onmessage = (ev) => {
     try {
       const { text } = JSON.parse(ev.data)
@@ -477,20 +505,32 @@ function startVoice() {
     } catch { /* ignore */ }
   }
   sttSource.onerror = () => {
-    // 连接断开(后端停了/reload)自动收尾
+    // 从未连上 = 启动失败;已连上后断开是正常收尾(stop/reload),不提示失败
     if (sttSource) {
       sttSource.close()
       sttSource = null
     }
+    if (!sttOpened && isRecording.value) {
+      isRecording.value = false
+      messageUi.error(t('chatInput.sttStartFail'))
+    }
   }
   fetch(`${BACKEND_URL}/voice/stt/start`, { method: 'POST' }).catch(() => {
     messageUi.error(t('chatInput.sttStartFail'))
-    stopVoice()
+    stopVoice(true)
   })
 }
 
-function stopVoice() {
+/**
+ * 停止语音输入。
+ * silent=true 用于失败收尾(错误提示已单独弹过,避免重复 toast)。
+ */
+function stopVoice(silent = false) {
+  const wasRecording = isRecording.value
   isRecording.value = false
+  if (!silent && wasRecording) {
+    messageUi.info(t('chatInput.voiceInputOff'))
+  }
   if (sttCloudMode) {
     // 云端文件式:停录 → onstop 触发上传
     if (cloudRecorder && cloudRecorder.state !== 'inactive') {

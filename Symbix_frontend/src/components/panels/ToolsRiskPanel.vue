@@ -29,15 +29,15 @@
         <!-- 新增/编辑 override 表单 -->
         <div v-if="adding" class="risk-form">
           <div class="risk-form-field">
-            <span class="risk-label">{{ $t('riskPanel.toolName') }}</span>
+            <label class="risk-label">{{ $t('riskPanel.toolName') }}</label>
             <n-input v-model:value="form.tool_name" size="small" placeholder="read_file" @keyup.enter="saveOverride" />
           </div>
           <div class="risk-form-field">
-            <span class="risk-label">{{ $t('riskPanel.level') }}</span>
+            <label class="risk-label">{{ $t('riskPanel.level') }}</label>
             <n-select v-model:value="form.level" size="small" :options="levelOptions" />
           </div>
           <div class="risk-form-field">
-            <span class="risk-label">{{ $t('riskPanel.reason') }}</span>
+            <label class="risk-label">{{ $t('riskPanel.reason') }}</label>
             <n-input v-model:value="form.reason" size="small" :placeholder="$t('riskPanel.reason')" />
           </div>
           <div class="risk-form-actions">
@@ -48,7 +48,7 @@
 
         <template v-else>
           <div class="risk-summary">
-            <n-text depth="3" style="font-size:16px;">{{ $t('riskPanel.summary', { n: effectiveCount }) }}</n-text>
+            <n-text depth="3" class="risk-summary-text">{{ $t('riskPanel.summary', { n: effectiveCount }) }}</n-text>
             <div class="risk-hint">{{ $t('riskPanel.levelHint') }}</div>
           </div>
         </template>
@@ -56,7 +56,7 @@
         <!-- 按来源分组,每组下再按等级分组卡片 -->
         <div v-for="sgroup in sourceGroups" :key="sgroup.source" class="risk-source-section">
           <div class="risk-source-header">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <line x1="2" y1="12" x2="22" y2="12"/>
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
@@ -76,8 +76,8 @@
                  class="risk-card-tools">
               <div v-for="entry in group.items" :key="entry.name" :data-tool="entry.name" class="risk-tool-item">
                 <div class="risk-tool-head" @click="toggleTool(entry.name)">
-                  <svg class="risk-expand-icon sm" :class="{ expanded: expandedTools.has(entry.name) }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
-                  <svg class="risk-tool-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <svg class="risk-expand-icon sm" :class="{ expanded: expandedTools.has(entry.name) }" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
+                  <svg class="risk-tool-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                   </svg>
                   <span class="risk-tool-name">{{ entry.name }}</span>
@@ -86,7 +86,7 @@
                       <n-button size="tiny" quaternary class="level-btn" :class="`level-${entry.rule.level}`">
                         <span class="risk-level-dot" :style="{ background: levelColor(entry.rule.level) }"></span>
                         {{ levelLabel(entry.rule.level) }}
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-left:2px;"><polygon points="6,9 12,15 18,9"/></svg>
+                        <svg class="level-btn-arrow" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,9 12,15 18,9"/></svg>
                       </n-button>
                     </n-dropdown>
                     <n-button v-if="entry.rule.levelSource === 'override'" size="tiny" quaternary type="error" class="panel-icon-btn sm"
@@ -134,12 +134,9 @@ const rules = ref<Record<string, any>>({})
 const loading = ref(false)
 const adding = ref(false)
 const saving = ref(false)
-const testing = ref(false)
-const testResult = ref<any>(null)
 const expandedLevels = ref<Set<Level>>(new Set(['safe', 'medium', 'high']))
 const expandedTools = ref<Set<string>>(new Set())
 const form = ref({ tool_name: '', level: 'medium', reason: '' })
-const testForm = ref({ tool_name: 'run_command', arguments: '{}' })
 const levelOptions = [
   { label: 'Safe', value: 'safe' },
   { label: 'Medium', value: 'medium' },
@@ -309,25 +306,6 @@ async function removeOverride(name: string) {
     ;(window as any).$message?.error?.(t('riskPanel.deleteFail', { msg: e.message }))
   }
 }
-async function runTest() {
-  let args: any = {}
-  try { args = JSON.parse(testForm.value.arguments || '{}') } catch { args = {} }
-  testing.value = true
-  try {
-    const res = await fetch(`${BACKEND_URL}/risk/classify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool_name: testForm.value.tool_name, arguments: args }),
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    testResult.value = await res.json()
-  } catch (e: any) {
-    ;(window as any).$message?.error?.(t('riskPanel.deleteFail', { msg: e.message }))
-  } finally {
-    testing.value = false
-  }
-}
-
 function levelColor(level: string) {
   return (groupMeta as any)[level]?.color || 'var(--text-muted)'
 }
@@ -463,7 +441,7 @@ defineExpose({ refresh: loadRules })
   color:var(--error,#ef4444)!important;
 }
 .refresh-icon {
-  transition: transform var(--duration-fast,120ms) var(--ease-standard,ease);
+  transition:transform var(--duration-fast,120ms) var(--ease-standard,ease);
 }
 .refresh-icon.spinning {
   animation: panel-refresh-spin 1s linear infinite;
@@ -475,13 +453,16 @@ defineExpose({ refresh: loadRules })
 .risk-summary {
   margin-bottom:6px;
 }
+.risk-summary-text {
+  font-size:13px;
+}
 .risk-hint {
   margin-top:4px;
-  font-size:11px;
+  font-size:12px;
   color:var(--text-muted);
   line-height:1.45;
 }
-.risk-form, .risk-test {
+.risk-form {
   margin:12px 0;
   padding:12px;
   border:1px solid var(--border);
@@ -489,49 +470,50 @@ defineExpose({ refresh: loadRules })
   background:var(--surface-hover);
 }
 .risk-form-field {
-  margin-bottom:9px;
+  margin-bottom:10px;
 }
-.risk-label, .risk-test-title {
+.risk-label {
   display:block;
-  margin-bottom:5px;
-  font-size:11px;
+  margin-bottom:6px;
+  font-size:12px;
   font-weight:600;
   color:var(--text-secondary);
 }
-.risk-form-actions, .risk-test-row, .risk-test-result {
+.risk-form-actions {
   display:flex;
   align-items:center;
   gap:8px;
+  margin-top:12px;
 }
 /* 等级卡片 */
 .risk-source-section {
-  margin-top: 12px;
+  margin-top:12px;
 }
 .risk-source-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 2px 6px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .3px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:2px 2px 6px;
+  color:var(--text-secondary);
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:.3px;
 }
 .risk-source-header svg {
-  flex-shrink: 0;
-  color: var(--accent-300);
+  flex-shrink:0;
+  color:var(--accent-300);
 }
 .risk-source-title {
-  color: var(--text-primary);
+  color:var(--text-primary);
 }
 .risk-source-count {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--surface-hover);
-  padding: 1px 8px;
-  border-radius: 10px;
-  flex-shrink: 0;
+  margin-left:auto;
+  font-size:12px;
+  color:var(--text-muted);
+  background:var(--surface-hover);
+  padding:1px 8px;
+  border-radius:10px;
+  flex-shrink:0;
 }
 .risk-card {
   margin-top:10px;
@@ -547,7 +529,7 @@ defineExpose({ refresh: loadRules })
   font-size:12px;
   user-select:none;
   cursor:pointer;
-  transition: background var(--duration-fast) ease;
+  transition:background var(--duration-fast) ease;
 }
 .risk-card-header:hover {
   background:var(--accent-soft-hover);
@@ -586,7 +568,7 @@ defineExpose({ refresh: loadRules })
 }
 .risk-tool-count {
   margin-left:auto;
-  font-size:11px;
+  font-size:12px;
   color:var(--accent-300);
   padding-right:2px;
   flex-shrink:0;
@@ -608,7 +590,7 @@ defineExpose({ refresh: loadRules })
 .risk-tool-head {
   display:flex;
   align-items:center;
-  gap:4px;
+  gap:5px;
   cursor:pointer;
   min-width:0;
 }
@@ -639,14 +621,18 @@ defineExpose({ refresh: loadRules })
   white-space:nowrap;
 }
 .level-btn {
-  height:22px!important;
-  font-size:10px!important;
-  padding:0 4px!important;
+  height:24px!important;
+  font-size:12px!important;
+  padding:0 6px!important;
   border-radius:6px!important;
   color:var(--text-secondary)!important;
 }
 .level-btn .risk-level-dot {
-  margin:0 3px 0 0;
+  margin:0 4px 0 0;
+}
+.level-btn-arrow {
+  margin-left:2px;
+  opacity:.7;
 }
 .level-btn.level-safe {
   color:var(--ok,#4ade80)!important;
@@ -658,33 +644,12 @@ defineExpose({ refresh: loadRules })
   color:var(--error,#f87171)!important;
 }
 .risk-tool-detail {
-  font-size:11px;
+  font-size:12px;
   color:var(--text-muted);
   margin-top:6px;
-  margin-left:24px;
+  margin-left:26px;
   line-height:1.45;
   white-space:pre-wrap;
-}
-.risk-tool-detail-inline {
-  margin-left:2px;
-  font-size:11px;
-  color:var(--text-muted);
-  line-height:1.45;
-  min-width:0;
-  flex:1;
-  overflow-wrap:anywhere;
-}
-.risk-test {
-  margin-top:22px;
-}
-.risk-test-result {
-  margin-top:9px;
-  padding-top:8px;
-  border-top:1px solid var(--border);
-}
-.risk-test-result code {
-  font-size:11px;
-  color:var(--accent-300);
 }
 .panel-slide-enter-active {
   transition:all var(--duration-base,180ms) var(--ease-standard,ease);

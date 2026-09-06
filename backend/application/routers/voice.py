@@ -140,6 +140,17 @@ async def stt_start():
         raise HTTPException(status_code=503, detail=str(e))
 
 
+@router.get("/voice/stt/devices")
+async def stt_devices():
+    """枚举本机音频捕获设备,供设置页把“麦克风 ID”变成下拉选择。"""
+    prov = stt_engine._build_provider("sensevoice")
+    try:
+        devs = await prov.list_devices()
+    except STTProviderError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"devices": devs}
+
+
 @router.post("/voice/stt/upload")
 async def stt_upload(file: UploadFile = File(...)):
     if not voice_cfg.stt.enabled:

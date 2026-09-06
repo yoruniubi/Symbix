@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,77 @@ class STTProviderError(Exception):
     """单个 provider 失败(引擎会捕获并尝试下一个)。"""
 
 OnResult = Callable[[str], Awaitable[None]]
+
+# ---------------- stream 输出解析(纯函数,可单测) ----------------
+
+# 识别帧:[0.60-1.70]<|en|><|EMO_UNKNOWN|><|Speech|><|withitn|>文本
+_FRAME_RE = re.compile(r"\[(\d+\.\d+)-(\d+\.\d+)\]")
+_META_RE = re.compile(r"<\|[^>]*?\|>")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def parse_stream_frame(raw: str) -> Optional[tuple[float, float, str]]:
+    """把一帧原始输出解析成 (start_sec, end_sec, 纯文本)。
+
+    stream.exe 的识别帧形如:
+        [0.60-1.70]<|en|><|EMO_UNKNOWN|><|Speech|><|withitn|>你好世界
+    帧间用 \r 分隔,还夹着 ANSI 清屏转义([2K)与空格填充。
+    非识别帧(init:/model_load 等)返回 None。
+    """
+    text = _ANSI_RE.sub("", raw).strip()
+    if not text:
+        return None
+    m = _FRAME_RE.search(text)
+    if not m:
+        return None  # init/model_load 等日志行
+    start, end = float(m.group(1)), float(m.group(2))
+    body = _META_RE.sub("", text[m.end():]).strip()
+    return (start, end, body)
+
+
+class StreamSegmentAggregator:
+    """把 stream.exe 的刷新帧流聚合成"一句一结果"。
+
+    同一 VAD 段内,exe 会反复刷新同一句(起点固定、终点递增);
+    起点回退(新段开始)或静默超时 → 上一段成句,回调最终文本。
+    """
+
+    def __init__(self, flush_idle: float = 0.8) -> None:
+        self.flush_idle = flush_idle   # 距上一帧超过该秒数视为段落结束
+        self._seg_start: Optional[float] = None
+        self._seg_end: Optional[float] = None
+        self._seg_text = ""
+        self._last_ts: Optional[float] = None  # 最近帧的 end_sec(用于静默判定)
+
+    def feed(self, start: float, end: float, text: str) -> Optional[str]:
+        """喂入一帧;段落成句时返回最终文本,否则返回 None。"""
+        finalized: Optional[str] = None
+        new_segment = (
+            self._seg_start is not None and start < self._seg_start
+        ) or (
+            self._last_ts is not None and start - self._last_ts > self.flush_idle
+        )
+        if new_segment and self._seg_text:
+            finalized = self._seg_text
+            self._seg_start = None
+            self._seg_end = None
+            self._seg_text = ""
+        if self._seg_start is None:
+            self._seg_start = start
+        if end >= (self._seg_end or 0.0):
+            self._seg_end = end
+            self._seg_text = text  # 同段内取终点最靠后的刷新(最完整)
+        self._last_ts = end
+        return finalized
+
+    def flush(self) -> Optional[str]:
+        """主动冲刷当前未成句的段落(流结束/停止时调用)。"""
+        text = self._seg_text
+        self._seg_start = None
+        self._seg_end = None
+        self._seg_text = ""
+        self._last_ts = None
+        return text or None
 
 
 class STTProvider:
@@ -93,6 +165,65 @@ class SenseVoiceProvider(STTProvider):
         ggufs = sorted(d.glob("*.gguf"))
         return str(ggufs[0]) if ggufs else None
 
+    # ---- 设备枚举 ----
+    async def list_devices(self) -> list[dict]:
+        """枚举本机音频捕获设备(供设置页下拉选择麦克风)。
+
+        原理:stream 版 exe 启动时会在 stdout 打印设备清单,
+        随后才打开默认/指定设备。这里短启进程读到清单后立即终止,
+        不真正进入录音循环。返回 [{"id": int, "name": str}, ...]。
+        """
+        import re
+
+        bin_ = self._resolve_binary()
+        if not bin_ or "stream" not in bin_.lower():
+            # 非 stream 版(纯文件转写)不支持设备枚举/实时捕获
+            return []
+        model = self._resolve_model()
+        if not model:
+            return []
+        devices: list[dict] = []
+        pattern = re.compile(r"Capture device #(\d+): '(.*?)'")
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                bin_, "-m", model, "-l", self.language,
+                # 设备清单打在 stderr(与识别结果的 stdout 分离)
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            raise STTProviderError(f"SenseVoice 枚举设备失败: {e}") from e
+        try:
+            assert proc.stderr
+            # 读到设备清单(通常 3~5 行)或超时则终止,不进入录音循环
+            err = proc.stderr
+            for _ in range(40):
+                try:
+                    raw = await asyncio.wait_for(err.readline(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    break
+                if not raw:
+                    break
+                line = raw.decode("utf-8", errors="replace")
+                m = pattern.search(line)
+                if m:
+                    devices.append({"id": int(m.group(1)), "name": m.group(2).strip()})
+                # 开始打开设备/加载模型 = 设备清单已结束,不用再等
+                if "attempt to open" in line.lower() or "loading model" in line.lower():
+                    break
+        finally:
+            try:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+        return devices
+
     def available(self) -> bool:
         return self._resolve_binary() is not None and self._resolve_model() is not None
 
@@ -146,13 +277,45 @@ class SenseVoiceProvider(STTProvider):
 
         async def _pump() -> None:
             assert self._process and self._process.stdout
-            async for raw in self._process.stdout:
-                text = raw.decode("utf-8", errors="replace").strip()
-                if text:
-                    try:
-                        await on_result(text)
-                    except Exception:
-                        pass
+            # stream.exe 的识别帧用 \r 分隔(同行刷新),整段结束才有 \n;
+            # readline 会卡到整段结束且拿到的是带 ANSI/元数据的脏文本。
+            # 这里按块读 + 双分隔符切帧,经解析/聚合后只回调成句文本。
+            agg = StreamSegmentAggregator()
+            buf = ""
+            stdout = self._process.stdout
+            while True:
+                chunk = await stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk.decode("utf-8", errors="replace")
+                # \r 与 \n 都是帧边界
+                while True:
+                    idx = min(
+                        (p for p in (buf.find("\r"), buf.find("\n")) if p != -1),
+                        default=-1,
+                    )
+                    if idx == -1:
+                        break
+                    frame, buf = buf[:idx], buf[idx + 1:]
+                    parsed = parse_stream_frame(frame)
+                    if not parsed:
+                        continue
+                    start, end, text = parsed
+                    if not text:
+                        continue
+                    finalized = agg.feed(start, end, text)
+                    if finalized:
+                        try:
+                            await on_result(finalized)
+                        except Exception:
+                            pass
+            # 进程退出:冲刷最后一段
+            tail = agg.flush()
+            if tail:
+                try:
+                    await on_result(tail)
+                except Exception:
+                    pass
 
         self._reader_task = asyncio.create_task(_pump())
 

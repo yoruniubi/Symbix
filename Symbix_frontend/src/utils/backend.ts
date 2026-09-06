@@ -59,6 +59,14 @@ export async function updateVoiceConfig(patch: { tts?: Record<string, unknown>; 
   if (!res.ok) throw new Error(`POST /voice/config ${res.status}`)
 }
 
+/** 本机音频捕获设备(stream.exe 枚举),供设置页下拉选择麦克风。 */
+export async function listSttDevices(): Promise<{ id: number; name: string }[]> {
+  const res = await fetch(`${BACKEND_URL}/voice/stt/devices`)
+  if (!res.ok) throw new Error(`GET /voice/stt/devices ${res.status}`)
+  const data = await res.json()
+  return data.devices || []
+}
+
 /** 试听 TTS:返回 Blob URL 供 <audio> 播放。 */
 export async function previewTts(text: string, speed?: number, engine?: string): Promise<string> {
   const body: Record<string, unknown> = { text }
@@ -114,7 +122,16 @@ export function speak(text: string) {
   previewTts(plainText).then(url => {
     const audio = new Audio(url)
     audio.onended = () => { URL.revokeObjectURL(url); _speakAudio = null }
+    audio.onerror = () => { URL.revokeObjectURL(url); _speakAudio = null }
     audio.play().catch(() => { /* 自动播放被浏览器阻止,静默忽略 */ })
     _speakAudio = audio
   })
+}
+
+/** 停止当前 TTS 朗读(关闭朗读开关时同步打断正在播放的音频)。 */
+export function stopSpeak() {
+  if (_speakAudio) {
+    _speakAudio.pause()
+    _speakAudio = null
+  }
 }

@@ -85,15 +85,23 @@ _SAFE_DEFAULT = dict(
 
 
 def resolve_capabilities(model: str, provider_cfg: Optional[ProviderConfig] = None) -> Dict[str, Any]:
-    """返回当前 provider 的能力位。用户显式覆盖优先于内置默认。"""
+    """返回当前 provider 的能力位。用户显式覆盖优先于内置默认。
+
+    额外写入 `_explicit_prompt_cache`:True/False 表示用户显式声明了
+    supports_prompt_cache;None 表示未显式声明(发送端应按默认规则处理)。
+    """
     prefix = model.split("/", 1)[0].lower() if "/" in model else "openai"
     base = dict(_PROVEDER_CAPABILITY_DEFAULTS.get(prefix, _SAFE_DEFAULT))
+    explicit = None
     if provider_cfg is not None:
         for k in ("supports_streaming", "supports_tools", "supports_reasoning",
                   "supports_vision", "supports_prompt_cache", "api_kind"):
             v = getattr(provider_cfg, k, None)
             if v is not None:
                 base[k] = v
+                if k == "supports_prompt_cache":
+                    explicit = bool(v)
+    base["_explicit_prompt_cache"] = explicit
     return base
 
 

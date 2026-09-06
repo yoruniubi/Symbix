@@ -14,6 +14,9 @@ backend/Symbix_sdk/config/mcp_oauth.json.tmp
 backend/Symbix_sdk/tts/model
 backend/Symbix_sdk/stt/bin
 backend/Symbix_sdk/stt/model
+# sense-voice exe 运行时自动生成的特征缓存(缺失会自动重建)
+backend/Symbix_sdk/stt/fbank_lfr_cmvn_feature.json
+fbank_lfr_cmvn_feature.json
 # User-defined local tool risk overrides
 backend/Symbix_sdk/config/risk_overrides.json
 # Conversation memory / SQLite

@@ -549,8 +549,13 @@ class SymbixClient:
             if clean_tools:
                 body["tools"] = clean_tools
                 body["tool_choice"] = "auto"
-        # 提示缓存：OpenAI / DeepSeek 都支持 prompt_cache_key 来重启前缀缓存
-        if caps.get("supports_prompt_cache"):
+        # 提示缓存:prompt_cache_key 是 DeepSeek 官方 API 的私有扩展参数,不是 OpenAI 标准。
+        # 自定义中转(api_base)网关通常严格校验参数,不认识 prompt_cache_key 会直接 400
+        # (典型报错:Unsupported parameter(s): `prompt_cache_key`),因此不能凭模型名前缀就发。
+        # 规则:仅当直连官方 api.deepseek.com,或显式配置 supports_prompt_cache=True 时才发。
+        _url_lower = url.lower()
+        is_official_deepseek = "api.deepseek.com" in _url_lower
+        if caps.get("supports_prompt_cache") and (is_official_deepseek or caps.get("_explicit_prompt_cache")):
             body["prompt_cache_key"] = "symbix-session"
 
         # 分开设置各阶段超时，而不是一个数字打天下

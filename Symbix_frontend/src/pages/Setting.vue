@@ -202,9 +202,17 @@
                 <n-input-number v-model:value="sttForm.threads" :min="1" :max="32" />
               </n-form-item>
               <n-form-item :label="t('setting.sttDevice')">
-                <n-input-number v-model:value="sttForm.capture_device" :step="1" style="width:100%">
-                  <template #prefix>{{ t('setting.sttDeviceDefault') }}</template>
-                </n-input-number>
+                <n-space align="center" :wrap="false" style="width:100%">
+                  <n-select
+                    v-model:value="sttForm.capture_device"
+                    :options="sttDeviceOptions"
+                    :loading="sttDevicesLoading"
+                    style="flex:1"
+                  />
+                  <n-button :loading="sttDevicesLoading" @click="loadSttDevices">
+                    {{ t('setting.sttDeviceRefresh') }}
+                  </n-button>
+                </n-space>
               </n-form-item>
               <template v-if="sttForm.use_vad">
                 <n-form-item :label="t('setting.sttChunkSize')">
@@ -333,6 +341,7 @@ import {
 import {
   getVoiceConfig,
   updateVoiceConfig,
+  listSttDevices,
   previewTts as previewTtsApi,
   type VoiceConfigResp,
 } from '@/utils/backend'
@@ -389,6 +398,27 @@ interface TtsSettings {
 // 后端 /voice/config 返回的引擎可用状态
 const ttsStatus = ref<Record<string, { available: boolean; voices: { value: string; label: string }[] }>>({})
 const sttStatus = ref<Record<string, { available: boolean; cloud: boolean }>>({})
+
+// ---- 本机麦克风设备枚举(替代手填设备 ID) ----
+const sttDeviceOptions = ref<{ label: string; value: number }[]>([])
+const sttDevicesLoading = ref(false)
+
+/** 拉取本机音频捕获设备列表,生成下拉选项(含"系统默认")。 */
+async function loadSttDevices() {
+  sttDevicesLoading.value = true
+  try {
+    const devs = await listSttDevices()
+    sttDeviceOptions.value = [
+      { label: t('setting.sttDeviceDefault'), value: -1 },
+      ...devs.map(d => ({ label: `#${d.id} ${d.name}`, value: d.id })),
+    ]
+  } catch {
+    // 枚举失败(引擎不可用等)时保留默认项,不阻断设置页
+    sttDeviceOptions.value = [{ label: t('setting.sttDeviceDefault'), value: -1 }]
+  } finally {
+    sttDevicesLoading.value = false
+  }
+}
 
 const STT_ENGINE_LABELS: Record<string, string> = {
   sensevoice: 'SenseVoice (本地)',
@@ -556,6 +586,7 @@ onMounted(() => {
   loadNotifySettings()
   notifyForm.value = { ...notifySettings.value }
   loadVoiceConfig()
+  loadSttDevices()
 })
 
 async function saveNotify() {

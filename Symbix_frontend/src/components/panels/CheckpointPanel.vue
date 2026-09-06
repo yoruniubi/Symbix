@@ -23,8 +23,6 @@
             <span class="cp-pill chip-ok">{{ summary.total }} {{ $t('checkpointPanel.events') }}</span>
             <span class="cp-pill chip-info" v-if="summary.round_n">{{ summary.round_n }} {{ $t('checkpointPanel.rounds') }}</span>
             <span class="cp-pill chip-err" v-if="summary.error_n">{{ summary.error_n }} {{ $t('checkpointPanel.errors') }}</span>
-          </div>
-          <div class="cp-summary-row sub" v-if="summary.tool_call_n || summary.file_op_n || summary.command_n || summary.mcp_call_n">
             <span v-if="summary.tool_call_n" class="cp-tag-mini">
               <svg class="cp-tag-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
               {{ summary.tool_call_n }}
@@ -49,66 +47,69 @@
           <div v-for="(round, ri) in roundsWithEvents" :key="ri" class="cp-round">
             <div class="cp-round-header" @click="toggleRound(round.round_id)">
               <svg class="cp-round-marker" :class="{ expanded: round.expanded }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
-              <div class="cp-round-title">
-                <div class="cp-round-user" v-if="round.user_msg">{{ round.user_msg }}</div>
-                <div class="cp-round-id" v-else>#{{ round.round_id }}</div>
-              </div>
-              <span class="cp-pill chip-mini">{{ round.events.length }}</span>
+              <span class="cp-round-id">#{{ round.round_id }}</span>
+              <span class="cp-round-count">{{ round.events.length }}</span>
             </div>
 
             <div class="cp-round-body" v-if="round.expanded">
               <div v-for="(ev, ei) in round.events" :key="ev.id || ei" class="cp-event">
-                <span class="cp-event-icon">
-                  <svg v-if="ev.kind === 'tool_call' && risk(ev) === 'high'" class="dot dot-high" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-                  <svg v-else-if="ev.kind === 'tool_call' && risk(ev) === 'medium'" class="dot dot-mid" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-                  <svg v-else-if="ev.status === 'error'" class="dot dot-err" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-                  <svg v-else-if="ev.kind === 'round'" class="dot dot-round" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                  <svg v-else class="dot dot-safe" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-                </span>
-                <div class="cp-event-main">
-                  <div class="cp-event-line1">
-                    <span class="cp-ev-kind">{{ kindLabel(ev.kind) }}</span>
-                    <span class="cp-ev-name">{{ ev.payload?.tool_name || ev.payload?.op || ev.payload?.cmd || '' }}</span>
-                    <span class="cp-ev-status" :class="`st-${ev.status}`">{{ ev.status }}</span>
-                  </div>
-                  <div class="cp-ev-detail" v-if="ev.kind === 'file_op' && ev.payload">
-                    <code class="cp-path">{{ ev.payload.path }}</code>
-                    <span v-if="ev.payload.size_delta != null" class="cp-delta" :class="ev.payload.size_delta > 0 ? 'plus' : 'minus'">
-                      {{ ev.payload.size_delta > 0 ? '+' : '' }}{{ formatBytes(ev.payload.size_delta) }}
-                    </span>
-                    <n-button size="tiny" quaternary class="cp-action-btn" :title="$t('checkpointPanel.viewDiff')" @click="showDiff(ev)">
-                      <template #icon>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>
-                      </template>
-                      {{ $t('checkpointPanel.viewDiff') }}
-                    </n-button>
-                  </div>
-                  <div class="cp-ev-detail" v-else-if="ev.kind === 'tool_call' && ev.payload">
-                    <code class="cp-path" v-if="ev.payload.arguments?.path">{{ ev.payload.arguments.path }}</code>
-                    <span class="cp-snippet" v-if="ev.payload.result_snippet">{{ ev.payload.result_snippet.slice(0, 120) }}</span>
-                  </div>
-                  <div class="cp-ev-detail" v-else-if="ev.kind === 'command' && ev.payload">
-                    <code class="cp-path">{{ ev.payload.cmd }}</code>
-                    <span v-if="ev.payload.exit_code != null" class="cp-pill chip-mini" :class="ev.payload.exit_code === 0 ? 'st-ok-pill' : 'st-err-pill'">
-                      exit {{ ev.payload.exit_code }}
-                    </span>
-                  </div>
+                <div class="cp-event-name">
+                  <span class="cp-event-icon">
+                    <svg v-if="ev.kind === 'tool_call' && risk(ev) === 'high'" class="dot dot-high" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                    <svg v-else-if="ev.kind === 'tool_call' && risk(ev) === 'medium'" class="dot dot-mid" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                    <svg v-else-if="ev.status === 'error'" class="dot dot-err" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                    <svg v-else class="dot dot-safe" width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                  </span>
+                  <span class="cp-ev-name">{{ ev.payload?.tool_name || ev.payload?.op || ev.payload?.cmd || kindLabel(ev.kind) }}</span>
+                  <span class="cp-ev-status" :class="`st-${ev.status}`">{{ ev.status }}</span>
                 </div>
+                <div class="cp-event-desc" v-if="ev.kind === 'file_op' && ev.payload">
+                  <span class="cp-ev-kind">{{ kindLabel(ev.kind) }}</span>
+                  <code class="cp-path">{{ ev.payload.path }}</code>
+                  <span v-if="ev.payload.size_delta != null" class="cp-delta" :class="ev.payload.size_delta > 0 ? 'plus' : 'minus'">
+                    {{ ev.payload.size_delta > 0 ? '+' : '' }}{{ formatBytes(ev.payload.size_delta) }}
+                  </span>
+                  <n-button size="tiny" quaternary class="cp-action-btn" :title="$t('checkpointPanel.viewDiff')" @click="showDiff(ev)">
+                    <template #icon>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>
+                    </template>
+                    {{ $t('checkpointPanel.viewDiff') }}
+                  </n-button>
+                </div>
+                <div class="cp-event-desc" v-else-if="ev.kind === 'tool_call' && ev.payload">
+                  <span class="cp-ev-kind">{{ kindLabel(ev.kind) }}</span>
+                  <code class="cp-path" v-if="ev.payload.arguments?.path">{{ ev.payload.arguments.path }}</code>
+                  <span class="cp-snippet" v-if="ev.payload.result_snippet">{{ ev.payload.result_snippet.slice(0, 120) }}</span>
+                </div>
+                <div class="cp-event-desc" v-else-if="ev.kind === 'command' && ev.payload">
+                  <span class="cp-ev-kind">{{ kindLabel(ev.kind) }}</span>
+                  <code class="cp-path">{{ ev.payload.cmd }}</code>
+                  <span v-if="ev.payload.exit_code != null" class="cp-pill chip-mini" :class="ev.payload.exit_code === 0 ? 'st-ok-pill' : 'st-err-pill'">
+                    exit {{ ev.payload.exit_code }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- 轮次总结:单独在框底部 -->
+              <div class="cp-round-summary" v-if="round.user_msg">
+                <span class="cp-round-summary-label">{{ $t('checkpointPanel.kindRound') }}</span>
+                <span class="cp-round-summary-text">{{ round.user_msg }}</span>
               </div>
             </div>
           </div>
         </div>
 
         <n-empty v-else :description="activeSession ? $t('checkpointPanel.empty') : $t('checkpointPanel.noSession')" size="small" style="margin-top: 28px;" />
+      </div>
 
-        <div class="cp-actions" v-if="activeSession">
-          <n-button size="tiny" quaternary class="cp-prune-btn" @click="handlePrune" :loading="pruning">
-            <template #icon>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-            </template>
-            {{ $t('checkpointPanel.prune') }}
-          </n-button>
-        </div>
+      <!-- 底部操作:清理旧记录 -->
+      <div class="side-panel-footer" v-if="activeSession">
+        <n-button size="medium" secondary block class="panel-footer-btn" @click="handlePrune" :loading="pruning">
+          <template #icon>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+          </template>
+          {{ $t('checkpointPanel.prune') }}
+        </n-button>
       </div>
 
       <!-- Diff 弹窗 -->
@@ -204,7 +205,8 @@ const roundsWithEvents = computed<RoundGroup[]>(() => {
         expanded: expanded.value.has(rid),
       })
     }
-    map.get(rid)!.events.push(r)
+    // round 记录仅用于提取用户消息作为轮次总结,不作为事件条目展示
+    if (r.kind !== 'round') map.get(rid)!.events.push(r)
   }
   return Array.from(map.values())
 })
@@ -479,8 +481,12 @@ function handleClose() {
   animation: panel-refresh-spin 1s linear infinite;
 }
 @keyframes panel-refresh-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .side-panel-body {
   flex: 1 1 auto;
@@ -526,11 +532,6 @@ function handleClose() {
   flex-wrap: wrap;
   align-items: center;
 }
-.cp-summary-row.sub {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
 .cp-pill {
   display: inline-flex;
   align-items: center;
@@ -540,16 +541,40 @@ function handleClose() {
   background: var(--accent-soft);
   color: var(--text-secondary);
 }
-.cp-pill.chip-ok { color: var(--success, #34d399); background: rgba(52, 211, 153, 0.12); }
-.cp-pill.chip-err { color: var(--error, #ef4444); background: rgba(239, 68, 68, 0.12); }
-.cp-pill.chip-info { color: var(--accent-300, #F7A85B); background: var(--accent-soft); }
-.cp-pill.chip-mini { font-size: 10px; padding: 1px 6px; }
-.cp-pill.st-ok-pill { color: var(--success, #34d399); }
-.cp-pill.st-err-pill { color: var(--error, #ef4444); }
-.cp-tag-mini { white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
-.cp-tag-icon { display: block; flex-shrink: 0; }
+.cp-pill.chip-ok {
+  color: var(--success, #34d399);
+  background: rgba(52, 211, 153, 0.12);
+}
+.cp-pill.chip-err {
+  color: var(--error, #ef4444);
+  background: rgba(239, 68, 68, 0.12);
+}
+.cp-pill.chip-info {
+  color: var(--accent-300, #F7A85B);
+  background: var(--accent-soft);
+}
+.cp-pill.chip-mini {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+.cp-pill.st-ok-pill {
+  color: var(--success, #34d399);
+}
+.cp-pill.st-err-pill {
+  color: var(--error, #ef4444);
+}
+.cp-tag-mini {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.cp-tag-icon {
+  display: block;
+  flex-shrink: 0;
+}
 
-/* 时间线（按 round 折叠） */
+/* 时间线(每轮对话一个框,action 为框内小卡片,轮次总结固定在框底部) */
 .cp-timeline {
   display: flex;
   flex-direction: column;
@@ -568,90 +593,117 @@ function handleClose() {
 .cp-round-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 10px 10px 12px;
   cursor: pointer;
   user-select: none;
-  transition: background var(--duration-fast, 120ms) ease;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 .cp-round-header:hover {
-  background: var(--accent-soft-hover);
+  color: var(--text-primary);
 }
 .cp-round-marker {
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   width: 10px;
   height: 10px;
   transition: transform 0.15s ease;
 }
-.cp-round-marker.expanded { transform: rotate(90deg); }
-.cp-round-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
+.cp-round-marker.expanded {
+  transform: rotate(90deg);
 }
-.cp-round-user { color: var(--text-primary); }
 .cp-round-id {
-  color: var(--text-muted);
   font-family: ui-monospace, monospace;
   font-size: 11px;
+  color: var(--text-muted);
 }
-
+.cp-round-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
 .cp-round-body {
-  padding: 6px 12px 8px 14px;
+  padding: 0 8px;
   display: flex;
   flex-direction: column;
 }
+
+/* 事件条目(仿 mcp-tool-item:名称行 + 描述行) */
 .cp-event {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  padding: 6px 0;
-  font-size: 12px;
-  border-bottom: 1px solid var(--border);
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  background: var(--panel-bg);
+  border: 1px solid transparent;
 }
-.cp-event:last-child { border-bottom: none; }
-.cp-event-icon { padding-top: 2px; display: inline-flex; align-items: center; }
-.dot { display: block; }
-.dot-safe  { color: var(--success, #34d399); }
-.dot-mid   { color: var(--warning, #f59e0b); }
-.dot-high  { color: var(--error, #ef4444); }
-.dot-err   { color: var(--error, #ef4444); }
-.dot-round { color: var(--accent-300, #8b5cf6); }
-.cp-event-main { flex: 1; min-width: 0; }
-.cp-event-line1 {
+.cp-event-name {
   display: flex;
-  gap: 6px;
-  align-items: baseline;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--accent-300, #F7A85B);
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.cp-ev-name {
+  font-weight: 600;
+  min-width: 0;
+}
+.cp-event-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.dot {
+  display: block;
+}
+.dot-safe {
+  color: var(--success, #34d399);
+}
+.dot-mid {
+  color: var(--warning, #f59e0b);
+}
+.dot-high {
+  color: var(--error, #ef4444);
+}
+.dot-err {
+  color: var(--error, #ef4444);
+}
+.cp-ev-status {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 6px;
+}
+.st-ok {
+  color: var(--success, #34d399);
+}
+.st-error {
+  color: var(--error, #ef4444);
+}
+.st-skipped {
+  color: var(--warning, #f59e0b);
+}
+.cp-event-desc {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  padding-left: 12px;
+  line-height: 1.4;
 }
 .cp-ev-kind {
   font-size: 10px;
   color: var(--text-muted);
   text-transform: uppercase;
-}
-.cp-ev-name {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.cp-ev-status {
-  font-size: 9px;
-  padding: 0 4px;
-  border-radius: 6px;
-}
-.st-ok      { color: var(--success, #34d399); }
-.st-error   { color: var(--error, #ef4444); }
-.st-skipped { color: var(--warning, #f59e0b); }
-.cp-ev-detail {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .cp-path {
   font-family: ui-monospace, monospace;
@@ -661,117 +713,150 @@ function handleClose() {
   border-radius: 4px;
   color: var(--text-primary);
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: normal;
+  display: inline-block;
 }
-.cp-delta { 
-  font-size: 10px; 
+.cp-delta {
+  font-size: 10px;
 }
-.cp-delta.plus { 
-  color: var(--success, #34d399); 
+.cp-delta.plus {
+  color: var(--success, #34d399);
 }
-.cp-delta.minus { 
+.cp-delta.minus {
   color: var(--error, #ef4444);
 }
-.cp-snippet { 
-  opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; 
+.cp-snippet {
+  opacity: 0.65;
+  word-break: break-all;
+  white-space: normal;
 }
 
-/* Diff + prune 样式 */
-.cp-actions { 
-  margin-top: 12px; 
-  padding-top: 12px; 
-  border-top: 1px solid var(--border); 
-  display: flex; 
-  gap: 8px; 
+/* 轮次总结:固定在框底部,与 action 区块分隔 */
+.cp-round-summary {
+  margin-top: 8px;
+  padding: 8px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
-.cp-prune-btn { 
-  color: var(--text-muted); 
+.cp-round-summary-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .3px;
 }
-.cp-action-btn { 
-  opacity: 0.75; 
-  transition: opacity var(--duration-fast, 120ms) ease; 
+.cp-round-summary-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
-.cp-event:hover .cp-action-btn { 
-  opacity: 1; 
+
+/* 底部操作栏(与 McpPanel / SkillPanel footer 一致) */
+.side-panel-footer {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  background: var(--panel-bg);
+  z-index: 1;
+}
+.panel-footer-btn {
+  height: 36px !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+}
+.panel-footer-btn :deep(.n-button__content) {
+  white-space: nowrap;
+}
+
+/* Diff 弹窗 */
+.cp-action-btn {
+  opacity: 0.75;
+  transition: opacity var(--duration-fast, 120ms) ease;
+}
+.cp-event:hover .cp-action-btn {
+  opacity: 1;
 }
 .diff-panel {
-   display: flex; 
-   flex-direction: column; 
-   gap: 12px; 
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.diff-meta { 
-  display: flex; 
-  gap: 8px; 
-  align-items: center; 
-  flex-wrap: wrap; 
+.diff-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
 }
-.diff-path { 
-  font-family: ui-monospace, monospace; 
-  font-size: 12px; 
-  background: var(--accent-soft); 
-  padding: 2px 6px; 
-  border-radius: 4px; 
-  color: var(--text-primary); 
+.diff-path {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  background: var(--accent-soft);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-primary);
 }
-.diff-op { 
-  font-size: 10px; 
-  text-transform: uppercase; 
-  padding: 1px 6px; 
-  border-radius: 6px; 
-  background: var(--accent-soft); 
-  color: var(--accent-300, #8b5cf6); 
+.diff-op {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-300, #8b5cf6);
 }
-.diff-size { 
-  font-size: 11px; 
-  color: var(--text-muted); 
+.diff-size {
+  font-size: 11px;
+  color: var(--text-muted);
 }
-.diff-columns { 
-  display: grid; 
-  grid-template-columns: 1fr 1fr; 
-  gap: 10px; 
-  min-height: 120px; 
+.diff-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  min-height: 120px;
 }
-.diff-col { 
-  border: 1px solid var(--border); 
-  border-radius: var(--radius-md, 8px); 
-  overflow: hidden; 
-  display: flex; 
-  flex-direction: column; 
-  min-width: 0; 
+.diff-col {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.diff-col-header { 
-  font-size: 11px; 
-  font-weight: 600; 
-  padding: 6px 10px; 
-  background: var(--accent-soft); 
-  border-bottom: 1px solid var(--border); 
-  color: var(--text-secondary); 
+.diff-col-header {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
 }
-.diff-content { 
-  flex: 1; 
-  margin: 0; 
-  padding: 10px; 
-  font-family: ui-monospace, monospace; 
-  font-size: 11px; 
-  line-height: 1.5; 
-  white-space: pre-wrap; 
-  word-break: break-all; 
-  max-height: 320px; 
-  overflow: auto; 
-  color: var(--text-primary); 
+.diff-content {
+  flex: 1;
+  margin: 0;
+  padding: 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
+  color: var(--text-primary);
 }
-.diff-no-blob { 
-  padding: 20px 12px; 
-  text-align: center; 
-  color: var(--text-muted); 
-  font-size: 12px; 
-  border: 1px dashed var(--border); 
-  border-radius: var(--radius-md, 8px); 
+.diff-no-blob {
+  padding: 20px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md, 8px);
 }
-.diff-restore { 
-  display: flex; 
-  justify-content: flex-end; 
+.diff-restore {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>
