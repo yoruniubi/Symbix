@@ -575,11 +575,13 @@ class McpRemoteClient:
 
 
 class McpServerManager:
-    """管理多个 MCP server 客户端（stdio + remote）"""
+    """管理多个 MCP server 客户端(stdio + remote)"""
 
     def __init__(self):
         self.servers: Dict[str, Any] = {}
         self._initialized = False
+        # 最近一次 add_* 失败的原因(供上层判断是否需 OAuth 等)
+        self.last_error: Optional[str] = None
 
     def add_server(self, server_id: str, command: str, args: List[str]) -> bool:
         """添加并启动本地 stdio MCP server"""
@@ -588,10 +590,11 @@ class McpServerManager:
             self.remove_server(server_id)
 
         client = McpServerClient(server_id, command, args)
-        if client.start():
+        ok = client.start()
+        self.last_error = getattr(client, "last_error", None)
+        if ok:
             self.servers[server_id] = client
-            return True
-        return False
+        return ok
 
     def add_remote_server(
         self,
@@ -617,10 +620,11 @@ class McpServerManager:
             oauth_store=oauth_store,
             oauth_status_cb=oauth_status_cb,
         )
-        if client.start():
+        ok = client.start()
+        self.last_error = getattr(client, "last_error", None)
+        if ok:
             self.servers[server_id] = client
-            return True
-        return False
+        return ok
 
     def add_from_config(self, server_id: str, config: dict) -> bool:
         """根据配置自动选择 stdio / remote"""

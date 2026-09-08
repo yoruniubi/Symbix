@@ -55,6 +55,83 @@ def get_project_root() -> str:
     return os.path.abspath(os.path.join(_backend_dir(), ".."))
 
 
+# 会话内累积的“用户授权目录”(FilePanel 浏览过的项目外目录)。
+# 进程内可变;重启后端即清空(不落盘,避免悄悄扩大授权面)。
+_workspace_roots: set[str] = set()
+
+
+def add_workspace_root(path: str) -> str:
+    """把用户显式浏览过/授权的目录加入 Agent 可读区。返回规范化的绝对路径。"""
+    p = os.path.abspath(os.path.expanduser(str(path or "").strip()))
+    if not os.path.isdir(p):
+        raise ValueError(f"目录不存在: {p}")
+    _workspace_roots.add(p)
+    return p
+
+
+def remove_workspace_root(path: str) -> None:
+    p = os.path.abspath(os.path.expanduser(str(path or "").strip()))
+    _workspace_roots.discard(p)
+
+
+def clear_workspace_roots() -> None:
+    _workspace_roots.clear()
+
+
+def workspace_roots() -> list[str]:
+    return sorted(_workspace_roots)
+
+
+# 硬性禁止区:无论是否在授权目录/项目内,命中即拒。
+# 目的:防 Agent 误读/改系统关键文件(模型幻觉或 prompt 注入都挡不住时,这里是最后防线)。
+_FORBIDDEN_PREFIXES: tuple[str, ...] = (
+    os.environ.get("SystemRoot", "C:\\Windows"),  # C:\Windows 及其下
+    os.environ.get("ProgramFiles", "C:\\Program Files"),
+    os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+)
+_FORBIDDEN_SUFFIXES: tuple[str, ...] = (  # 绝对路径直接命中这些即拒
+    ".ssh",
+    ".gnupg",
+)
+_FORBIDDEN_NAMES: tuple[str, ...] = (  # 任何目录层级下出现即拒(相对路径场景)
+    "C:\\Windows",
+    "\\Windows\\",
+    "Program Files",
+    "$Recycle.Bin",
+    "System Volume Information",
+    "Recovery",
+    "AppData\\Local\\Temp",
+)
+
+
+def _in_forbidden(path_abs: str) -> bool:
+    """判断绝对路径是否命中硬禁止区(系统关键路径/密钥目录)。"""
+    try:
+        path_abs = os.path.abspath(path_abs)
+    except Exception:
+        return True
+    # 盘符不同则肯定不在 Windows 禁止前缀下(如 D:\Windows 允许)
+    for pref in _FORBIDDEN_PREFIXES:
+        try:
+            if os.path.commonpath([path_abs, pref]) == pref:
+                return True
+        except ValueError:
+            continue
+    upper = path_abs.upper()
+    for name in _FORBIDDEN_NAMES:
+        if name.upper() in upper:
+            return True
+    for suffix in _FORBIDDEN_SUFFIXES:
+        parts = path_abs.split(os.sep)
+        if any(p.lower() == suffix.lower() for p in parts):
+            return True
+    return False
+
+
+def forbidden_roots() -> list[str]:
+    return [p for p in _FORBIDDEN_PREFIXES if p] + list(_FORBIDDEN_NAMES)
+
+
 def safe_filename(name: str) -> str:
     """去掉路径成分，仅保留安全文件名。"""
     base = os.path.basename(name or "file")
@@ -70,13 +147,14 @@ def is_allowed_extension(filename: str) -> bool:
 
 def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
     """
-    将 path 解析为绝对路径，并要求其落在任一 root 之下（防 .. 穿越）。
-    成功返回 abspath，否则 None。
+    将 path 解析为绝对路径,并要求其落在任一 root 之下(防 .. 穿越)。
+    命中硬禁止区(Windows 目录等)一律拒绝。
+    成功返回 abspath,否则 None。
 
-    相对路径的处理顺序：
-      1) 优先把相对路径拼到每个 root 下，落在 sandbox 任一 root 内即用（避免进程 cwd 依赖
-         ——后端 cwd 常是 backend/，单纯的 cwd 相对解析会把 'backend/xxx' 拼成 backend/backend/xxx）
-      2) 否则回退到相对进程 cwd 解析，仍要求落在 sandbox 内
+    相对路径的处理顺序:
+      1) 优先把相对路径拼到每个 root 下,落在 sandbox 任一 root 内即用(避免进程 cwd 依赖
+         ——后端 cwd 常是 backend/,单纯的 cwd 相对解析会把 'backend/xxx' 拼成 backend/backend/xxx)
+      2) 否则回退到相对进程 cwd 解析,仍要求落在 sandbox 内
     绝对路径直接判定 sandbox。
     """
     if not path or not str(path).strip():
@@ -85,11 +163,13 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
     norm = path.strip()
     roots_abs = [os.path.abspath(r) for r in roots]
 
-    # 绝对路径：直接判 sandbox
+    # 绝对路径:直接判 sandbox
     if os.path.isabs(norm):
         try:
             abs_path = os.path.abspath(os.path.expanduser(norm))
         except Exception:
+            return None
+        if _in_forbidden(abs_path):
             return None
         for root_abs in roots_abs:
             try:
@@ -99,50 +179,53 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
                 continue
         return None
 
-    # 相对路径：先尝试拼到每个 root 下。
-    # 优先级：父目录存在的优先（read_file/list_files/edit_file 语义一致；
-    # edit_file 写新文件从项目根开始试，backend/Symbix_sdk/x 正确落到 backend 下）。
+    # 相对路径:先尝试拼到每个 root 下。
+    # 优先级:父目录存在的优先(read_file/list_files/edit_file 语义一致;
+    # edit_file 写新文件从项目根开始试,backend/Symbix_sdk/x 正确落到 backend 下)。
     candidates: list[str] = []
     for root_abs in roots_abs:
-        # 单独 '.' 的特殊语义：直接对应 root 本身
+        # 单独 '.' 的特殊语义:直接对应 root 本身
         if norm == ".":
-            return root_abs
+            return root_abs if not _in_forbidden(root_abs) else None
         candidate = os.path.abspath(os.path.join(root_abs, norm))
         try:
             if os.path.commonpath([candidate, root_abs]) == root_abs:
                 candidates.append(candidate)
         except ValueError:
             continue
-    # 1) 优先选路径本身存在的（ 目录或文件，读根据不歧义）
+    # 过滤硬禁止区
+    candidates = [c for c in candidates if not _in_forbidden(c)]
+    # 1) 优先选路径本身存在的( 目录或文件,读根据不歧义)
     for c in candidates:
         if os.path.exists(c):
             return c
-    # 2) 次之选父目录存在的（edit_file 写新文件场景）
+    # 2) 次之选父目录存在的(edit_file 写新文件场景)
     for c in candidates:
         if os.path.isdir(os.path.dirname(c)):
             return c
-    # 3) 都不存在：回退到 cwd 相对解析若仍 sandbox 内
+    # 3) 都不存在:回退到 cwd 相对解析若仍 sandbox 内
     try:
         cwd_abs = os.path.abspath(os.path.expanduser(norm))
     except Exception:
         cwd_abs = None
-    if cwd_abs is not None:
+    if cwd_abs is not None and not _in_forbidden(cwd_abs):
         for root_abs in roots_abs:
             try:
                 if os.path.commonpath([cwd_abs, root_abs]) == root_abs:
                     return cwd_abs
             except ValueError:
                 continue
-    # 4) 最后凑合：选第一个 sandbox 内候选（允许新文件可解析）
+    # 4) 最后凑合:选第一个 sandbox 内候选(允许新文件可解析)
     return candidates[0] if candidates else None
 
 
 def sandbox_roots() -> list[str]:
-    """native 文件工具允许访问的根目录。"""
+    """native 文件工具允许访问的根目录 = 项目根 + uploads + 会话内授权目录。"""
     return [
         get_project_root(),
         get_uploads_root(),
         _backend_dir(),
+        *workspace_roots(),
     ]
 
 
@@ -151,8 +234,9 @@ def check_path_in_sandbox(path: str) -> tuple[bool, str]:
     resolved = resolve_under_root(path, sandbox_roots())
     if not resolved:
         return False, (
-            f"[Error] 路径不在允许的工作区内: {path}。"
-            f"仅允许访问项目目录与 uploads/。"
+            f"[Error] 路径不在允许的工作区内或命中系统保护目录: {path}。"
+            f"允许: 项目目录 / uploads / 文件面板中授权过的目录。"
+            f"系统目录(Windows/Program Files 等)与密钥目录不可访问。"
         )
     return True, resolved
 

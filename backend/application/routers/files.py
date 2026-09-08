@@ -5,6 +5,11 @@ from fastapi import APIRouter, HTTPException
 
 from Symbix_sdk.tools.file_pipeline import (
     get_project_root,
+    add_workspace_root,
+    remove_workspace_root,
+    clear_workspace_roots,
+    workspace_roots,
+    forbidden_roots,
 )
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -28,11 +33,54 @@ def _relative(path: Path) -> str:
         return str(path)
 
 
+def _forbidden_hint() -> str:
+    return " / ".join(str(p) for p in forbidden_roots()[:3]) + " 等系统保护目录不可作为工作区"
+
+
+@router.get("/workspace")
+async def get_workspace():
+    """返回当前会话内 Agent 被授权的外部目录列表(FilePanel 浏览过的)。"""
+    return {"roots": workspace_roots()}
+
+
+@router.post("/workspace")
+async def add_workspace(payload: dict):
+    """把某个外部目录加入 Agent 可读区(FilePanel 浏览即授权)。
+
+    body: { "path": "/abs/dir" }  —— 传 null/"" 则清空全部授权。
+    命中系统保护目录会被拒绝。
+    """
+    raw = (payload or {}).get("path")
+    if raw is None or not str(raw).strip():
+        clear_workspace_roots()
+        return {"status": "ok", "roots": workspace_roots()}
+    try:
+        p = add_workspace_root(str(raw))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # 二次确认不在禁止区(目录本身合法但名字撞禁止列表的情况)
+    for fr in forbidden_roots():
+        try:
+            if Path(p) == Path(fr) or Path(fr) in Path(p).parents:
+                remove_workspace_root(str(raw))
+                raise HTTPException(status_code=403, detail=_forbidden_hint())
+        except Exception:
+            continue
+    return {"status": "ok", "roots": workspace_roots()}
+
+
 @router.get("/list")
 async def list_directory(path: str = "."):
     directory = _resolve(path)
     if not directory.is_dir():
         raise HTTPException(status_code=400, detail="目标不是文件夹")
+    # 浏览即授权:项目外的目录(用户通过文件面板主动打开)自动进入 Agent 可读区
+    raw_path = str(path or ".").strip()
+    if raw_path and (Path(raw_path).is_absolute()):
+        try:
+            add_workspace_root(str(directory))
+        except (ValueError, OSError):
+            pass  # 授权失败不影响浏览
     entries = []
     for item in sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
         # 与常见编辑器一致,隐藏的构建缓存不显示,但 .gitignore 等文件保留。

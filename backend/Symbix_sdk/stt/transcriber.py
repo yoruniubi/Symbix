@@ -145,6 +145,7 @@ class SenseVoiceProvider(STTProvider):
         self.flash_attn = flash_attn
         self._process: Optional[asyncio.subprocess.Process] = None
         self._reader_task: Optional[asyncio.Task] = None
+        self._stderr_task: Optional[asyncio.Task] = None
 
     # ---- 路径解析:bin/model 目录里自动找 exe 和 gguf ----
     def _resolve_binary(self) -> Optional[str]:
@@ -240,7 +241,7 @@ class SenseVoiceProvider(STTProvider):
         if self.available() and self.use_vad:
             cmd += [
                 "--use-vad",
-                "--chunk_size", str(self.chunk_size),
+                "--chunk-size", str(self.chunk_size),
                 "-mmc", str(self.min_mute_chunks),
                 "-mnc", str(self.max_nomute_chunks),
             ]
@@ -269,11 +270,25 @@ class SenseVoiceProvider(STTProvider):
             self._process = await asyncio.create_subprocess_exec(
                 *self._build_cmd(),
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
             )
         except Exception as e:
             raise STTProviderError(f"SenseVoice 启动失败: {e}") from e
+
+        async def _drain_stderr() -> None:
+            # 把 exe 的 stderr(设备枚举/模型加载/报错)打进后端日志,便于诊断
+            assert self._process and self._process.stderr
+            try:
+                while True:
+                    line = await self._process.stderr.readline()
+                    if not line:
+                        break
+                    print("[stt]", line.decode("utf-8", errors="replace").rstrip(), flush=True)
+            except Exception:
+                pass
+
+        self._stderr_task = asyncio.create_task(_drain_stderr())
 
         async def _pump() -> None:
             assert self._process and self._process.stdout
@@ -309,7 +324,10 @@ class SenseVoiceProvider(STTProvider):
                             await on_result(finalized)
                         except Exception:
                             pass
-            # 进程退出:冲刷最后一段
+            # 进程退出:冲刷最后一段,并打印退出码便于诊断秒退
+            rc = self._process.returncode if self._process else None
+            if rc is not None and rc != 0:
+                print(f"[stt] sense-voice-stream exited rc={rc}", flush=True)
             tail = agg.flush()
             if tail:
                 try:
@@ -320,9 +338,11 @@ class SenseVoiceProvider(STTProvider):
         self._reader_task = asyncio.create_task(_pump())
 
     def stop(self) -> None:
-        if self._reader_task:
-            self._reader_task.cancel()
-            self._reader_task = None
+        for t in (self._reader_task, self._stderr_task):
+            if t:
+                t.cancel()
+        self._reader_task = None
+        self._stderr_task = None
         if self._process and self._process.returncode is None:
             try:
                 self._process.terminate()

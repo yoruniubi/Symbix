@@ -122,7 +122,7 @@ def start_oauth_connect(
                 # 有 key 直接同步连
                 ok = mcp_manager.add_from_config(server_id, cfg)
                 _set_oauth_status(server_id, "ok" if ok else "error",
-                                  "连接成功" if ok else ("连接失败:" + str(getattr(mcp_manager.servers.get(server_id), "last_error", "")) or ""))
+                                  "连接成功" if ok else ("连接失败:" + str(mcp_manager.last_error or "") or ""))
                 return
             cfg["headers"] = headers
             cfg["oauth"] = True
@@ -137,7 +137,7 @@ def start_oauth_connect(
             if ok:
                 _set_oauth_status(server_id, "ok", "连接成功")
             else:
-                err = getattr(mcp_manager.servers.get(server_id), "last_error", "连接失败")
+                err = mcp_manager.last_error or "连接失败"
                 _set_oauth_status(server_id, "error", str(err))
         except Exception as e:
             _set_oauth_status(server_id, "error", str(e))

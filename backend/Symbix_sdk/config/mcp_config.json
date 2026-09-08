@@ -7,6 +7,10 @@
         "--browser",
         "msedge"
       ]
+    },
+    "alphaxiv": {
+      "url": "https://api.alphaxiv.org/mcp/v1",
+      "transport": "streamable_http"
     }
   },
   "mcp_api_key": {}

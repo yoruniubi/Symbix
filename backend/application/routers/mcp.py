@@ -67,7 +67,8 @@ async def add_mcp_server(req: AddMcpServerRequest):
             # 若 401/鉴权失败则触发浏览器授权。
             ok = mcp_manager.add_from_config(server_id, connect_cfg)
             if not ok:
-                err = getattr(mcp_manager.servers.get(server_id), "last_error", "") or ""
+                # 失败的 client 不会进 mcp_manager.servers,失败原因在 manager.last_error
+                err = mcp_manager.last_error or ""
                 need_oauth = (not key) and any(
                     s in err.lower() for s in ("401", "unauthorized", "403", "authentication", "oauth")
                 )
@@ -244,8 +245,7 @@ async def reconnect_mcp_server(server_id: str):
             headers.setdefault("Authorization", f"Bearer {key}")
             cfg["headers"] = headers
     ok = mcp_manager.add_from_config(server_id, cfg)
-    client = mcp_manager.servers.get(server_id)
-    err = getattr(client, "last_error", None) if client else "connect failed"
+    err = mcp_manager.last_error or ("connect failed" if not ok else None)
     if not ok and cfg.get("url"):
         # 无 API Key 且鉴权失败 -> 触发 OAuth 浏览器授权
         key = mcp_config.get_api_key(server_id)

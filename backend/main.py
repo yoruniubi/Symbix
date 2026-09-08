@@ -14,6 +14,7 @@ from application.state import (
     provider_registry,
     checkpoint_recorder,
 )
+import sys
 from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice
 
 
@@ -116,11 +117,12 @@ async def root():
 
 # ============ 启动入口 ============
 if __name__ == "__main__":
+    use_reload = "--reload" in sys.argv
     uvicorn.run(
         "main:app",
         host="127.0.0.1",
         port=8000,
-        reload=True,
+        reload=use_reload,
         log_level="info",
         # Windows + reload 下 uvicorn 默认强制 SelectorEventLoop,会导致
         # STT(SenseVoice 子进程)启动失败(create_subprocess_exec 不支持)。

@@ -3,8 +3,11 @@ import json
 import os
 import threading
 import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlencode
 
 if TYPE_CHECKING:
     # 仅供类型检查使用,不影响运行时逻辑
@@ -35,13 +38,7 @@ except Exception:  # pragma: no cover - 依赖缺失时降级
         OAuthClientInformationFull = None
         OAuthToken = None
     _MCP_SDK_AVAILABLE = False
-# playwright(msedge channel 免下载浏览器)
-try:
-    from playwright.sync_api import sync_playwright
-    _PLAYWRIGHT_AVAILABLE = True
-except Exception:  # pragma: no cover
-    sync_playwright = None
-    _PLAYWRIGHT_AVAILABLE = False
+# 浏览器授权:本地 HTTP 回调 + 系统默认浏览器(webbrowser.open),不依赖 playwright。
 
 DEFAULT_CALLBACK_PORT = 38577
 """本地回调端口(固定端口,保证授权服务注册的 redirect_uri 稳定匹配)。"""
@@ -209,15 +206,15 @@ class _AsyncStorage:
 
 
 class OAuthBrowserHandler:
-    """playwright 浏览器授权:打开 Edge 让用户登录,捕获回调 code。
+    """本地回调服务器 + 系统默认浏览器授权:打开用户默认浏览器,本地端口收 code。
 
     实现 SDK 的两个钩子:
-      - redirect_handler(url): 启动 msedge 并导航到授权 URL。
-      - callback_handler():    等待用户完成登录跳回回调 URL,返回 AuthorizationCodeResult。
+      - redirect_handler(url): 起本地 HTTP 回调服务器 + webbrowser 打开授权 URL。
+      - callback_handler():    等待用户完成登录后授权服务 redirect 回本地回调,返回 AuthorizationCodeResult。
 
     注意:SDK 的 async_auth_flow 是在 asyncio 事件循环里调这两个 async 钩子。
     本项目连接层是同步线程,因此用 run_coroutine_threadsafe 把调用桥接到
-    运行 SDK 流程的 asyncio loop;浏览器交互本身在独立线程执行。
+    运行 SDK 流程的 asyncio loop;回调服务器在独立线程执行。
     """
 
     def __init__(
@@ -233,6 +230,7 @@ class OAuthBrowserHandler:
         self._error: Optional[str] = None
         self._state: Optional[str] = None
         self._done = threading.Event()
+        self._httpd: Optional[ThreadingHTTPServer] = None
 
     # 供主程序查询状态(前端轮询)
     @property
@@ -249,84 +247,101 @@ class OAuthBrowserHandler:
 
     # ---------- SDK 钩子 ----------
     async def redirect_handler(self, authorization_url: str):
-        """SDK 调用:打开浏览器导航到授权 URL。"""
+        """SDK 调用:打开系统默认浏览器导航到授权 URL,并在本地端口起 HTTP 回调服务。"""
         self.reset()
         url_str = str(authorization_url)
         # 记录 state(从 URL query 提取),用于校验回调
         q = parse_qs(urlparse(url_str).query)
         self._state = (q.get("state") or [None])[0]
         print(f"[MCP OAuth] 打开浏览器进行授权: {url_str[:160]}")
-        # 浏览器在独立线程跑,避免阻塞 asyncio loop
+        # 回调接收与浏览器启动都在独立线程,避免阻塞 asyncio loop
         threading.Thread(
-            target=self._open_browser, args=(url_str,), daemon=True
+            target=self._run_callback_server, args=(url_str,), daemon=True
         ).start()
 
-    def _open_browser(self, authorization_url: str):
-        """独立线程:用 playwright msedge 打开授权页并等待跳转回调。"""
-        if not _PLAYWRIGHT_AVAILABLE:
-            self._error = "playwright 未安装,无法打开浏览器完成 OAuth 登录"
+    def _run_callback_server(self, authorization_url: str):
+        """启动本地 HTTP 回调服务 + 用系统默认浏览器打开授权页。
+
+        授权服务器最终 redirect 回 http://127.0.0.1:<port>/mcp-oauth/callback?code=..,
+        由本地 HTTP 服务接收并解析出 code/state。
+        """
+        try:
+            # 只监听 127.0.0.1,避免暴露到局域网
+            self._httpd = ThreadingHTTPServer(
+                ("127.0.0.1", self.callback_port), self._make_handler()
+            )
+        except OSError as e:
+            # 端口被占:可能是上次授权残留的服务器没关。尝试换随机端口不可行
+            # (redirect_uri 是固定注册的),所以直接报错提示用户关掉占用进程。
+            self._error = f"本地回调端口 {self.callback_port} 被占用: {e}\n" \
+                          f"请确认没有残留的 MCP OAuth 回调进程占用 127.0.0.1:{self.callback_port}。"
             self._done.set()
             return
+        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+        # 用系统默认浏览器打开授权页(用户已有登录态的浏览器可直接复用会话)
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    channel="msedge", headless=self.headless
-                )
-                page = browser.new_page()
-                # 等待跳转到本地回调(或超时)
-                # 授权服务器可能把 code 放在 URL query 或 fragment
-                try:
-                    page.goto(authorization_url, timeout=30000)
-                except Exception as e:
-                    # 导航本身失败但页面可能已开始跳转,继续等待回调
-                    print(f"[MCP OAuth] 导航警告: {e}")
-                import re
+            webbrowser.open(authorization_url)
+        except Exception as e:
+            print(f"[MCP OAuth] 打开系统浏览器失败: {e},请手动复制链接到浏览器打开")
+            print(f"[MCP OAuth] 授权链接: {authorization_url}")
+        # 阻塞直到收到回调(或超时由外层 callback_handler 处理)
+        try:
+            while not self._done.is_set() and not self._error:
+                time.sleep(0.2)
+        finally:
+            self._stop_server()
 
-                try:
-                    page.wait_for_url(
-                        re.compile(
-                            rf"http://127\.0\.0\.1:{self.callback_port}{CALLBACK_PATH}"
-                        ),
-                        timeout=self.timeout_seconds * 1000,
-                    )
-                except Exception as e:
-                    self._error = (
-                        f"等待授权回调超时或失败: {e}\n"
-                        "请确认已在弹出的浏览器窗口中完成登录。"
-                    )
-                    self._done.set()
-                    try:
-                        browser.close()
-                    except Exception:
-                        pass
+    def _make_handler(self):
+        owner = self
+        callback_path = CALLBACK_PATH
+
+        class CallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler 约定)
+                if self.path.split("?")[0] != callback_path:
+                    self.send_response(404)
+                    self.end_headers()
                     return
-                # 提取回调参数
-                final_url = page.url
-                parsed = urlparse(final_url)
-                q = parse_qs(parsed.query)
-                # 也检查 fragment
-                if not q and parsed.fragment:
-                    q = parse_qs(parsed.fragment)
+                # 解析 query 中的 code/state/error
+                q = parse_qs(urlparse(self.path).query)
                 code = (q.get("code") or [None])[0]
                 state = (q.get("state") or [None])[0]
                 iss = (q.get("iss") or [None])[0]
                 error = (q.get("error") or [None])[0]
                 if error:
-                    self._error = f"授权失败: {error}"
+                    owner._error = f"授权失败: {error}"
+                    body = f"授权失败: {error}".encode("utf-8")
                 elif not code:
-                    self._error = f"回调 URL 中未找到 code 参数: {final_url[:200]}"
+                    owner._error = f"回调 URL 中未找到 code 参数: {self.path[:200]}"
+                    body = b"authorization failed: no code"
                 else:
-                    self._result = AuthorizationCodeResult(
+                    owner._result = AuthorizationCodeResult(
                         code=code, state=state, iss=iss
                     )
-                self._done.set()
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-        except Exception as e:
-            self._error = f"浏览器授权异常: {e}"
-            self._done.set()
+                    body = b"authorization ok, you can close this tab now"
+                owner._done.set()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass  # 静默默认访问日志
+
+        return CallbackHandler
+
+    def _stop_server(self):
+        httpd = self._httpd
+        self._httpd = None
+        if httpd is not None:
+            try:
+                httpd.shutdown()
+            except Exception:
+                pass
+            try:
+                httpd.server_close()
+            except Exception:
+                pass
 
     async def callback_handler(self):
         """SDK 调用:等待用户完成授权并返回 code。"""
@@ -334,6 +349,11 @@ class OAuthBrowserHandler:
         deadline = time.time() + self.timeout_seconds + 30
         while not self._done.is_set() and time.time() < deadline:
             await asyncio_sleep(0.2)
+        if not self._done.is_set():
+            # 超时:通知服务器线程退出并释放回调端口
+            self._error = "等待授权回调超时,请在浏览器中完成登录后重试"
+            self._done.set()
+            self._stop_server()
         if self._error:
             from mcp.client.auth.exceptions import OAuthFlowError
 

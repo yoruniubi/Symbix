@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# 朗读前需要剔除的 emoji/装饰符号区间(保留普通文本与 CJK 标点)。
+# 覆盖:emoji 主体、杂项符号、交通/几何/箭头扩展、旗标、变体选择符 VS16、
+# ZWJ 零宽连接符与 keycap 围音符(数字 emoji 如 1️⃣ 会保留数字、去掉修饰)。
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F1E6-\U0001F1FF"  # 区域指示符(国旗/地区旗)
+    "\U0001F300-\U0001F64F"  # 杂项符号与表情主体
+    "\U0001F680-\U0001F6FF"  # 交通与地图符号
+    "\U0001F700-\U0001F77F"  # 炼金术/几何扩展
+    "\U0001F780-\U0001F8FF"  # 几何图形与补充箭头
+    "\U0001F900-\U0001F9FF"  # 补充符号与象形文字
+    "\U0001FA00-\U0001FAFF"  # 象形文字扩展 A/B
+    "\U00002600-\U000026FF"  # 杂项符号(☀ ♠ …)
+    "\U00002700-\U000027BF"  # 装饰符号(✂ ✈ …)
+    "\U0000FE0F"             # 变体选择符 VS16
+    "\U0000200D"             # ZWJ 零宽连接符
+    "\U000020E3"             # keycap 围音符
+    "]+",
+    re.UNICODE,
+)
+
+
+def strip_emoji(text: str) -> str:
+    """去掉字符串中的 emoji/装饰符号,供 TTS 朗读前清洗。
+
+    返回纯文本;输入为 None/空串时原样返回空串。
+    """
+    return _EMOJI_RE.sub("", text or "")
 
 
 @dataclass
@@ -313,6 +344,10 @@ class TTSEngine:
     async def synthesize(self, text: str, engine: str | None = None) -> TTSResult:
         cfg = self.config
         errors: list[str] = []
+        # 过滤 emoji/装饰符号:edge-tts/OpenAI TTS 读不了这些,且会拖慢/报错
+        text = strip_emoji(text).strip()
+        if not text:
+            raise TTSProviderError("text 为空(过滤 emoji 后无可朗读内容)")
         # 指定试听引擎:只用这一个,不降级
         order = [engine] if engine else list(cfg.priority)
         for name in order:
