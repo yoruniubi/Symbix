@@ -1646,9 +1646,15 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 request.session_id, api_key or "", api_base or "", model or ""))
 
         except asyncio.CancelledError:
-            # 客户端主动中止 SSE、浏览器关闭页面或服务热重载时,Starlette 会取消
-            # 当前生成器。取消属于正常的连接生命周期事件,不要把它当成业务异常
-            # 再发送 error SSE 或打印 traceback。
+            try:
+                interrupted_note = (
+                    full_text.rstrip() + "\n\n[本条回复在生成过程中被用户中断。]"
+                    if full_text
+                    else "[本条回复在生成过程中被用户中断,尚未输出任何内容。]"
+                )
+                memory.add(request.session_id, "assistant", interrupted_note)
+            except Exception:
+                pass
             return
         except Exception as e:
             import traceback

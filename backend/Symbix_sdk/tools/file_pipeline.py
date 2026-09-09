@@ -54,6 +54,74 @@ def get_project_root() -> str:
     # backend/ 的上一级 = Symbix 仓库根
     return os.path.abspath(os.path.join(_backend_dir(), ".."))
 
+def _resize_image_bytes(
+    data: bytes,
+    *,
+    max_bytes: int = DEFAULT_MAX_IMAGE_BYTES,
+    max_side: int = 2048,
+    quality: int = 82,
+) -> bytes:
+    """把超大图片压缩到 ≤ max_bytes 以便内嵌 vision。
+
+    - 先限最长边到 max_side,防像素爆炸。
+    - 统一编码为 JPEG(动图取首帧、透明通道铺白底)后,质量从 quality
+      递减重存直到体积达标;仍超则半尺寸重试一次。
+    - PIL 不可用/解码失败时原样返回(由调用方继续走“过大跳过”分支)。
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return data
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        fmt = (img.format or "PNG").upper()
+        w, h = img.size
+    except Exception:
+        return data
+    try:
+        if fmt == "GIF":
+            # 动图只取第一帧,后续统一走静态 JPEG 路径
+            img.seek(0)
+        img = img.convert("RGBA")
+
+        def _side_limit(im, side):
+            ww, hh = im.size
+            longest = max(ww, hh)
+            if longest > side:
+                ratio = side / longest
+                return im.resize((max(1, int(ww * ratio)), max(1, int(hh * ratio))),
+                                 Image.LANCZOS)
+            return im
+
+        img = _side_limit(img, max_side)
+
+        def _save_jpeg(im, q):
+            # 透明铺白底(视觉内嵌不追求透明背景)
+            bg = Image.new("RGB", im.size, (255, 255, 255))
+            if im.mode == "RGBA":
+                bg.paste(im, mask=im.split()[-1])
+            else:
+                bg.paste(im)
+            buf = io.BytesIO()
+            bg.save(buf, "JPEG", quality=q)
+            return buf.getvalue()
+
+        # 质量递降:82 → 60 → 40,仍不达标再降一半尺寸重试一轮
+        for half in (False, True):
+            cur = img
+            if half:
+                cur = _side_limit(cur, max(max_side // 2, 64))
+            for q in (quality, max(quality - 20, 45), max(quality - 40, 30)):
+                out = _save_jpeg(cur, q)
+                if len(out) <= max_bytes:
+                    return out
+        # 极端情况:极小质量 + 半尺寸仍超 → 返回最后一次结果(尽力而为)
+        return out
+    except Exception:
+        return data
+
+
 
 # 会话内累积的“用户授权目录”(FilePanel 浏览过的项目外目录)。
 # 进程内可变;重启后端即清空(不落盘,避免悄悄扩大授权面)。
@@ -392,13 +460,47 @@ def parse_file_path(
         result["kind"] = "image"
         mime = MIME_BY_EXT.get(ext, "image/png")
         result["mime"] = mime
-        if include_image_base64 and size <= max_image_bytes:
-            result["image_base64"] = base64.b64encode(data).decode("ascii")
-            result["text"] = f"[图片附件: {filename}, {size} bytes, {mime}]"
+        if include_image_base64:
+            if size > max_image_bytes:
+                # 大图先压缩到阈值内再内嵌,保证支持视觉的模型能直接看到图,
+                # 而不是让模型去调 parse_file/read_file 读(文本工具对图片无视觉价值)。
+                resized = _resize_image_bytes(data, max_bytes=max_image_bytes)
+                if len(resized) < len(data):
+                    # 压缩成功:按实际编码格式回填 mime(可能 PNG→JPEG)
+                    try:
+                        from PIL import Image as _PILImage
+                        probe = _PILImage.open(io.BytesIO(resized))
+                        out_fmt = (probe.format or "PNG").upper()
+                        probe.close()
+                        mime = {"JPEG": "image/jpeg", "PNG": "image/png",
+                                "WEBP": "image/webp"}.get(out_fmt, mime)
+                    except Exception:
+                        pass
+                    data = resized
+                    size = len(data)
+                    result["size"] = size
+                else:
+                    result["mime"] = mime
+            if size <= max_image_bytes:
+                result["image_base64"] = base64.b64encode(data).decode("ascii")
+                result["mime"] = mime
+                result["text"] = (
+                    f"[图片附件: {filename}, 已自动压缩至 {size} bytes, {mime}。"
+                    "图片已作为视觉内容直接提供,无需调用 parse_file/read_file 读取。]"
+                )
+            else:
+                result["text"] = (
+                    f"[图片附件无法内嵌: {filename}, {size} bytes(即使压缩后仍超限)。"
+                    f"路径: {resolved}]"
+                )
         else:
+            # parse_file 等纯文本工具路径:不给 base64,也不给“过大”这类误导性提示,
+            # 明确告知模型图片内容应来自已提供的视觉输入。
             result["text"] = (
-                f"[图片附件过大或跳过内嵌: {filename}, {size} bytes。"
-                f"路径: {resolved}]"
+                f"[图片文件: {filename}, {size} bytes, {mime}。"
+                f"路径: {resolved}]\n"
+                "(图片内容无法通过文本工具读取;若需理解图片请直接基于用户本轮已提供的视觉输入,"
+                "不要用 parse_file/read_file 反复读图片。)"
             )
         return result
 

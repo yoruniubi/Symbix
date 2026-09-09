@@ -235,6 +235,15 @@ class SymbixClient:
                 })
                 return messages
             content_parts = [{"type": "text", "text": user_input or ""}]
+            if user_input:
+                content_parts.append({
+                    "type": "text",
+                    "text": (
+                        "\n[注意] 本轮已附带图片(多模态视觉输入),请直接看图理解内容。"
+                        "不要针对这些图片调用 parse_file/read_file/list_files 等文件工具"
+                        "(文本工具读不出图片内容,只会浪费轮次)。"
+                    ),
+                })
             for part in image_parts:
                 if not isinstance(part, dict):
                     continue

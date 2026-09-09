@@ -129,7 +129,8 @@ export default {
     selectModel: '选择模型',
     enterToSend: 'Enter 发送 · Shift+Enter 换行',
     uploadFailed: '上传失败: {name}',
-    imageNoVision: '当前模型「{model}」不支持读图，图片将以文字描述发送（建议使用 GPT-4o / Claude 3+ / Gemini 等多模态模型）',
+    imageNoVision: '当前模型「{model}」不支持读图,图片将以文字描述发送(建议使用 GPT-4o / Claude 3+ / Gemini 等多模态模型)',
+    imageVision: '当前模型「{model}」支持视觉,可以直接读图',
   },
 
   // ===== Chat Welcome =====

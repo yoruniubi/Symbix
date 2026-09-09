@@ -339,6 +339,8 @@ async function uploadFile(raw: File) {
         const vision = await checkModelVision()
         if (!vision) {
           messageUi.warning(t('chatInput.imageNoVision', { model: props.currentModel }))
+        } else {
+          messageUi.success(t('chatInput.imageVision', { model: props.currentModel }))
         }
       }
     } else {

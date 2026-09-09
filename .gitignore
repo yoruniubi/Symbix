@@ -10,6 +10,7 @@ backend/Symbix_sdk/config/voice_config.json
 # MCP OAuth tokens (access/refresh token + client registration, never commit)
 backend/Symbix_sdk/config/mcp_oauth.json
 backend/Symbix_sdk/config/mcp_oauth.json.tmp
+backend/Symbix_sdk/config/mcp_config.json
 # TTS/STT local model & binaries (large, downloaded separately)
 backend/Symbix_sdk/tts/model
 backend/Symbix_sdk/stt/bin

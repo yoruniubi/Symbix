@@ -131,6 +131,7 @@ export default {
     enterToSend: 'Enter to send · Shift+Enter newline',
     uploadFailed: 'Upload failed: {name}',
     imageNoVision: 'Current model "{model}" does not support vision. The image will be sent as a text description. (Use a multimodal model like GPT-4o / Claude 3+ / Gemini)',
+    imageVision: 'Current model "{model}" supports vision, it can read images directly',
   },
 
   // ===== Chat Welcome =====
