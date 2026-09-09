@@ -667,9 +667,13 @@ class McpServerManager:
     def list_tools_as_openai_format(self) -> List[dict]:
         """获取所有服务器的工具并转换为 OpenAI 格式
 
-        对 MCP server 返回的 inputSchema 做清洗，确保符合 OpenAI 的工具 schema 要求：
+        对 MCP server 返回的 inputSchema 做清洗,确保符合 OpenAI 的工具 schema 要求:
         - 必须是 {"type": "object", ...}
-        - 过滤掉 OpenAI 不识别的 JSON Schema 元字段（$schema, $defs, $ref 等）
+        - 过滤掉 OpenAI 不识别的 JSON Schema 元字段($schema, $defs, $ref 等)
+
+        扩展字段(供风险分级使用,不传给模型):
+        - `_mcp_server_id`: 来源 server(风险分级用复合 key)
+        - `_mcp_annotations`: MCP 原始 annotations(仅 trusted server 采信,见 risk_classifier)
         """
         openai_tools = []
 
@@ -687,6 +691,9 @@ class McpServerManager:
                         "description": tool.get("description", ""),
                         "parameters": schema,
                     },
+                    # 扩展:风险分级元数据(不进入 OpenAI 参数)
+                    "_mcp_server_id": server_id,
+                    "_mcp_annotations": tool.get("annotations") or {},
                 })
 
         return openai_tools

@@ -54,6 +54,7 @@
 
       <ToolsRiskPanel
         :active-panel="activePanel"
+        :active-session-id="activeSessionId"
         :native-tool-list="nativeToolList"
         :skill-tool-list="skillToolList"
         :mcp-tool-list="mcpToolList"

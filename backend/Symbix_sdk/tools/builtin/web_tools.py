@@ -105,6 +105,7 @@ def fetch_webpage(url: str, timeout: int = 10, user_agent: Optional[str] = None)
 # 工具注册 Schema
 WEB_TOOLS_SCHEMAS = {
     "search_online": {
+        "risk_channel": "read",
         "func": search_online,
         "description": (
             "使用 DuckDuckGo 搜索引擎进行在线搜索。"
@@ -133,6 +134,7 @@ WEB_TOOLS_SCHEMAS = {
         },
     },
     "fetch_webpage": {
+        "risk_channel": "read",
         "func": fetch_webpage,
         "description": (
             "获取指定 URL 的网页 HTML 内容（纯文本）。"

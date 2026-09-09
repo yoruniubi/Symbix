@@ -192,6 +192,38 @@ export default {
     loadFail: '加载规则失败: {msg}',
     levelChanged: '已将 {tool} 调整为「{level}」',
     levelFail: '调整失败: {msg}',
+    // 会话信任(区块1)
+    sessionTrustTitle: '会话信任',
+    modeAuto: 'Auto-pilot(自动干活)',
+    modeNormal: 'Normal(逐次确认)',
+    modeAutoHint: 'write 与白名单命令自动放行;delete / network / 高危命令仍每次确认',
+    modeNormalHint: '每次写操作 / 命令都需确认,批准后同通道本会话内放行',
+    activeGrants: '本会话已授权的通道',
+    noSession: '未选择会话,切换会话后生效',
+    autoOn: '已开启 Auto-pilot',
+    autoOff: '已关闭 Auto-pilot',
+    modeFail: '切换失败: {msg}',
+    // 通道策略(区块2)
+    channelPolicyTitle: '通道策略',
+    channelRead: '读取',
+    channelWrite: '写入',
+    channelExec: '执行',
+    channelDelete: '删除',
+    channelNetwork: '网络',
+    policyRead: '直接放行',
+    policyWrite: '首次需确认,批准后本会话放行(限工作区)',
+    policyExec: '需确认;auto 模式仅白名单命令放行',
+    policyDelete: '每次确认,永不自动放行',
+    policyNetwork: '每次确认,永不自动放行',
+    channelHint: '按行为通道分级,而非工具名。高风险通道永远不被 auto-pilot 自动放行。',
+    // MCP server 信任(区块3)
+    serverTrustTitle: 'MCP Server 信任',
+    trusted: '已信任',
+    untrusted: '未信任',
+    serverTrustChanged: '已更新 {server} 的信任状态',
+    serverTrustFail: '更新失败: {msg}',
+    // 高级(区块4)
+    advancedTitle: '工具级例外(高级)',
   },
 
   // ===== Job Schedule Panel =====

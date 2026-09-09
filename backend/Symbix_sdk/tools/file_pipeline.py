@@ -26,8 +26,9 @@ TEXT_EXTS = {
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 PDF_EXTS = {".pdf"}
 DOCX_EXTS = {".docx"}
+OFFICE_EXTS = {".docx", ".xlsx", ".pptx"}  # 二进制办公文档:以 Markdown 为读写媒介
 
-ALLOWED_EXTS = TEXT_EXTS | IMAGE_EXTS | PDF_EXTS | DOCX_EXTS | {".doc"}
+ALLOWED_EXTS = TEXT_EXTS | IMAGE_EXTS | PDF_EXTS | DOCX_EXTS | OFFICE_EXTS | {".doc", ".xls", ".ppt"}
 
 MIME_BY_EXT = {
     ".png": "image/png",
@@ -506,12 +507,28 @@ def parse_file_path(
 
     if ext in PDF_EXTS:
         result["kind"] = "pdf"
-        result["text"] = _parse_pdf_bytes(data, max_chars)
+        result["text"] = _parse_doc_with_markitdown(
+            resolved, data, ext, filename, max_chars
+        ) or _parse_pdf_bytes(data, max_chars)
         return result
 
-    if ext in DOCX_EXTS:
-        result["kind"] = "docx"
-        result["text"] = _parse_docx_bytes(data, max_chars)
+    if ext in DOCX_EXTS or ext in OFFICE_EXTS:
+        result["kind"] = "docx" if ext == ".docx" else "office"
+        markdown_text = _parse_doc_with_markitdown(
+            resolved, data, ext, filename, max_chars
+        )
+        if markdown_text:
+            result["text"] = markdown_text
+        elif ext == ".docx":
+            result["text"] = _parse_docx_bytes(data, max_chars)
+        elif ext == ".xlsx":
+            # openpyxl 直读(不依赖 markitdown[xlsx] extra)
+            result["text"] = _parse_xlsx_bytes_native(resolved, max_chars)
+        else:
+            result["text"] = (
+                f"[Office 文档 {ext} 需要安装 markitdown 才能解析:"
+                f"pip install 'markitdown[{ext[1:]}]'。路径: {resolved}]"
+            )
         return result
 
     if ext == ".doc":
@@ -530,6 +547,44 @@ def parse_file_path(
     return result
 
 
+def _parse_doc_with_markitdown(
+    resolved_path: str,
+    data: bytes,
+    ext: str,
+    filename: str,
+    max_chars: int,
+) -> str:
+    """用 markitdown 把办公文档(docx/pptx/xlsx/pdf)转 Markdown 文本。
+
+    优先尝试 markitdown(微软,支持表格/版式/嵌入内容,输出 md 媒介);
+    库缺失或解析失败时返回空串,由调用方回退到原生解析器。
+    """
+    try:
+        from markitdown import MarkItDown
+    except Exception:
+        return ""
+    try:
+        md = MarkItDown()
+        # markitdown 支持从字节流读取(避免临时落盘),优先 convert_stream;
+        # 旧版本 API 不同,兼容回退到按路径转换。
+        try:
+            result = md.convert_stream(io.BytesIO(data), file_extension=ext)
+        except (TypeError, AttributeError):
+            try:
+                result = md.convert(io.BytesIO(data))
+            except Exception:
+                # 按路径转(某些文档类型需要真实扩展名/路径上下文)
+                result = md.convert(resolved_path)
+        text = (result.text_content or "").strip()
+        if not text:
+            return ""
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n... [内容截断 {max_chars} chars]"
+        return text
+    except Exception:
+        return ""
+
+
 def _parse_csv_bytes(data: bytes, max_chars: int) -> str:
     text = _read_text_bytes(data, max_chars * 2)
     try:
@@ -541,10 +596,10 @@ def _parse_csv_bytes(data: bytes, max_chars: int) -> str:
         max_rows = 200
         shown = rows[:max_rows]
         lines = [" | ".join(c.replace("\n", " ") for c in row) for row in shown]
-        out = f"CSV 共 {len(rows)} 行 x {len(rows[0]) if rows else 0} 列（展示前 {len(shown)} 行）:\n"
+        out = f"CSV 共 {len(rows)} 行 x {len(rows[0]) if rows else 0} 列(展示前 {len(shown)} 行):\n"
         out += "\n".join(lines)
         if len(out) > max_chars:
-            out = out[:max_chars] + f"\n… [截断 {max_chars} chars]"
+            out = out[:max_chars] + f"\n... [截断 {max_chars} chars]"
         return out
     except Exception as e:
         return _read_text_bytes(data, max_chars) + f"\n[csv parse note: {e}]"
@@ -632,6 +687,48 @@ def _parse_docx_bytes(data: bytes, max_chars: int) -> str:
     except Exception as e:
         return f"[DOCX 解析失败: {e}]"
 
+
+
+def _parse_xlsx_bytes_native(xlsx_path: str, max_chars: int) -> str:
+    """openpyxl 直读 xlsx(多个 sheet → md 表格),不依赖 markitdown[xlsx] extra。"""
+    try:
+        from openpyxl import load_workbook
+    except Exception:
+        return (
+            "[Office 文档 .xlsx 需要安装 openpyxl 才能解析:"
+            "pip install openpyxl。路径: " + xlsx_path + "]"
+        )
+    try:
+        wb = load_workbook(xlsx_path, read_only=True, data_only=True)
+        parts = []
+        total = 0
+        for ws in wb.worksheets:
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                vals = ["" if v is None else str(v).replace("\n", " ") for v in row]
+                if any(vals):
+                    rows.append(vals)
+            if not rows:
+                continue
+            parts.append(f"## Sheet: {ws.title}")
+            parts.append("| " + " | ".join(rows[0]) + " |")
+            parts.append("|" + "|".join("---" for _ in rows[0]) + "|")
+            for r in rows[1:]:
+                r = (r + [""] * len(rows[0]))[: len(rows[0])]
+                parts.append("| " + " | ".join(r) + " |")
+            total += sum(len(str(c)) for row in rows for c in row)
+            if total > max_chars:
+                parts.append(f"\n... [内容截断 {max_chars} chars]")
+                break
+        wb.close()
+        text = "\n".join(parts).strip()
+        if not text:
+            return "[xlsx 无内容]"
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n... [截断 {max_chars} chars]"
+        return text
+    except Exception as e:
+        return f"[xlsx 解析失败: {e}]"
 
 
 def format_attachment_block(parsed: dict[str, Any]) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from Symbix_sdk.tools.builtin.file_tools import FILE_TOOLS_SCHEMAS
+from Symbix_sdk.tools.builtin.doc_tools import DOC_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.pet_tools import PET_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.skill_tools import SKILL_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.terminal_tools import TERMINAL_TOOLS_SCHEMAS
@@ -8,6 +9,7 @@ from Symbix_sdk.tools.builtin.web_tools import  WEB_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.interaction_tools import INTERACTION_TOOLS_SCHEMAS
 ALL_TOOL_SCHEMAS = {}
 ALL_TOOL_SCHEMAS.update(FILE_TOOLS_SCHEMAS)
+ALL_TOOL_SCHEMAS.update(DOC_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(PET_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(SKILL_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(TERMINAL_TOOLS_SCHEMAS)

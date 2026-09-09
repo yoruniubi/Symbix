@@ -299,6 +299,7 @@ def create_skill(
 
 SKILL_TOOLS_SCHEMAS = {
     "create_skill": {
+        "risk_channel": "exec",
         "func": create_skill,
         "description": (
             "创建新的 Agent Skill 骨架,写入 installed_skills/<skill_name>/ 目录。"

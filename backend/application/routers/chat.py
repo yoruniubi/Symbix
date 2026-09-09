@@ -18,6 +18,7 @@ from application.state import (
     _processing_approvals,
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
+from application.services.risk_context import classify_for_chat, tool_meta, get_session_trust, maybe_apply_trust_command
 from Symbix_sdk.model_capabilities import check_vision, clear_vision_cache
 from Symbix_sdk.checkpoint import set_current as _ctx_set_current, get_recorder as _get_recorder
 from application.services.memory_ops import (
@@ -353,7 +354,9 @@ async def chat(request: ChatRequest, http_request: Request):
         model = request.model or provider_registry.get_active().model
 
         user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
-        # 有图片时，异步探测模型视觉能力并按需降级
+        # auto-pilot 自然语言开关指令(消费时替换为提示占位)
+        user_for_llm, _consumed = maybe_apply_trust_command(request.session_id, user_for_llm)
+        # 有图片时,异步探测模型视觉能力并按需降级
         image_parts = await _filter_image_parts(image_parts, model, api_key, api_base)
         mem_msg = request.message
         if request.attachments:
@@ -515,11 +518,14 @@ async def chat(request: ChatRequest, http_request: Request):
                         response = {"content": stop_hint, "tool_calls": None, "reasoning": last_reasoning}
                         break
 
-                # 使用风险分级器判断是否需要审批
-                risk_level, risk_reason = classify_tool_risk(fn["name"], args)
+                # 使用风险分级器判断是否需要审批(通道化 + 会话信任)
+                _risk, _needs_approval, _ = classify_for_chat(
+                    fn["name"], args, mcp_tools, request.session_id,
+                )
+                risk_level, risk_reason = _risk.level, _risk.reason
                 
-                # SAFE 工具直接放行，MEDIUM/HIGH 需要审批
-                if risk_level != ToolRiskLevel.SAFE:
+                # needs_approval=False(read/auto 放行)直接执行;True 进审批
+                if _needs_approval:
                     approval_id = str(uuid.uuid4())
                     _pending_approvals[approval_id] = {
                         "session_id": request.session_id,
@@ -547,6 +553,7 @@ async def chat(request: ChatRequest, http_request: Request):
                         ],
                         "risk_level": risk_level,
                         "risk_reason": risk_reason,
+                        "risk": _risk,
                     }
 
                     # — checkpoint: 需审批工具被拦 → 记 skipped + round 未完待续
@@ -696,6 +703,14 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     try:
         if req.approve:
             _ctx_set_current(ctx["session_id"], ckpt_round_id)
+            # — 会话信任:用户批准某工具后,记下其通道级 grant(delete/network 不记)
+            _approve_risk = ctx.get("risk")
+            if _approve_risk is not None:
+                try:
+                    _st = get_session_trust(ctx["session_id"])
+                    _st.grant(_approve_risk.channel, server_id=_approve_risk.server_id)
+                except Exception:
+                    pass
             out = tool_registry.execute(pending_tc["name"], pending_tc["arguments"])
             if not isinstance(out, str):
                 out = _json.dumps(out, ensure_ascii=False)
@@ -747,7 +762,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             except Exception:
                 args = {}
             
-            risk_level, _ = classify_tool_risk(tc["name"], args)
+            _risk = classify_tool_risk(tc["name"], args)
+            risk_level = _risk.level
             if risk_level != ToolRiskLevel.SAFE:
                 # 如果剩余的 tool_calls 中也有需要审批的工具，应该阻挡
                 r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
@@ -980,8 +996,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 full_text = full_text or stop_hint
                                 break
 
-                        risk_level, risk_reason = classify_tool_risk(tc_name, tc_args)
-                        if risk_level in (ToolRiskLevel.MEDIUM, ToolRiskLevel.HIGH):
+                        _risk, _needs_approval, _ = classify_for_chat(
+                            tc_name, tc_args, mcp_tools, session_id,
+                        )
+                        risk_level, risk_reason = _risk.level, _risk.reason
+                        if _needs_approval:
                             approval_id = str(uuid.uuid4())
                             _pending_approvals[approval_id] = {
                                 "session_id": session_id,
@@ -1008,6 +1027,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 "remaining_tcs": [{"id": r["id"], "name": r["name"], "arguments": r.get("arguments", "{}")} for r in tool_calls_raw[idx_tc + 1:]],
                                 "risk_level": risk_level,
                                 "risk_reason": risk_reason,
+                                "risk": _risk,
                             }
                             yield format_sse({
                                 "type": "await_approval",
@@ -1189,7 +1209,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             model = request.model or provider_registry.get_active().model
 
             user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
-            # 有图片时，异步探测模型视觉能力并按需降级
+            # auto-pilot 自然语言开关指令(消费时替换为提示占位)
+            user_for_llm, _consumed = maybe_apply_trust_command(request.session_id, user_for_llm)
+            # 有图片时,异步探测模型视觉能力并按需降级
             image_parts = await _filter_image_parts(image_parts, model, api_key, api_base)
             mem_msg = request.message
             if request.attachments:
@@ -1429,11 +1451,14 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             full_text = full_text or stop_hint
                             break
 
-                    # 动态风险分级：根据工具名和参数判断是否需要审批
-                    risk_level, risk_reason = classify_tool_risk(tc_name, tc_args)
+                    # 动态风险分级:根据工具名和参数判断是否需要审批(通道化 + 会话信任)
+                    _risk, _needs_approval, _ = classify_for_chat(
+                        tc_name, tc_args, mcp_tools, request.session_id,
+                    )
+                    risk_level, risk_reason = _risk.level, _risk.reason
                     
-                    # SAFE 级别直接放行，MEDIUM 和 HIGH 需要审批
-                    if risk_level in (ToolRiskLevel.MEDIUM, ToolRiskLevel.HIGH):
+                    # needs_approval=False(read/auto 放行)直接执行;True 进审批
+                    if _needs_approval:
                         approval_id = str(uuid.uuid4())
                         # 审批快照里带上前置 SAFE 工具已执行的"工具链消息",
                         # 并捎带 attempted/频次计数,使跨审批续跑时上下文与去重都连续。
@@ -1471,6 +1496,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 }
                                 for r in tool_calls_raw[idx_tc + 1:]
                             ],
+                            "risk": _risk,
                         }
 
                         yield format_sse({

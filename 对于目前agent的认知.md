@@ -100,3 +100,6 @@ SSE是 Server-Sent Events (SSE) 是一种基于 HTTP 的服务器推送技术，
 - 前端要数据 → 用 GET
 - 前端交数据（登录、注册、提交表单、上传）→ 用 POST
 - 更规范的 REST 还有 PUT（整体更新）、PATCH（部分更新）、DELETE（删除）
+15. 关于bun和uv
+- **uv**：Rust写的Python工具链，本身不含解释器，需要时按需下载Python（来自python-build-standalone），按依赖指纹建隔离venv并缓存复用。`uv run script.py`一条命令搞定"装Python版本+建环境+装依赖+运行"，替代pip/venv/pyenv/poetry。体积~15-30MB。
+- **bun**：Zig写的JS一体化工具，运行时（JavaScriptCore引擎）直接内置在二进制里，不用另外下载。兼容npm registry但自己重写了包管理逻辑，速度快很多；`bunx`替代`npx`，`bun build --compile`能把整个应用+运行时编译成单文件分发（Claude Code就是这么打包的）。体积~50-100MB，比uv重是因为运行时是内置的、拆不开。

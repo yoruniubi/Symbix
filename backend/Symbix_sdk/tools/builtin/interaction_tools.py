@@ -60,6 +60,7 @@ def ask_clarifying_question(
 
 INTERACTION_TOOLS_SCHEMAS = {
     "ask_clarifying_question": {
+        "risk_channel": "read",
         "func": ask_clarifying_question,
         "description": (
             "当任务存在关键信息缺失、或存在多种互斥的合理理解方式，"

@@ -46,9 +46,24 @@ def _find_rg() -> str | None:
 
 
 def edit_file(file_path: str, new_content: str) -> str:
-    """编辑（覆盖写入）文件"""
+    """编辑(覆盖写入)文件 —— 仅限纯文本类文件(md/txt/代码/配置)。"""
     try:
         path = assert_path_allowed(file_path)
+        # 职责边界:二进制办公文档/图片/PDF 不能用纯文本覆盖写(会损坏文件)。
+        # 这类文件请用 doc_to_markdown/doc_to_markdown_file 读出 md 后,
+        # 修改内容,再用 md_to_docx/md_to_xlsx/md_to_pptx/md_to_pdf 写回。
+        _BIN_SUFFIX = (
+            ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+        )
+        if path.lower().endswith(_BIN_SUFFIX):
+            return (
+                f"edit_file 不处理二进制/办公文档({os.path.splitext(path)[1]}),"
+                "直接用文本覆盖会损坏文件。请改用专门工具:\n"
+                "  1) 读取内容 → doc_to_markdown 或 doc_to_markdown_file\n"
+                "  2) 修改得到的 Markdown\n"
+                "  3) 写回 → md_to_docx / md_to_xlsx / md_to_pptx / md_to_pdf(视目标格式)\n"
+            )
         # ── checkpoint：仅当处于工具执行上下文时，做前后快照 + 记录 ──
         session_id, round_id = get_current()
         try:
@@ -121,9 +136,18 @@ def list_files(directory: str = ".", recursive: bool = False) -> str:
 
 
 def read_file(file_path: str) -> str:
-    """读取文件内容"""
+    """读取文件内容 —— 仅限纯文本文件(md/txt/代码/配置)。"""
     try:
         path = assert_path_allowed(file_path)
+        _BIN_SUFFIX = (
+            ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+        )
+        if path.lower().endswith(_BIN_SUFFIX):
+            return (
+                f"read_file 不处理二进制/办公文档({os.path.splitext(path)[1]}),"
+                "请改用 doc_to_markdown(解析为 Markdown 文本)或 doc_to_markdown_file(转成 .md 文件)。"
+            )
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
     except Exception as e:
@@ -474,8 +498,9 @@ def search_file_with_name(
 
 FILE_TOOLS_SCHEMAS = {
     "edit_file": {
+        "risk_channel": "write",
         "func": edit_file,
-        "description": "编辑或创建文件，将内容写入指定路径",
+        "description": "编辑或创建文本文件(md/txt/代码/配置),将内容写入指定路径。注意:docx/xlsx/pptx/pdf/图片等二进制文件不要用本工具(会损坏文件),请用 doc_to_markdown 读取 + md_to_* 写回。",
         "parameters": {
             "type": "object",
             "properties": {
@@ -492,6 +517,7 @@ FILE_TOOLS_SCHEMAS = {
         },
     },
     "list_files": {
+        "risk_channel": "read",
         "func": list_files,
         "description": "列出指定目录下的文件和文件夹。如果不知道要读什么文件，先调用此工具浏览目录结构。工作目录是 F:\\Symbix，源代码在 backend/ 和 Symbix_frontend/ 中。",
         "parameters": {
@@ -512,20 +538,22 @@ FILE_TOOLS_SCHEMAS = {
         },
     },
     "read_file": {
+        "risk_channel": "read",
         "func": read_file,
-        "description": "读取指定路径的文件内容。先用 list_files 浏览目录结构确定文件路径，再用本工具读取。工作目录是 F:\\Symbix。",
+        "description": "读取指定路径的文本文件(md/txt/代码/配置/json 等)内容。先用 list_files 浏览目录结构确定文件路径,再用本工具读取。工作目录是 F:\\Symbix。注意:docx/xlsx/pptx/pdf/图片等二进制文件不要用本工具,请用 doc_to_markdown。",
         "parameters": {
             "type": "object",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "要读取的文件路径（相对于工作目录 F:\\Symbix 的路径或绝对路径）",
+                    "description": "要读取的文件路径(相对于工作目录 F:\\Symbix 的路径或绝对路径)",
                 },
             },
             "required": ["file_path"],
         },
     },
     "parse_file": {
+        "risk_channel": "read",
         "func": parse_file,
         "description": (
             "结构化解析本地/上传文件内容并返回文本摘要。"
@@ -550,6 +578,7 @@ FILE_TOOLS_SCHEMAS = {
         },
     },
     "search_and_replace": {
+        "risk_channel": "write",
         "func": search_and_replace,
         "description": (
             "搜索文件中匹配 query 的位置，然后用 new_content 替换该行。"
@@ -581,6 +610,7 @@ FILE_TOOLS_SCHEMAS = {
         },
     },
     "search_files": {
+        "risk_channel": "read",
         "func": search_files,
         "description": (
             "在指定路径下使用 ripgrep 进行正则/关键词搜索（类似 grep）。"
@@ -617,6 +647,7 @@ FILE_TOOLS_SCHEMAS = {
         },
     },
     "search_file_with_name": {
+        "risk_channel": "read",
         "func": search_file_with_name,
         "description": (
             "根据文件名(或文件名片段)在整个工作区中递归查找文件并返回完整路径。"

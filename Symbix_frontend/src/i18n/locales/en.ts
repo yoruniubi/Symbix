@@ -193,6 +193,38 @@ export default {
     loadFail: 'Failed to load rules: {msg}',
     levelChanged: 'Moved {tool} to “{level}”',
     levelFail: 'Adjustment failed: {msg}',
+    // Session trust (block 1)
+    sessionTrustTitle: 'Session Trust',
+    modeAuto: 'Auto-pilot',
+    modeNormal: 'Normal (confirm each)',
+    modeAutoHint: 'Auto-approve writes & whitelisted commands; delete / network / dangerous cmds still confirm',
+    modeNormalHint: 'Each write / command needs confirmation; approval grants this channel for the session',
+    activeGrants: 'Channels approved this session',
+    noSession: 'No session selected — pick one to apply',
+    autoOn: 'Auto-pilot enabled',
+    autoOff: 'Auto-pilot disabled',
+    modeFail: 'Switch failed: {msg}',
+    // Channel policy (block 2)
+    channelPolicyTitle: 'Channel Policy',
+    channelRead: 'Read',
+    channelWrite: 'Write',
+    channelExec: 'Exec',
+    channelDelete: 'Delete',
+    channelNetwork: 'Network',
+    policyRead: 'Always allowed',
+    policyWrite: 'Ask once, then allowed for this session (workspace only)',
+    policyExec: 'Requires confirm; auto mode only whitelisted commands',
+    policyDelete: 'Confirm every time, never auto',
+    policyNetwork: 'Confirm every time, never auto',
+    channelHint: 'Graded by behavior channel, not tool name. High-risk channels are never auto-approved.',
+    // MCP server trust (block 3)
+    serverTrustTitle: 'MCP Server Trust',
+    trusted: 'Trusted',
+    untrusted: 'Untrusted',
+    serverTrustChanged: 'Updated trust for {server}',
+    serverTrustFail: 'Update failed: {msg}',
+    // Advanced (block 4)
+    advancedTitle: 'Tool-level overrides (advanced)',
   },
 
   // ===== Job Schedule Panel =====

@@ -125,7 +125,8 @@ class JobRunner:
                             response = {"content": stop_hint, "tool_calls": None, "reasoning": last_reasoning}
                             break
 
-                    risk_level, risk_reason = classify_tool_risk(fn["name"], args)
+                    _risk = classify_tool_risk(fn["name"], args)
+                    risk_level, risk_reason = _risk.level, _risk.reason
 
                     # auto_safe:非 SAFE 跳过；否则非 SAFE 也跳过（后台无人审批，一律不执行写操作）
                     if risk_level != ToolRiskLevel.SAFE:

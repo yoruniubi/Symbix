@@ -178,6 +178,7 @@ def open_terminal(
 
 TERMINAL_TOOLS_SCHEMAS = {
     "open_terminal": {
+        "risk_channel": "exec",
         "func": open_terminal,
         "description": (
             "在 PowerShell 或 CMD 中执行命令。"

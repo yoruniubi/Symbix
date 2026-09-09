@@ -137,6 +137,7 @@ def emit_pet_action(action: str, bubble: str = "") -> str:
 
 PET_TOOLS_SCHEMAS = {
     "emit_pet_action": {
+        "risk_channel": "read",
         "func": emit_pet_action,
         "description": (
             "触发桌宠动画/表情并推送到主窗口。"
@@ -165,6 +166,7 @@ PET_TOOLS_SCHEMAS = {
         },
     },
     "check_agent_status": {
+        "risk_channel": "read",
         "func": check_agent_status,
         "description": (
             "检查 Agent 当前状态，返回状态信息和推荐桌宠动作。"
@@ -185,6 +187,7 @@ PET_TOOLS_SCHEMAS = {
         },
     },
     "play_status_animation": {
+        "risk_channel": "read",
         "func": play_status_animation,
         "description": (
             "根据 Agent 状态触发对应的桌宠动画。"

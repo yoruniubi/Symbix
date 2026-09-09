@@ -1,0 +1,13 @@
+{
+  "commands": [
+    "git status",
+    "git diff",
+    "git log",
+    "git add",
+    "ls",
+    "dir",
+    "pwd",
+    "whoami"
+  ],
+  "project_scope": null
+}
