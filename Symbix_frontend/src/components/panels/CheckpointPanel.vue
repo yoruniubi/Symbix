@@ -48,6 +48,7 @@
             <div class="cp-round-header" @click="toggleRound(round.round_id)">
               <svg class="cp-round-marker" :class="{ expanded: round.expanded }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="9,5 18,12 9,19"/></svg>
               <span class="cp-round-id">#{{ round.round_id }}</span>
+              <span class="cp-round-question" v-if="round.user_msg">{{ round.user_msg }}</span>
               <span class="cp-round-count">{{ round.events.length }}</span>
             </div>
 
@@ -90,10 +91,19 @@
                 </div>
               </div>
 
-              <!-- 轮次总结:单独在框底部 -->
-              <div class="cp-round-summary" v-if="round.user_msg">
-                <span class="cp-round-summary-label">{{ $t('checkpointPanel.kindRound') }}</span>
-                <span class="cp-round-summary-text">{{ round.user_msg }}</span>
+              <!-- 轮次状态摘要:ok / 工具数 / 失败数 / 耗时 -->
+              <div class="cp-round-summary" :class="`rs-${round.status}`">
+                <span class="cp-rs-dot" :class="`rs-dot-${round.status}`"></span>
+                <span class="cp-rs-status">{{ round.status }}</span>
+                <span v-if="round.toolCount" class="cp-rs-item">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                  {{ round.toolCount }}
+                </span>
+                <span v-if="round.failedTools" class="cp-rs-item cp-rs-fail">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  {{ round.failedTools }}
+                </span>
+                <span v-if="formatDuration(round.durationMs)" class="cp-rs-item cp-rs-time">{{ formatDuration(round.durationMs) }}</span>
               </div>
             </div>
           </div>
@@ -188,6 +198,10 @@ const activeSession = computed(() => {
 interface RoundGroup {
   round_id: string
   user_msg: string
+  status: string
+  toolCount: number
+  failedTools: number
+  durationMs: number
   events: any[]
   expanded: boolean
 }
@@ -198,18 +212,30 @@ const roundsWithEvents = computed<RoundGroup[]>(() => {
     const rid = r.round_id
     if (!map.has(rid)) {
       const roundRecord = records.value.find((x) => x.round_id === rid && x.kind === 'round')
+      const p = roundRecord?.payload || {}
       map.set(rid, {
         round_id: rid,
-        user_msg: roundRecord?.payload?.user_msg_snippet || '',
+        user_msg: p.user_msg_snippet || '',
+        status: roundRecord?.status || 'ok',
+        toolCount: p.tool_count || 0,
+        failedTools: p.failed_tools || 0,
+        durationMs: p.duration_ms || 0,
         events: [],
         expanded: expanded.value.has(rid),
       })
     }
-    // round 记录仅用于提取用户消息作为轮次总结,不作为事件条目展示
+    // round 记录仅用于轮次元信息,不作为事件条目展示
     if (r.kind !== 'round') map.get(rid)!.events.push(r)
   }
   return Array.from(map.values())
 })
+
+function formatDuration(ms: number): string {
+  if (!ms || ms < 0) return ''
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`
+}
 
 function toggleRound(rid: string) {
   if (expanded.value.has(rid)) {
@@ -539,7 +565,7 @@ function handleClose() {
   border-radius: 10px;
   font-size: 11px;
   background: var(--accent-soft);
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 .cp-pill.chip-ok {
   color: var(--success, #34d399);
@@ -559,22 +585,25 @@ function handleClose() {
 }
 .cp-pill.st-ok-pill {
   color: var(--success, #34d399);
+  background: rgba(52, 211, 153, 0.12);
 }
 .cp-pill.st-err-pill {
   color: var(--error, #ef4444);
+  background: rgba(239, 68, 68, 0.12);
 }
 .cp-tag-mini {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  color: var(--text-secondary);
 }
 .cp-tag-icon {
   display: block;
   flex-shrink: 0;
 }
 
-/* 时间线(每轮对话一个框,action 为框内小卡片,轮次总结固定在框底部) */
+/* 时间线(每轮对话一个框,action 为框内小卡片,轮次状态固定在框底部) */
 .cp-timeline {
   display: flex;
   flex-direction: column;
@@ -582,13 +611,13 @@ function handleClose() {
 }
 .cp-round {
   border-radius: var(--radius-md, 8px);
-  background: var(--surface-hover);
-  border: 1px solid transparent;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
   overflow: hidden;
   transition: border-color var(--duration-fast, 120ms) ease, background var(--duration-fast, 120ms) ease;
 }
 .cp-round:hover {
-  border-color: var(--border);
+  border-color: var(--accent-border);
 }
 .cp-round-header {
   display: flex;
@@ -599,13 +628,15 @@ function handleClose() {
   user-select: none;
   font-size: 12px;
   color: var(--text-secondary);
+  background: var(--accent-soft);
 }
 .cp-round-header:hover {
+  background: var(--accent-soft-hover);
   color: var(--text-primary);
 }
 .cp-round-marker {
   flex-shrink: 0;
-  color: var(--text-muted);
+  color: var(--accent-300);
   width: 10px;
   height: 10px;
   transition: transform 0.15s ease;
@@ -616,16 +647,28 @@ function handleClose() {
 .cp-round-id {
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: var(--text-muted);
-}
-.cp-round-count {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-muted);
+  color: var(--accent-300);
   flex-shrink: 0;
 }
+.cp-round-question {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-round-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+}
 .cp-round-body {
-  padding: 0 8px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
 }
@@ -635,7 +678,7 @@ function handleClose() {
   margin-top: 8px;
   padding: 8px;
   border-radius: var(--radius-md);
-  background: var(--panel-bg);
+  background: var(--surface-hover);
   border: 1px solid transparent;
 }
 .cp-event-name {
@@ -643,7 +686,7 @@ function handleClose() {
   align-items: center;
   gap: 4px;
   font-size: 13px;
-  color: var(--accent-300, #F7A85B);
+  color: var(--text-primary);
   line-height: 1.35;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -676,8 +719,9 @@ function handleClose() {
   margin-left: auto;
   flex-shrink: 0;
   font-size: 10px;
-  padding: 0 6px;
+  padding: 1px 6px;
   border-radius: 6px;
+  background: var(--surface-hover);
 }
 .st-ok {
   color: var(--success, #34d399);
@@ -694,14 +738,14 @@ function handleClose() {
   flex-wrap: wrap;
   gap: 4px 6px;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-top: 3px;
   padding-left: 12px;
   line-height: 1.4;
 }
 .cp-ev-kind {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   flex-shrink: 0;
 }
@@ -709,7 +753,7 @@ function handleClose() {
   font-family: ui-monospace, monospace;
   font-size: 11px;
   background: var(--accent-soft);
-  padding: 0 4px;
+  padding: 1px 5px;
   border-radius: 4px;
   color: var(--text-primary);
   max-width: 100%;
@@ -727,32 +771,59 @@ function handleClose() {
   color: var(--error, #ef4444);
 }
 .cp-snippet {
-  opacity: 0.65;
+  color: var(--text-muted);
   word-break: break-all;
   white-space: normal;
 }
 
-/* 轮次总结:固定在框底部,与 action 区块分隔 */
+/* 轮次状态摘要:固定在框底部,与 action 区块分隔 */
 .cp-round-summary {
   margin-top: 8px;
-  padding: 8px;
-  border-top: 1px dashed var(--border);
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.cp-rs-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cp-rs-dot.rs-dot-ok {
+  background: var(--success, #34d399);
+}
+.cp-rs-dot.rs-dot-error {
+  background: var(--error, #ef4444);
+}
+.cp-rs-dot.rs-dot-skipped,
+.cp-rs-dot.rs-dot-pending {
+  background: var(--warning, #f59e0b);
+}
+.cp-rs-status {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: lowercase;
+}
+.cp-rs-item {
+  display: inline-flex;
+  align-items: center;
   gap: 3px;
 }
-.cp-round-summary-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: .3px;
+.cp-rs-item svg {
+  display: block;
+  flex-shrink: 0;
 }
-.cp-round-summary-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.45;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+.cp-rs-fail {
+  color: var(--error, #ef4444);
+}
+.cp-rs-time {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted);
 }
 
 /* 底部操作栏(与 McpPanel / SkillPanel footer 一致) */
@@ -810,7 +881,7 @@ function handleClose() {
 }
 .diff-size {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .diff-columns {
   display: grid;
@@ -832,7 +903,7 @@ function handleClose() {
   padding: 6px 10px;
   background: var(--accent-soft);
   border-bottom: 1px solid var(--border);
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 .diff-content {
   flex: 1;
@@ -850,7 +921,7 @@ function handleClose() {
 .diff-no-blob {
   padding: 20px 12px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-md, 8px);

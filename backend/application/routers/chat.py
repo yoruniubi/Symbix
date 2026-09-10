@@ -703,9 +703,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     try:
         if req.approve:
             _ctx_set_current(ctx["session_id"], ckpt_round_id)
-            # — 会话信任:用户批准某工具后,记下其通道级 grant(delete/network 不记)
+            # — 会话信任:用户批准写入后,记下 write 通道 grant(exec/delete/network 不记)
             _approve_risk = ctx.get("risk")
-            if _approve_risk is not None:
+            if _approve_risk is not None and _approve_risk.channel == "write":
                 try:
                     _st = get_session_trust(ctx["session_id"])
                     _st.grant(_approve_risk.channel, server_id=_approve_risk.server_id)

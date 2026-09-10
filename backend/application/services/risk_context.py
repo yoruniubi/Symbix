@@ -100,9 +100,9 @@ class SessionTrust:
 
     - mode: "normal" | "auto"(auto-pilot;会话级开关,非全局)
     - grants: {channel: {"server_id": str, "scope": str, "expires": float}}
-      通道级会话授权:同意一次后在 auto-pilot / normal 下可放行同通道后续调用。
+      通道级会话授权:仅 write 通道,同意一次后 5 分钟内放行同通道后续写入。
       write 的 grant 限 scope="workspace"(防 prompt injection 借早期信任写任意路径)。
-      delete / network 永不写入 grant(每次都问)。
+      exec 靠 auto 模式白名单放行,delete / network 每次都问,均不记 grant。
     """
 
     _MODES = ("normal", "auto")
@@ -119,9 +119,13 @@ class SessionTrust:
 
     def grant(self, channel: str, server_id: str = "builtin", scope: str = "workspace",
               ttl: float = 300.0) -> None:
-        """记录一次通道级会话授权(approve 同意时调用)。"""
-        if channel in ("delete", "network"):
-            return  # 永不授予
+        """记录一次通道级会话授权(approve 同意时调用)。
+
+        仅 write 通道可记 grant:exec 靠 auto 白名单、delete/network 每次问,
+        均不参与会话 grant(避免无效 grant 被误读为已授权)。
+        """
+        if channel != "write":
+            return
         with self.lock:
             self.grants[channel] = {
                 "server_id": server_id,
@@ -133,10 +137,10 @@ class SessionTrust:
         """查询某通道是否已有有效授权。
 
         - grant 只对授予它的 server_id 生效(builtin 对 builtin)。
-        - delete / network 永远返回 False(每次问)。
+        - 仅 write 通道会有 grant;其余通道永远返回 False(每次问)。
         - 过期视为无授权。
         """
-        if channel in ("delete", "network"):
+        if channel != "write":
             return False
         with self.lock:
             g = self.grants.get(channel)
@@ -147,8 +151,8 @@ class SessionTrust:
                 return False
             if g.get("server_id") != server_id:
                 return False
-            # write 类 grant 仅 workspace scope 放行(超 scope 需重新审批)
-            if channel == "write" and g.get("scope") == "workspace" and scope != "workspace":
+            # write grant 仅 workspace scope 放行(超 scope 需重新审批)
+            if g.get("scope") == "workspace" and scope != "workspace":
                 return False
             return True
 
@@ -188,7 +192,6 @@ def _clear_server_grants(server_id: str) -> None:
     """server 从 trusted 降级时清除其名下所有会话 grants。"""
     with _session_trusts_lock:
         for st in _session_trusts.values():
-            st.clear() if False else None
             with st.lock:
                 for ch in list(st.grants):
                     if st.grants[ch].get("server_id") == server_id:
