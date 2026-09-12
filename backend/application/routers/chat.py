@@ -16,6 +16,7 @@ from application.state import (
     tool_registry,
     _pending_approvals,
     _processing_approvals,
+    _pending_questions,
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
 from application.services.risk_context import classify_for_chat, tool_meta, get_session_trust, maybe_apply_trust_command
@@ -29,6 +30,28 @@ from application.services.memory_ops import (
 )
 
 router = APIRouter(tags=["chat"])
+
+
+# 交互型工具:执行后返回 pending_user_input,需挂起等待用户回答。
+# 命中后强制走"提问审批"路径:不发普通 tool_result,发 await_input 事件挂起。
+_INTERACTION_TOOLS = {"ask_clarifying_question"}
+
+
+def _is_interaction_tool(name: str) -> bool:
+    return name in _INTERACTION_TOOLS
+
+
+def _parse_interaction_request(tool_output: str) -> dict | None:
+    """解析交互型工具的返回 JSON,失败或非 pending 状态返回 None。"""
+    if not isinstance(tool_output, str) or not tool_output.strip().startswith("{"):
+        return None
+    try:
+        data = _json.loads(tool_output)
+    except Exception:
+        return None
+    if data.get("status") != "pending_user_input":
+        return None
+    return data
 
 
 # 为避免上游 模型逐 token 推 delta 导致前端 高频解析/rAF 重绘，这里将连续 delta 事件批量合并
@@ -523,7 +546,70 @@ async def chat(request: ChatRequest, http_request: Request):
                     fn["name"], args, mcp_tools, request.session_id,
                 )
                 risk_level, risk_reason = _risk.level, _risk.reason
-                
+
+                # 交互型工具(ask_clarifying_question):强制走"提问审批" ——
+                # 先真执行拿到 question/suggestions,再挂起等用户回答,不发普通 tool_result。
+                if _is_interaction_tool(fn["name"]):
+                    _ctx_set_current(request.session_id, ckpt_round_id)
+                    tool_output = tool_registry.execute(fn["name"], fn.get("arguments"))
+                    if not isinstance(tool_output, str):
+                        tool_output = _json.dumps(tool_output, ensure_ascii=False)
+                    qdata = _parse_interaction_request(tool_output)
+                    if qdata:
+                        approval_id = str(uuid.uuid4())
+                        _pending_approvals[approval_id] = {
+                            "session_id": request.session_id,
+                            "user_input": user_for_llm,
+                            "history": history[:-1],
+                            "mcp_tools": mcp_tools,
+                            "api_key": api_key,
+                            "api_base": api_base,
+                            "model": model,
+                            "steps": steps,
+                            "last_reasoning": last_reasoning,
+                            "round_count": round_count,
+                            "act_mode": act_mode,
+                            "act_plan": act_plan,
+                            "pending_tc": {"id": fn["id"], "name": fn["name"], "arguments": fn.get("arguments")},
+                            "ckpt_round_id": ckpt_round_id,
+                            "tool_chain_msgs": _steps_to_tool_messages(steps),
+                            "attempted_tool_calls": attempted_tool_calls,
+                            "tool_name_counts": nonstream_name_counts,
+                            "remaining_tcs": [
+                                {"id": r["id"], "name": r.get("name"), "arguments": r.get("arguments")}
+                                for r in response["tool_calls"][idx_tc + 1:]
+                            ],
+                            "risk_level": risk_level,
+                            "risk_reason": risk_reason,
+                            "risk": _risk,
+                        }
+                        _pending_questions[approval_id] = {
+                            "question": qdata.get("question", ""),
+                            "suggestions": qdata.get("suggestions", []),
+                            "context": qdata.get("context", ""),
+                        }
+                        # — checkpoint: 提问挂起 → 记 skipped + round 未完待续
+                        ckpt_tool_count += 1
+                        _emit_tool(request.session_id, ckpt_round_id, fn["name"], fn.get("arguments"),
+                                   risk_level, False, "", status="skipped",
+                                   error="awaiting user input")
+                        _emit_round_summary(
+                            request.session_id, ckpt_round_id,
+                            mem_msg, "", last_reasoning,
+                            ckpt_tool_count, ckpt_failed,
+                            duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                        )
+                        yield format_sse({
+                            "type": "await_input",
+                            "input_id": approval_id,
+                            "question": qdata.get("question", ""),
+                            "suggestions": qdata.get("suggestions", []),
+                            "context": qdata.get("context", ""),
+                            "tool": {"id": fn["id"], "name": fn["name"]},
+                        })
+                        return
+                    # 非 pending 返回(如 question 为空):降级为普通 tool_result,继续执行
+
                 # needs_approval=False(read/auto 放行)直接执行;True 进审批
                 if _needs_approval:
                     approval_id = str(uuid.uuid4())
@@ -701,7 +787,28 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
 
     tool_results = []
     try:
-        if req.approve:
+        # —— 交互型工具(提问)的挂起:用户回答注入为工具结果,不真执行工具。
+        is_question = bool(ctx.get("is_question"))
+        if is_question:
+            _ctx_set_current(ctx["session_id"], ckpt_round_id)
+            qinfo = _pending_questions.pop(req.approval_id, {})
+            # 用户可能点了建议按钮(默认 approve=true)或取消;取消则以“用户取消”作为回答。
+            answer = (req.answer or "").strip() or (qinfo.get("suggestions") or [""])[0] if req.approve else "用户取消提问"
+            out = f"[用户回答] {answer}"
+            steps.append({
+                "type": "tool_result",
+                "tool_call_id": pending_tc["id"],
+                "name": pending_tc["name"],
+                "content": out,
+                "approved": req.approve,
+                "question_answer": True,
+            })
+            ckpt_tool_count += 1
+            _emit_tool(ctx["session_id"], ckpt_round_id, pending_tc["name"], pending_tc.get("arguments"),
+                       ctx.get("risk_level", "medium"), True, out,
+                       status="ok", flag="user_input")
+            # 直接跳到工具结果累积;不再走下面的 execute
+        elif req.approve:
             _ctx_set_current(ctx["session_id"], ckpt_round_id)
             # — 会话信任:用户批准写入后,记下 write 通道 grant(exec/delete/network 不记)
             _approve_risk = ctx.get("risk")
@@ -761,7 +868,28 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 args = _json.loads(tc["arguments"]) if isinstance(tc["arguments"], str) else tc["arguments"]
             except Exception:
                 args = {}
-            
+
+            # 交互型工具:不与其他审批同批执行 —— 注入提示让模型单独提问
+            if _is_interaction_tool(tc["name"]):
+                r_out = (
+                    f"[System] 工具 `{tc['name']}` 需单独向用户提问,不能与本次审批同时执行。"
+                    "请在完成当前流程后再单独提问。"
+                )
+                tool_results.append({
+                    "tool_call_id": tc["id"],
+                    "role": "tool",
+                    "name": tc["name"],
+                    "content": r_out,
+                    "arguments": tc["arguments"],
+                })
+                steps.append({
+                    "type": "tool_result",
+                    "tool_call_id": tc["id"],
+                    "name": tc["name"],
+                    "content": r_out,
+                })
+                continue
+
             _risk = classify_tool_risk(tc["name"], args)
             risk_level = _risk.level
             if risk_level != ToolRiskLevel.SAFE:
@@ -1000,6 +1128,60 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             tc_name, tc_args, mcp_tools, session_id,
                         )
                         risk_level, risk_reason = _risk.level, _risk.reason
+
+                        # 交互型工具(ask_clarifying_question):挂起等用户回答(同主循环)
+                        if _is_interaction_tool(tc_name):
+                            tool_output = tool_registry.execute(tc_name, tc_args)
+                            if not isinstance(tool_output, str):
+                                tool_output = _json.dumps(tool_output, ensure_ascii=False)
+                            qdata = _parse_interaction_request(tool_output)
+                            if qdata:
+                                approval_id = str(uuid.uuid4())
+                                _pending_approvals[approval_id] = {
+                                    "session_id": session_id,
+                                    "user_input": user_input,
+                                    "history": history,
+                                    "tool_chain_msgs": _steps_to_tool_messages(steps),
+                                    "attempted_tool_calls": attempted,
+                                    "tool_name_counts": name_counts_local,
+                                    "mcp_tools": mcp_tools,
+                                    "api_key": api_key,
+                                    "api_base": api_base,
+                                    "model": model,
+                                    "steps": steps,
+                                    "last_reasoning": last_reasoning,
+                                    "round_count": round_count_local,
+                                    "full_text": full_text,
+                                    "act_mode": act_mode,
+                                    "act_plan": act_plan,
+                                    "is_question": True,
+                                    "pending_tc": {"id": tc_id, "name": tc_name, "arguments": tc_args},
+                                    "ckpt_round_id": ctx.get("ckpt_round_id", ckpt_round_id),
+                                    "remaining_tcs": [],
+                                    "risk_level": risk_level,
+                                    "risk_reason": risk_reason,
+                                    "risk": _risk,
+                                }
+                                _pending_questions[approval_id] = {
+                                    "question": qdata.get("question", ""),
+                                    "suggestions": qdata.get("suggestions", []),
+                                    "context": qdata.get("context", ""),
+                                }
+                                ckpt_tool_count += 1
+                                _emit_tool(session_id, ckpt_round_id, tc_name, tc_args,
+                                           risk_level, False, "", status="skipped",
+                                           error="awaiting user input")
+                                yield format_sse({
+                                    "type": "await_input",
+                                    "input_id": approval_id,
+                                    "question": qdata.get("question", ""),
+                                    "suggestions": qdata.get("suggestions", []),
+                                    "context": qdata.get("context", ""),
+                                    "tool": {"id": tc_id, "name": tc_name},
+                                })
+                                yield format_sse({"type": "done", "content": full_text})
+                                return
+
                         if _needs_approval:
                             approval_id = str(uuid.uuid4())
                             _pending_approvals[approval_id] = {
@@ -1456,7 +1638,77 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         tc_name, tc_args, mcp_tools, request.session_id,
                     )
                     risk_level, risk_reason = _risk.level, _risk.reason
-                    
+
+                    # 交互型工具(ask_clarifying_question):先真执行拿 question/suggestions,
+                    # 再挂起等用户回答,发 await_input 事件(前端渲染成提问卡),不发普通 tool_result。
+                    if _is_interaction_tool(tc_name):
+                        _ctx_set_current(request.session_id, ckpt_round_id)
+                        tool_output = tool_registry.execute(tc_name, tc_args)
+                        if not isinstance(tool_output, str):
+                            tool_output = _json.dumps(tool_output, ensure_ascii=False)
+                        qdata = _parse_interaction_request(tool_output)
+                        if qdata:
+                            approval_id = str(uuid.uuid4())
+                            tool_chain_msgs = _steps_to_tool_messages(steps)
+                            _pending_approvals[approval_id] = {
+                                "session_id": request.session_id,
+                                "user_input": user_for_llm,
+                                "history": history[:-1],
+                                "tool_chain_msgs": tool_chain_msgs,
+                                "attempted_tool_calls": attempted_tool_calls,
+                                "tool_name_counts": tool_name_counts,
+                                "mcp_tools": mcp_tools,
+                                "api_key": api_key,
+                                "api_base": api_base,
+                                "model": model,
+                                "steps": steps,
+                                "last_reasoning": last_reasoning,
+                                "round_count": round_count,
+                                "full_text": full_text,
+                                "act_mode": act_mode,
+                                "act_plan": act_plan,
+                                # 提问工具专用标记 + 选项信息
+                                "is_question": True,
+                                "pending_tc": {
+                                    "id": tc_id,
+                                    "name": tc_name,
+                                    "arguments": tc_args,
+                                },
+                                "ckpt_round_id": ckpt_round_id,
+                                "remaining_tcs": [
+                                    {
+                                        "id": r["id"],
+                                        "name": r["name"],
+                                        "arguments": r.get("arguments", "{}"),
+                                    }
+                                    for r in tool_calls_raw[idx_tc + 1:]
+                                ],
+                                "risk": _risk,
+                            }
+                            _pending_questions[approval_id] = {
+                                "question": qdata.get("question", ""),
+                                "suggestions": qdata.get("suggestions", []),
+                                "context": qdata.get("context", ""),
+                            }
+                            # — checkpoint: 提问挂起 → 记 skipped + round 未完待续
+                            ckpt_tool_count += 1
+                            _emit_tool(request.session_id, ckpt_round_id, tc_name, tc_args,
+                                       risk_level, False, "", status="skipped",
+                                       error="awaiting user input")
+                            yield format_sse({
+                                "type": "await_input",
+                                "input_id": approval_id,
+                                "question": qdata.get("question", ""),
+                                "suggestions": qdata.get("suggestions", []),
+                                "context": qdata.get("context", ""),
+                                "tool": {"id": tc_id, "name": tc_name},
+                            })
+                            yield format_sse({"type": "done", "content": full_text})
+                            # 掉出本轮工具循环,等待用户回答后由 /chat/approve 续跑
+                            tool_calls_raw = None
+                            break
+                        # 非 pending 返回 → 降级为普通 tool_result,继续执行
+
                     # needs_approval=False(read/auto 放行)直接执行;True 进审批
                     if _needs_approval:
                         approval_id = str(uuid.uuid4())

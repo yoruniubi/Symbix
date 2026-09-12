@@ -97,6 +97,7 @@
           v-show="!hideDuringLoading(msg)"
           @edit="handleEditMessage(idx, $event)"
           @approve="approveTool(idx, $event)"
+          @answer="answerQuestion(idx, $event)"
           @retry="handleRetryMessage(idx)"
         />
         <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'"
@@ -695,6 +696,7 @@ function hideDuringLoading(msg: any): boolean {
   if (msg.role !== 'assistant') return false
   if (msg.content && msg.content.trim() !== '') return false
   if (msg.approval_id) return false
+  if (msg.pending_question) return false
   const steps = msg.steps
   if (Array.isArray(steps) && steps.length > 0) return false
   const r = msg.reasoning
@@ -979,6 +981,31 @@ function handleSSEEvent(
       notifyTaskComplete({
         title: t('chat.approvalNotifyTitle'),
         body: t('chat.approvalNotifyBody', { tool: evt.tool?.name || t('chat.unknownTool') }),
+        forceDesktop: true,
+      })
+      break
+
+    case 'await_input':
+      // 交互型工具(ask_clarifying_question)提问卡:复用 approval 挂起机制,
+      // 用户点选项/输入回答后调 /chat/approve 传 answer 续跑。
+      msg.approval_id = evt.input_id
+      msg.pending_question = {
+        question: evt.question || '',
+        suggestions: Array.isArray(evt.suggestions) ? evt.suggestions : [],
+        context: evt.context || '',
+      }
+      msg.risk_level = undefined
+      msg.risk_reason = undefined
+      if (msg.steps && msg.steps.length > 0) {
+        let pendingStep = msg.steps.find((s: any) => evt.tool?.id && s.id === evt.tool.id)
+        if (!pendingStep) pendingStep = msg.steps.find((s: any) =>
+          s.name === evt.tool?.name && s.status !== 'rejected' && s.status !== 'done',
+        )
+        if (pendingStep) pendingStep.status = 'awaiting_approval'
+      }
+      notifyTaskComplete({
+        title: t('chat.askNotifyTitle'),
+        body: evt.question || t('chat.unknownTool'),
         forceDesktop: true,
       })
       break
@@ -1315,17 +1342,18 @@ async function submitInstallMcp() {
 
 
 // 工具审批:用户在 ChatMessage 卡片点击 同意/拒绝 后回调
-async function approveTool(msgIdx: number, approved: boolean) {
+async function approveTool(msgIdx: number, approved: boolean, answer: string = '') {
   const msg: any = messages.value[msgIdx]
   if (!msg || !msg.approval_id) return
   // 后端会在第一次请求开始时移除 pending 记录;双击会导致第二次请求得到
   // 404,虽然第一次工具实际上已经执行成功。先在前端锁住当前审批卡片。
   if (msg.approval_pending === true) return
   const approvalId = msg.approval_id
-  // 乐观更新：立即清除审批状态（工具会瞬间执行完），显示"生成中"状态
+  // 乐观更新:立即清除审批状态(工具会瞬间执行完),显示"生成中"状态
   userAborted = false // 开始审批请求时重置中断标志
   msg.approval_pending = false
   msg.approval_id = undefined
+  msg.pending_question = undefined
   msg.generating = true
   loading.value = true
   publishAgentStatus('thinking', approved ? t('chat.continueProcessing') : t('chat.processingResult'))
@@ -1336,6 +1364,7 @@ async function approveTool(msgIdx: number, approved: boolean) {
       body: JSON.stringify({
         approval_id: approvalId,
         approve: approved,
+        answer,
         session_id: activeSessionId.value || 'default',
         system_prompt: settings.value.systemPrompt || '',
         api_key: settings.value.apiKey || '',
@@ -1421,6 +1450,13 @@ async function approveTool(msgIdx: number, approved: boolean) {
     console.error(t('chat.approvalFailed'), e)
     messageUi.error(t('chat.approvalFailedDetail', { msg: e.message }))
   }
+}
+
+/** 提问卡:用户点选项或提交自定义回答。 */
+async function answerQuestion(msgIdx: number, answer: string) {
+  if (!answer || !answer.trim()) return
+  // 直接在 approveTool 里传 answer → 后端 /chat/approve 会把它注入为工具结果
+  await approveTool(msgIdx, true, answer.trim())
 }
 
 

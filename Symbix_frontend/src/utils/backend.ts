@@ -1,7 +1,3 @@
-/**
- * 后端基址 + 通用 fetch 封装。
- * 集中管理,避免各组件各自硬编码 127.0.0.1:8000。
- */
 
 export const BACKEND_URL = 'http://127.0.0.1:8000'
 
@@ -96,6 +92,9 @@ function stripMarkdown(text: string): string {
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/__([^_]+)__/g, '$1')
     .replace(/_([^_]+)_/g, '$1')
+    // 移除未闭合的残留星号/下划线(截断或流式中半截)
+    .replace(/\*+/g, '')
+    .replace(/_{1,2}/g, '')
     // 移除链接,保留文本
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     // 移除图片
@@ -149,70 +148,113 @@ export function splitSpeechSentences(buffer: string, chunk: string): { sentences
 
 /** 全局排队播放状态。 */
 let _speakBuffer = ''
+/** 待合成队列(纯文本,逐句出队合成)。 */
 let _speakQueue: string[] = []
+/** 已合成待播缓存(预合成结果,播放器只从这里取句)。 */
+let _speakReady: { text: string; url: string }[] = []
 /** 当前播放的 audio 元素(用于打断时 pause + 释放)。 */
 let _speakAudio: HTMLAudioElement | null = null
+/** 当前正在播放的 URL(独立追踪,切轮/停止时 revoke,防止泄漏)。 */
+let _speakCurrentUrl = ''
 /** 是否正在播放中。 */
 let _speakPlaying = false
 /** 停止标记:置 true 时清空队列并停掉当前播放。 */
 let _speakStopRequested = false
+/** 预合成协程是否运行中(防重入)。 */
+let _speakHydrating = false
+/** 会话令牌:每次 speakStart 自增,拦截旧会话在途合成结果混入新一轮。 */
+let _speakSession = 0
+/** 预合成超前上限:已合成未播最多缓存句数,避免过度堆积(停止时需全部 revoke)。 */
+const MAX_PREFETCH = 6
 
-/** 私有:取队列头播放。 */
+/**
+ * 私有:预合成协程。逐句从待合成队列取句 → 后台合成 MP3 放入已合成缓存。
+ * 播放器播完当前句直接从缓存取下一句,消除“播完才合成”的句间延迟。
+ */
+async function _hydrateQueue() {
+  if (_speakHydrating || _speakStopRequested) return
+  _speakHydrating = true
+  const session = _speakSession
+  try {
+    while (
+      !_speakStopRequested &&
+      _speakSession === session &&
+      _speakQueue.length > 0 &&
+      _speakReady.length < MAX_PREFETCH
+    ) {
+      const raw = _speakQueue.shift()!
+      const plain = stripMarkdown(raw)
+      if (!plain) continue
+      // 每个 in-flight 合成都带上会话令牌,防止旧会话结果混入新一轮
+      const mySession = session
+      try {
+        const url = await previewTts(plain)
+        if (_speakStopRequested || _speakSession !== mySession) {
+          // 停止或切轮后的结果直接丢弃
+          URL.revokeObjectURL(url)
+          return
+        }
+        _speakReady.push({ text: plain, url })
+        // 有空闲播放器 → 立即开播(合成完成即播,不等队列累积)
+        if (!_speakPlaying) _playNextSentence()
+      } catch {
+        // 单句合成失败:跳过,继续下一句
+      }
+    }
+  } finally {
+    _speakHydrating = false
+  }
+}
+
+/** 私有:从已合成缓存取下一句播放。无缓存但有未合成句时补一次预合成。 */
 function _playNextSentence() {
   if (_speakStopRequested) {
     _speakPlaying = false
     _speakQueue = []
     return
   }
-  const next = _speakQueue.shift()
+  const next = _speakReady.shift()
   if (!next) {
     _speakPlaying = false
-    return
-  }
-  const plainText = stripMarkdown(next)
-  if (!plainText) {
-    _playNextSentence()
+    // 待合成队列仍有句子 → 触发预合成,合成完成后由 _hydrateQueue 再次开播
+    if (_speakQueue.length > 0) void _hydrateQueue()
     return
   }
   _speakPlaying = true
-  previewTts(plainText)
-    .then(url => {
-      if (_speakStopRequested) {
-        URL.revokeObjectURL(url)
-        _speakPlaying = false
-        _speakQueue = []
-        return
-      }
-      const audio = new Audio(url)
-      _speakAudio = audio
-      const finish = () => {
-        URL.revokeObjectURL(url)
-        _speakAudio = null
-        // 当前会话未被停止才继续播下一句
-        if (!_speakStopRequested) _playNextSentence()
-        else _speakPlaying = false
-      }
-      audio.onended = finish
-      audio.onerror = finish
-      audio.onpause = () => {
-        // 只在非主动暂停时标记结束(防 stop 时重复触发)
-        if (_speakStopRequested) {
-          _speakAudio = null
-          URL.revokeObjectURL(url)
-        }
-      }
-      audio.play().catch(() => {
-        // 自动播放被浏览器阻止:跳过本句继续播下一句,不卡死队列
-        URL.revokeObjectURL(url)
-        _speakAudio = null
-        _playNextSentence()
-      })
-    })
-    .catch(() => {
-      // 合成失败:跳过本句,继续下一句
-      _speakPlaying = false
+  _speakCurrentUrl = next.url
+  const audio = new Audio(next.url)
+  _speakAudio = audio
+  const finish = () => {
+    URL.revokeObjectURL(next.url)
+    if (_speakCurrentUrl === next.url) _speakCurrentUrl = ''
+    _speakAudio = null
+    // 当前会话未被停止才继续播下一句;并指未被合成的队列继续补满
+    if (!_speakStopRequested) {
+      if (_speakQueue.length > 0) void _hydrateQueue()
       _playNextSentence()
-    })
+    } else {
+      _speakPlaying = false
+    }
+  }
+  audio.onended = finish
+  audio.onerror = finish
+  audio.onpause = () => {
+    // 只在非主动暂停时标记结束(防 stop 时重复触发)
+    if (_speakStopRequested) {
+      _speakAudio = null
+      if (_speakCurrentUrl === next.url) {
+        URL.revokeObjectURL(next.url)
+        _speakCurrentUrl = ''
+      }
+    }
+  }
+  audio.play().catch(() => {
+    // 自动播放被浏览器阻止:跳过本句继续播下一句,不卡死队列
+    URL.revokeObjectURL(next.url)
+    if (_speakCurrentUrl === next.url) _speakCurrentUrl = ''
+    _speakAudio = null
+    _playNextSentence()
+  })
 }
 
 /**
@@ -220,19 +262,31 @@ function _playNextSentence() {
  * 用于“新回复开始时”调用,保证新回复覆盖旧回复。
  */
 export function speakStart() {
+  // 新会话:令牌自增,使旧会话在途合成结果在返回时被丢弃
+  _speakSession++
   _speakStopRequested = false
   _speakQueue = []
+  // 清空旧预合成缓存(新回复覆盖旧回复)
+  for (const item of _speakReady) {
+    URL.revokeObjectURL(item.url)
+  }
+  _speakReady = []
   _speakBuffer = ''
   if (_speakAudio) {
     _speakAudio.pause()
-    // onpause 里已处理释放;这里只暂停不置 null,交给下一句 play 时替换
+    _speakAudio = null
   }
-  _speakAudio = null
+  // 释放正在播放的 URL(切轮/新开)
+  if (_speakCurrentUrl) {
+    URL.revokeObjectURL(_speakCurrentUrl)
+    _speakCurrentUrl = ''
+  }
   _speakPlaying = false
+  _speakHydrating = false
 }
 
 /**
- * 喂入一段增量文本,可拆出完整句子立即入队播放。
+ * 喂入一段增量文本,可拆出完整句子立即入队预合成。
  * [A] 供流式合成:每收到一段 delta 就调用,内部按句末标点切分。
  */
 export function feedSpeechSentence(chunk: string) {
@@ -242,10 +296,7 @@ export function feedSpeechSentence(chunk: string) {
   for (const s of sentences) {
     _speakQueue.push(s)
   }
-  // 队列有句子且当前没在播 → 开播
-  if (_speakQueue.length > 0 && !_speakPlaying) {
-    _playNextSentence()
-  }
+  void _hydrateQueue()
 }
 
 /**
@@ -257,19 +308,28 @@ export function flushSpeechSentence() {
   if (tail) {
     _speakQueue.push(tail)
   }
-  if (_speakQueue.length > 0 && !_speakPlaying) {
-    _playNextSentence()
-  }
+  void _hydrateQueue()
 }
 
 /** 停止当前 TTS 朗读并清空队列。 */
 export function stopSpeak() {
+  // 令牌自增:使所有在途合成返回时被丢弃(与 speakStart 同理)
+  _speakSession++
   _speakStopRequested = true
   _speakQueue = []
+  // 释放已预合成的 URL,避免内存泄漏
+  for (const item of _speakReady) {
+    URL.revokeObjectURL(item.url)
+  }
+  _speakReady = []
   _speakBuffer = ''
   if (_speakAudio) {
     _speakAudio.pause()
     _speakAudio = null
+  }
+  if (_speakCurrentUrl) {
+    URL.revokeObjectURL(_speakCurrentUrl)
+    _speakCurrentUrl = ''
   }
   _speakPlaying = false
 }

@@ -46,6 +46,8 @@ class ApproveRequest(BaseModel):
     api_base: str = ""
     model: str = ""
     use_memory: bool = True
+    # 交互型工具(提问)时:用户实际输入/选择的回答
+    answer: str = ""
 
 
 class ProviderAddRequest(BaseModel):

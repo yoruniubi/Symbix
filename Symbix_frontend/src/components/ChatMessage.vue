@@ -83,8 +83,56 @@
           </div>
         </div>
 
+        <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续 -->
+        <div v-if="msg.pending_question" class="question-block">
+          <div class="question-hint">{{ t('chat.agentQuestion') }}</div>
+          <div class="question-text">{{ msg.pending_question.question }}</div>
+          <div v-if="msg.pending_question.context" class="question-context">
+            {{ msg.pending_question.context }}
+          </div>
+          <div v-if="msg.pending_question.suggestions && msg.pending_question.suggestions.length" class="question-suggestions">
+            <n-button
+              v-for="(s, si) in msg.pending_question.suggestions"
+              :key="si"
+              size="small"
+              tertiary
+              :disabled="msg.approval_pending === true"
+              class="suggestion-btn"
+              @click="emit('answer', s)"
+            >
+              {{ s }}
+            </n-button>
+          </div>
+          <div class="question-custom">
+            <n-input
+              v-model:value="answerText"
+              :placeholder="t('chat.answerPlaceholder')"
+              size="small"
+              :disabled="msg.approval_pending === true"
+              @keydown.enter.prevent="submitAnswer"
+            />
+            <n-button
+              size="small"
+              type="primary"
+              :loading="msg.approval_pending === true"
+              :disabled="!answerText.trim()"
+              @click="submitAnswer"
+            >
+              {{ t('chat.submitAnswer') }}
+            </n-button>
+            <n-button
+              size="small"
+              tertiary
+              :disabled="msg.approval_pending === true"
+              @click="emit('approve', false)"
+            >
+              {{ t('chat.rejectQuestion') }}
+            </n-button>
+          </div>
+        </div>
+
         <!-- 审批按钮 -->
-        <div v-if="msg.approval_id" class="approval-block">
+        <div v-if="msg.approval_id && !msg.pending_question" class="approval-block">
           <div class="approval-hint">{{ t('chat.awaitingApproval') }}</div>
           
           <!-- 风险等级显示 -->
@@ -196,6 +244,7 @@ const { isDark } = useTheme()
 const emit = defineEmits<{
   edit: [newText: string]
   approve: [approved: boolean]
+  answer: [answer: string]
   retry: []
 }>()
 
@@ -206,6 +255,7 @@ const editInputRef = ref<any>(null)
 const showReasoning = ref(false)
 const expandedSteps = ref<Record<number, boolean>>({})
 const bubbleRef = ref<HTMLElement | null>(null)
+const answerText = ref('')
 
 const { t } = useI18n()
 
@@ -256,6 +306,13 @@ function injectCopyButtons() {
 
 function toggleReasoning() {
   showReasoning.value = !showReasoning.value
+}
+
+/** 提交自定义回答(提问卡)。 */
+function submitAnswer() {
+  const a = answerText.value.trim()
+  if (!a) return
+  emit('answer', a)
 }
 
 function toggleStep(i: number) {
@@ -957,6 +1014,59 @@ onMounted(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   padding: 8px 10px;
+}
+
+/* ---- Question Block (Agent 向用户提问) ---- */
+.question-block {
+  max-width: min(72%, 760px);
+  margin-bottom: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid rgba(87, 155, 252, 0.4);
+  background: rgba(87, 155, 252, 0.08);
+}
+
+.question-hint {
+  font-size: 12px;
+  color: var(--accent-500, #579BFC);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.question-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.question-context {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-bottom: 8px;
+  opacity: 0.9;
+}
+
+.question-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.suggestion-btn {
+  border-radius: 14px;
+}
+
+.question-custom {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.question-custom .n-input {
+  flex: 1;
 }
 
 /* ---- Approval Block ---- */
