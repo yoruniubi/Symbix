@@ -108,20 +108,43 @@ def edit_file(file_path: str, new_content: str) -> str:
         return f"Error editing file {file_path}: {e}"
 
 
-def list_files(directory: str = ".", recursive: bool = False) -> str:
-    """列出指定目录下的文件和子目录"""
+def list_files(directory: str = ".", recursive: bool = False, max_entries: int = 500) -> str:
+    """列出指定目录下的文件和子目录
+
+    Args:
+        directory: 要列出的目录,默认当前目录。
+        recursive: 是否递归列出子目录,默认否。
+        max_entries: 最多返回多少条目,超出截断并提示(防止递归大目录如 node_modules 一次返回几万条把 LLM 上下文撑爆)。
+
+    Returns:
+        条目列表文本(每行一个),超出 max_entries 时末尾带截断提示。
+    """
     import os
     try:
         directory = assert_path_allowed(directory)
         entries = []
+        truncated = False
+        omit_dirs = {"node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build"}
         if recursive:
             for root, dirs, files in os.walk(directory):
+                # 跳过常见超大目录,避免把 node_modules / .git 等塞进上下文
+                dirs[:] = [d for d in dirs if d not in omit_dirs]
                 rel = os.path.relpath(root, directory)
                 prefix = "" if rel == "." else rel + "/"
                 for d in dirs:
                     entries.append(f"{prefix}{d}/")
+                    if len(entries) >= max_entries:
+                        truncated = True
+                        break
+                if truncated:
+                    break
                 for f in files:
                     entries.append(f"{prefix}{f}")
+                    if len(entries) >= max_entries:
+                        truncated = True
+                        break
+                if truncated:
+                    break
         else:
             for name in os.listdir(directory):
                 full = os.path.join(directory, name)
@@ -129,7 +152,12 @@ def list_files(directory: str = ".", recursive: bool = False) -> str:
                     entries.append(f"{name}/")
                 else:
                     entries.append(name)
+                if len(entries) >= max_entries:
+                    truncated = True
+                    break
         result = "\n".join(sorted(entries)) if entries else "(empty)"
+        if truncated:
+            result += f"\n...(已截断,目录内容过多,仅列出前 {len(entries)} 条;如需查看子目录请递归指定具体路径)"
         return result
     except Exception as e:
         return f"Error listing directory {directory}: {e}"
@@ -519,19 +547,24 @@ FILE_TOOLS_SCHEMAS = {
     "list_files": {
         "risk_channel": "read",
         "func": list_files,
-        "description": "列出指定目录下的文件和文件夹。如果不知道要读什么文件，先调用此工具浏览目录结构。工作目录是 F:\\Symbix，源代码在 backend/ 和 Symbix_frontend/ 中。",
+        "description": "列出指定目录下的文件和文件夹。如果不知道要读什么文件,先调用此工具浏览目录结构。工作目录是 F:\\Symbix,源代码在 backend/ 和 Symbix_frontend/ 中。",
         "parameters": {
             "type": "object",
             "properties": {
                 "directory": {
                     "type": "string",
-                    "description": "要浏览的目录路径，默认为当前工作目录 (F:\\Symbix)",
+                    "description": "要浏览的目录路径,默认为当前工作目录 (F:\\Symbix)",
                     "default": ".",
                 },
                 "recursive": {
                     "type": "boolean",
-                    "description": "是否递归列出所有子目录和文件，默认为 false",
+                    "description": "是否递归列出所有子目录和文件,默认为 false。注意:递归大目录(如 node_modules)会被自动截断到 500 条内",
                     "default": False,
+                },
+                "max_entries": {
+                    "type": "integer",
+                    "description": "最多返回多少条目,默认 500;超出截断并提示(防止大目录撑爆上下文)",
+                    "default": 500,
                 },
             },
             "required": [],

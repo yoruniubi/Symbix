@@ -94,13 +94,13 @@
           :key="idx"
           :msg="msg"
           :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
-          v-show="!(msg.role === 'assistant' && msg.content === '' && loading)"
+          v-show="!hideDuringLoading(msg)"
           @edit="handleEditMessage(idx, $event)"
           @approve="approveTool(idx, $event)"
           @retry="handleRetryMessage(idx)"
         />
-        <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'
-            && messages[messages.length - 1]?.content === ''"
+        <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'"
+            v-show="hideDuringLoading(messages[messages.length - 1])"
             class="loading-row">
           <div class="loading-bubble">
             <span class="loading-dot"></span>
@@ -189,7 +189,7 @@ const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
-import { speak } from '@/utils/backend'
+import { feedSpeechSentence, flushSpeechSentence, speakStart, stopSpeak } from '@/utils/backend'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
 
@@ -201,6 +201,8 @@ const abortController = ref<AbortController | null>(null)
 const voiceEnabled = ref(false)
 /** 标记是否为用户主动中断（避免 abort 导致的错误被当成真实错误处理） */
 let userAborted = false
+/** 本轮流式是否已开启句子级朗读(用于结束时 flush 尾巴)。 */
+let ttsStreaming = false
 interface Skill {
   name: string
   display_name: string
@@ -504,6 +506,8 @@ function toggleMcpServer(serverId: string) {
 }
 function handleStopGeneration() {
   userAborted = true
+  // 打断当前播放的句子级朗读队列(清空未播句子 + 停当前音频)
+  stopSpeak()
   if (abortController.value) {
     abortController.value.abort()
     abortController.value = null
@@ -681,6 +685,23 @@ function publishAgentStatus(status: AgentStatus, bubble?: string) {
   })
 }
 
+/**
+ * 加载期间是否隐藏某条 assistant 消息。
+ * 仅当消息为真空内容(无文本、无工具步骤、无思维过程、无审批待处理)时隐藏,
+ * 避免 Agent 场景下模型先调工具不输出文本时,step cards / reasoning 被一起藏掉。
+ */
+function hideDuringLoading(msg: any): boolean {
+  if (!loading.value) return false
+  if (msg.role !== 'assistant') return false
+  if (msg.content && msg.content.trim() !== '') return false
+  if (msg.approval_id) return false
+  const steps = msg.steps
+  if (Array.isArray(steps) && steps.length > 0) return false
+  const r = msg.reasoning
+  if (typeof r === 'string' ? r.trim().length > 0 : !!r) return false
+  return true
+}
+
 async function sendMessage(text: string, files: any[], supersededRoundId?: string) {
   console.log('=== sendMessage 开始(SSE 流式)===')
   safeLog('settings:', settings.value)
@@ -815,16 +836,20 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
         title: 'Symbix · 任务完成',
         body: preview || '我在这里，任务已经完成啦~',
       })
-      // 朗读开关打开时，自动朗读 AI 回复
-      if (voiceEnabled.value && assistantMsg.content) {
-        speak(assistantMsg.content)
+      // 朗读开关打开时:流式句子已在 delta 阶段逐句播放,这里只把剩余尾巴送出去
+      if (ttsStreaming) {
+        flushSpeechSentence()
       }
+      ttsStreaming = false
     }
 
   } catch (e: any) {
     loading.value = false
     abortController.value = null
-    // 检查是否是用户主动中断（通过标志位或 AbortError 兼容不同浏览器）
+    // 流异常/中断时同步打断句子级朗读,避免残留队列继续播旧回复
+    stopSpeak()
+    ttsStreaming = false
+    // 检查是否是用户主动中断(通过标志位或 AbortError 兼容不同浏览器)
     if (userAborted || e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort') || e.message?.includes('fetch')) {
       console.log('=== 流被用户中断 ===')
       userAborted = false
@@ -862,6 +887,14 @@ function handleSSEEvent(
   switch (type) {
     case 'delta':
       msg.content += evt.content || ''
+      // 句子级朗读:首段 delta 时开启本轮回合,之后逐句喂入 TTS 队列
+      if (voiceEnabled.value && evt.content) {
+        if (!ttsStreaming) {
+          ttsStreaming = true
+          speakStart()
+        }
+        feedSpeechSentence(evt.content)
+      }
       nextTick(() => scrollToBottom())
       break
 
@@ -961,7 +994,9 @@ function handleSSEEvent(
       break
 
     case 'content_reset':
-      // 上游连接中断重试：清空已渲染的文本与推理内容，等待重新生成
+      // 上游连接中断重试:清空已渲染文本;同时打断本次朗读(重新生成时从头播)
+      stopSpeak()
+      ttsStreaming = false
       msg.content = ''
       msg.reasoning = ''
       nextTick(() => scrollToBottom())
@@ -1347,6 +1382,9 @@ async function approveTool(msgIdx: number, approved: boolean) {
     abortController.value = null
     msg.generating = false
     msg.approval_pending = false
+    // 审批后续流也走句子级朗读:结尾把剩余尾巴送完
+    if (ttsStreaming) flushSpeechSentence()
+    ttsStreaming = false
     if (!msg.approval_id) {
       publishAgentStatus('complete', approved ? t('chat.complete') : t('chat.processedDone'))
       await saveSessionToLocalMarkdown()
@@ -1363,6 +1401,9 @@ async function approveTool(msgIdx: number, approved: boolean) {
   } catch (e: any) {
     loading.value = false
     msg.generating = false
+    // 审批流异常/中断:同步打断句子级朗读,避免残留队列
+    stopSpeak()
+    ttsStreaming = false
     // 如果是重复请求,第一次通常已经完成了工具执行;不要让旧审批按钮继续
     // 可点击并再次提交同一个已经消费的 approval_id。
     if (msg.approval_id === approvalId) msg.approval_id = undefined

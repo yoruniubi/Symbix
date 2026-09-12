@@ -34,6 +34,7 @@ backend/Symbix_sdk/checkpoint_blobs/
 backend/Symbix_sdk/skill/installed_skills/
 backend/Symbix_sdk/config/history_list/
 backend/uploads/
+backend/Symbix_sdk/memory/checkpoint_blobs/
 uploads/
 
 # MCP local install cache / node modules under backend if any

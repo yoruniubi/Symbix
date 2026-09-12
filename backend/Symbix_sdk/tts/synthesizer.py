@@ -362,6 +362,4 @@ class TTSEngine:
                 errors.append(f"{name}: {e}")
         raise TTSProviderError("所有 TTS 引擎均失败 → " + "; ".join(errors))
 
-
-# 全局单例(state.py 引用)
 tts_engine = TTSEngine()

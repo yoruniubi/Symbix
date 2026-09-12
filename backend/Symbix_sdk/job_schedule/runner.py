@@ -9,12 +9,6 @@ import json as _json
 import time
 from datetime import datetime
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler  # noqa: F401  (类型提示/复用)
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.triggers.date import DateTrigger
-
-
 class JobRunner:
     """持有 storage + storage 元 + 各业务单例的引用，执行一次 job。"""
 

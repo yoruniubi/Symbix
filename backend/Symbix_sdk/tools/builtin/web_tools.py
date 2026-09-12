@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional
 from urllib.parse import urlparse
 
 try:

@@ -110,28 +110,176 @@ function stripMarkdown(text: string): string {
     .trim()
 }
 
-/** 全局 TTS 朗读:创建 <audio> 自动播放并自动释放。
- *  已有播放在播则先停止旧的再播新的。
+// ─────────────────────────────────────────────────────────────
+// 句子级流式朗读(方案 A:句子切分 + 排队播放)
+// ─────────────────────────────────────────────────────────────
+
+/** 句子切分配置:中文标点任意切;英文句点要求“空格+大写”才切(避免误切 3.14 / file.txt 等)。 */
+const SENTENCE_END_RE = /(?<=[。！？!?；;])\s*(?![）)]$)|(?<=\.)\s+(?=[A-Z])/
+/** 句子最小长度:太短的不切(避免把「嗯」「好」之类单个字拆出去单独播)。 */
+const MIN_SENTENCE_LEN = 4
+
+/**
+ * 把增量文本切分成“完整句子”列表。
+ * 保留未完成尾巴(buffer)留给下一次 feed。
+ * 例:feed("你好,世界。这是" ) → ["你好,世界。"] + buffer="这是"
  */
-let _speakAudio: HTMLAudioElement | null = null
-export function speak(text: string) {
-  if (_speakAudio) { _speakAudio.pause(); _speakAudio = null }
-  // 剥离 markdown 符号,避免朗读出 ✳✳、#、* 等
-  const plainText = stripMarkdown(text)
-  if (!plainText) return
-  previewTts(plainText).then(url => {
-    const audio = new Audio(url)
-    audio.onended = () => { URL.revokeObjectURL(url); _speakAudio = null }
-    audio.onerror = () => { URL.revokeObjectURL(url); _speakAudio = null }
-    audio.play().catch(() => { /* 自动播放被浏览器阻止,静默忽略 */ })
-    _speakAudio = audio
-  })
+export function splitSpeechSentences(buffer: string, chunk: string): { sentences: string[]; buffer: string } {
+  const merged = buffer + chunk
+  const sentences: string[] = []
+  const parts = merged.split(SENTENCE_END_RE)
+  // 最后一段视为未完成(可能是句子中部,也可能到句末但缺标点)
+  let pending = parts.pop() || ''
+  for (const p of parts) {
+    const t = p.trim()
+    if (t) sentences.push(t)
+  }
+  // 若 pending 已经是完整句(末尾带句末标点),直接送出,不留 buffer
+  if (pending.trim() && /[。！？!?；;.]$/.test(pending.trim())) {
+    sentences.push(pending.trim())
+    pending = ''
+  }
+  // 过短的尾巴:如果整段只有一句且太短,直接当句子送走(避免永远等不到完整句)
+  if (pending.trim() && sentences.length === 0 && merged.trim().length > 0 && merged.trim().length < MIN_SENTENCE_LEN) {
+    sentences.push(pending.trim())
+    pending = ''
+  }
+  return { sentences, buffer: pending }
 }
 
-/** 停止当前 TTS 朗读(关闭朗读开关时同步打断正在播放的音频)。 */
+/** 全局排队播放状态。 */
+let _speakBuffer = ''
+let _speakQueue: string[] = []
+/** 当前播放的 audio 元素(用于打断时 pause + 释放)。 */
+let _speakAudio: HTMLAudioElement | null = null
+/** 是否正在播放中。 */
+let _speakPlaying = false
+/** 停止标记:置 true 时清空队列并停掉当前播放。 */
+let _speakStopRequested = false
+
+/** 私有:取队列头播放。 */
+function _playNextSentence() {
+  if (_speakStopRequested) {
+    _speakPlaying = false
+    _speakQueue = []
+    return
+  }
+  const next = _speakQueue.shift()
+  if (!next) {
+    _speakPlaying = false
+    return
+  }
+  const plainText = stripMarkdown(next)
+  if (!plainText) {
+    _playNextSentence()
+    return
+  }
+  _speakPlaying = true
+  previewTts(plainText)
+    .then(url => {
+      if (_speakStopRequested) {
+        URL.revokeObjectURL(url)
+        _speakPlaying = false
+        _speakQueue = []
+        return
+      }
+      const audio = new Audio(url)
+      _speakAudio = audio
+      const finish = () => {
+        URL.revokeObjectURL(url)
+        _speakAudio = null
+        // 当前会话未被停止才继续播下一句
+        if (!_speakStopRequested) _playNextSentence()
+        else _speakPlaying = false
+      }
+      audio.onended = finish
+      audio.onerror = finish
+      audio.onpause = () => {
+        // 只在非主动暂停时标记结束(防 stop 时重复触发)
+        if (_speakStopRequested) {
+          _speakAudio = null
+          URL.revokeObjectURL(url)
+        }
+      }
+      audio.play().catch(() => {
+        // 自动播放被浏览器阻止:跳过本句继续播下一句,不卡死队列
+        URL.revokeObjectURL(url)
+        _speakAudio = null
+        _playNextSentence()
+      })
+    })
+    .catch(() => {
+      // 合成失败:跳过本句,继续下一句
+      _speakPlaying = false
+      _playNextSentence()
+    })
+}
+
+/**
+ * 开始一轮朗读:清空旧队列并重置会话状态。
+ * 用于“新回复开始时”调用,保证新回复覆盖旧回复。
+ */
+export function speakStart() {
+  _speakStopRequested = false
+  _speakQueue = []
+  _speakBuffer = ''
+  if (_speakAudio) {
+    _speakAudio.pause()
+    // onpause 里已处理释放;这里只暂停不置 null,交给下一句 play 时替换
+  }
+  _speakAudio = null
+  _speakPlaying = false
+}
+
+/**
+ * 喂入一段增量文本,可拆出完整句子立即入队播放。
+ * [A] 供流式合成:每收到一段 delta 就调用,内部按句末标点切分。
+ */
+export function feedSpeechSentence(chunk: string) {
+  if (!chunk || _speakStopRequested) return
+  const { sentences, buffer } = splitSpeechSentences(_speakBuffer, chunk)
+  _speakBuffer = buffer
+  for (const s of sentences) {
+    _speakQueue.push(s)
+  }
+  // 队列有句子且当前没在播 → 开播
+  if (_speakQueue.length > 0 && !_speakPlaying) {
+    _playNextSentence()
+  }
+}
+
+/**
+ * 流式朗读结束:把剩余尾巴作为最后一整句送出(若有)。
+ */
+export function flushSpeechSentence() {
+  const tail = _speakBuffer.trim()
+  _speakBuffer = ''
+  if (tail) {
+    _speakQueue.push(tail)
+  }
+  if (_speakQueue.length > 0 && !_speakPlaying) {
+    _playNextSentence()
+  }
+}
+
+/** 停止当前 TTS 朗读并清空队列。 */
 export function stopSpeak() {
+  _speakStopRequested = true
+  _speakQueue = []
+  _speakBuffer = ''
   if (_speakAudio) {
     _speakAudio.pause()
     _speakAudio = null
   }
+  _speakPlaying = false
+}
+
+/**
+ * 兼容旧接口:整段朗读(Home 定时任务 bubble 等仍走这里)。
+ * 内部改为句子级切分后排队播放,行为与旧版“打断旧播新”等价,更流畅。
+ */
+export function speak(text: string) {
+  speakStart()
+  feedSpeechSentence(text)
+  flushSpeechSentence()
 }

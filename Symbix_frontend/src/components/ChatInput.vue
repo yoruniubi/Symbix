@@ -483,10 +483,33 @@ function startCloudVoice() {
 }
 
 // 实时流式 STT:后端 SenseVoice.cpp 直接吃麦克风,
-// 识别结果经 SSE /voice/stt/events 推过来,前端只负责展示。
+// 识别结果经 SSE /voice/stt/events 推过来;每条 = VAD 断好的一句 → 直接自动发送。
 let sttSource: EventSource | null = null
 /** SSE 是否成功连上(用于区分“启动失败”与“正常结束”)。 */
 let sttOpened = false
+/** 语音直达:模型加载中收到的句子排队,加载结束后补发。 */
+const sttPending = ref<string[]>([])
+
+// 加载结束 → 补发队列中积压的语音句子。
+// 注意只能一次发一条:emit 同步触发 sendMessage→loading 立即置真,watch 下次触发时才会补发下一条,
+// 从而天然串行,避免多条并发 SSE 流互相穿插。
+watch(() => props.loading, (v) => {
+  if (!v && sttPending.value.length > 0) {
+    const next = sttPending.value.shift()!
+    emit('send', next, [])
+  }
+})
+
+/** 把一句识别文本直接发出去;loading 中则入队等待。 */
+function autoSendSttText(text: string) {
+  const clean = text.trim()
+  if (!clean) return
+  if (props.loading) {
+    sttPending.value.push(clean)
+    return
+  }
+  emit('send', clean, [])
+}
 
 function startVoice() {
   isRecording.value = true
@@ -502,7 +525,8 @@ function startVoice() {
     try {
       const { text } = JSON.parse(ev.data)
       if (text) {
-        inputValue.value = (inputValue.value ? inputValue.value + ' ' : '') + text
+        // 逐句直达:说完整句立刻发出去,不再只是填进输入框
+        autoSendSttText(text)
       }
     } catch { /* ignore */ }
   }
@@ -530,6 +554,8 @@ function startVoice() {
 function stopVoice(silent = false) {
   const wasRecording = isRecording.value
   isRecording.value = false
+  // 停止语音输入:清空积压队列,避免残留未发出的句子在加载结束后突然冒出
+  sttPending.value = []
   if (!silent && wasRecording) {
     messageUi.info(t('chatInput.voiceInputOff'))
   }

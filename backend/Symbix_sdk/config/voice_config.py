@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-from typing import Optional
 from Symbix_sdk.tts.synthesizer import TTSConfig
 from Symbix_sdk.stt.transcriber import STTConfig
 

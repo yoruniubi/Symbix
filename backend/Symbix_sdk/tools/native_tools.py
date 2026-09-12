@@ -35,8 +35,9 @@ class NativeToolkit:
                 continue
             description = (skill.description or skill.display_name or skill.name)[:200]
             full_desc = (
-                f"加载并返回名为 '{skill.display_name or skill.name}' 的技能指南。"
-                f"当用户的请求与该技能相关时调用此工具以获取完整技能说明。"
+                f"加载并返回名为 '{skill.display_name or skill.name}' 的技能指南(SKILL.md 全文)。"
+                f"当用户的请求可能与该技能相关时,**主动调用此工具**获取完整指南,"
+                f"并严格按指南中的步骤与指令执行,不要只凭本简介推测做法。"
                 f"简介: {description}"
             )
             self.tools[tool_name] = self._make_skill_executor(skill.name)

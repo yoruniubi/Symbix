@@ -73,7 +73,8 @@ class SkillRegistry:
                 keywords = ", ".join(f'"{kw}"' for kw in skill.trigger_keywords[:5])  # 只显示前5个
                 overview += f"  触发关键词: {keywords}\n"
         
-        overview += "\n当用户的请求与上述技能的描述或触发关键词匹配时，"
-        overview += "系统会自动将完整的技能指南注入到对话中。\n"
+        overview += "\n当用户的请求与上述技能的描述或触发关键词匹配时,"
+        overview += "请**主动调用对应的 `skill__<skill-name>` 工具**加载完整技能指南,"
+        overview += "并严格遵循指南中的步骤与指令完成任务;不要只凭上方列表的简短描述猜测做法。\n"
         
         return overview
