@@ -109,6 +109,12 @@ async def delete_markdown(req: DeleteMarkdownRequest):
         memory.clear_session(sid)
     except Exception as e:
         print(f"[Memory] clear_session failed: {e}")
+    # 同步清该会话的 trust 状态(auto-pilot 开关 + 永久 grant,防孤儿残留)
+    try:
+        from application.services.risk_context import clear_session as clear_risk_session
+        clear_risk_session(sid)
+    except Exception as e:
+        print(f"[Risk] clear_session failed: {e}")
     # 解绑关联的定时任务(任务本体保留,仅断开 session_id 引用,下一次运行自动新建 schedule__ 会话)
     try:
         from application.state import job_manager

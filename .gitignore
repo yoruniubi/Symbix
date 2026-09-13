@@ -20,6 +20,8 @@ backend/Symbix_sdk/stt/fbank_lfr_cmvn_feature.json
 fbank_lfr_cmvn_feature.json
 # User-defined local tool risk overrides
 backend/Symbix_sdk/config/risk_overrides.json
+# Per-session trust state (mode + permanent grants, runtime data)
+backend/Symbix_sdk/config/risk_trust.json
 # Conversation memory / SQLite
 **/*.db
 **/*.db-journal

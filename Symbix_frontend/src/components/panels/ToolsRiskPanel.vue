@@ -37,13 +37,16 @@
               <n-switch :value="trust?.mode === 'auto'" size="small" :disabled="!sessionId"
                 @update:value="(v: boolean) => setTrustMode(v ? 'auto' : 'normal')" />
             </div>
-            <!-- 已生效 grants -->
+            <!-- 已生效 grants(永久记住,面板手动清除) -->
             <div v-if="grantList.length" class="trust-grants">
               <div class="grant-title">{{ $t('riskPanel.activeGrants') }}</div>
               <div v-for="g in grantList" :key="g.channel" class="grant-chip">
                 <span class="grant-channel">{{ channelLabel(g.channel) }}</span>
                 <span class="grant-server">{{ g.server_id }}</span>
-                <span class="grant-ttl">~{{ g.expires_in }}s</span>
+                <span class="grant-ttl">{{ $t('riskPanel.grantPermanent') }}</span>
+              </div>
+              <div class="clear-grants-row">
+                <n-button size="tiny" quaternary type="warning" @click="clearGrants">{{ $t('riskPanel.clearGrants') }}</n-button>
               </div>
             </div>
           </div>
@@ -228,7 +231,7 @@ const sourceMeta: Record<string, { label: string }> = {
 const grantList = computed(() => {
   if (!trust.value) return []
   return Object.entries(trust.value.grants || {}).map(([channel, g]: [string, any]) => ({
-    channel, server_id: g.server_id || '', expires_in: g.expires_in ?? 0,
+    channel, server_id: g.server_id || '',
   }))
 })
 
@@ -277,6 +280,20 @@ async function setTrustMode(mode: TrustMode) {
     })
     await loadTrust()
     ;(window as any).$message?.success?.(t(mode === 'auto' ? 'riskPanel.autoOn' : 'riskPanel.autoOff'))
+  } catch (e: any) {
+    ;(window as any).$message?.error?.(t('riskPanel.modeFail', { msg: e.message }))
+  }
+}
+
+/** 清除当前会话全部永久授权(grant 永久记住后,必须能手动撤销)。 */
+async function clearGrants() {
+  if (!sessionId.value) return
+  try {
+    const d = await fetchJson(`${BACKEND_URL}/risk/session-trust/${encodeURIComponent(sessionId.value)}`, { method: 'DELETE' })
+    if (d && d.status === 'ok') {
+      trust.value = { mode: 'normal', grants: {} }
+      ;(window as any).$message?.success?.(t('riskPanel.grantsCleared'))
+    }
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('riskPanel.modeFail', { msg: e.message }))
   }
@@ -531,6 +548,7 @@ defineExpose({ refresh: loadAll })
 .grant-channel { font-weight:600; color:var(--text-primary); }
 .grant-server { color:var(--text-muted); }
 .grant-ttl { color:var(--text-muted); font-size:10px; }
+.clear-grants-row { margin-top:6px; display:flex; justify-content:flex-end; }
 .trust-empty { padding:10px; font-size:12px; color:var(--text-muted); }
 
 /* 通道策略 */

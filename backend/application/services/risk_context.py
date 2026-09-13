@@ -4,10 +4,13 @@
   1. classify_for_chat():统一分类入口 —— 查工具元数据(server_id/annotations/trust)
      → risk_classifier.classify_tool_risk → 会话级 grants/auto-pilot 决策 → 返回。
   2. MCP server 信任:持久化在 mcp_config 的 server 条目 `trusted` 字段。
-  3. 会话信任状态(SessionTrust):per-session auto-pilot 开关 + 通道级 grants。
+  3. 会话信任状态(SessionTrust):per-session auto-pilot 开关 + 通道级 grants,
+     持久化在 config/risk_trust.json —— 批准后永久记住(直到面板手动清除),
+     重启进程不丢失,无需每次重新授权。
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 import threading
@@ -96,18 +99,20 @@ def set_server_trusted(server_id: str, trusted: bool) -> bool:
 # ---------- 会话信任状态(SessionTrust)----------
 
 class SessionTrust:
-    """单个会话的信任状态。
+    """单个会话的信任状态(持久化到 config/risk_trust.json)。
 
-    - mode: "normal" | "auto"(auto-pilot;会话级开关,非全局)
-    - grants: {channel: {"server_id": str, "scope": str, "expires": float}}
-      通道级会话授权:仅 write 通道,同意一次后 5 分钟内放行同通道后续写入。
+    - mode: "normal" | "auto"(auto-pilot;会话级开关,随会话持久化)
+    - grants: {channel: {"server_id": str, "scope": str, "granted_at": float}}
+      通道级会话授权:仅 write 通道,用户批准一次后**永久记住**(直到面板手动清除),
+      重启进程后仍生效 —— 无 TTL,授权即信任。
       write 的 grant 限 scope="workspace"(防 prompt injection 借早期信任写任意路径)。
       exec 靠 auto 模式白名单放行,delete / network 每次都问,均不记 grant。
     """
 
     _MODES = ("normal", "auto")
 
-    def __init__(self) -> None:
+    def __init__(self, session_id: str = "default") -> None:
+        self.session_id: str = session_id
         self.mode: str = "normal"
         self.grants: dict = {}
         self.lock = threading.Lock()
@@ -116,13 +121,15 @@ class SessionTrust:
         if mode in self._MODES:
             with self.lock:
                 self.mode = mode
+            _persist_session_trust()
 
-    def grant(self, channel: str, server_id: str = "builtin", scope: str = "workspace",
-              ttl: float = 300.0) -> None:
-        """记录一次通道级会话授权(approve 同意时调用)。
+    def grant(self, channel: str, server_id: str = "builtin",
+              scope: str = "workspace", ttl: float = 0.0) -> None:
+        """记录一次通道级会话授权(approve 同意时调用)**永久有效**。
 
         仅 write 通道可记 grant:exec 靠 auto 白名单、delete/network 每次问,
         均不参与会话 grant(避免无效 grant 被误读为已授权)。
+        ttl 参数保留仅为向后兼容(调用方可能传入),永久模式忽略它。
         """
         if channel != "write":
             return
@@ -130,24 +137,22 @@ class SessionTrust:
             self.grants[channel] = {
                 "server_id": server_id,
                 "scope": scope,
-                "expires": time.time() + ttl,
+                "granted_at": time.time(),
             }
+        _persist_session_trust()
 
-    def check(self, channel: str, server_id: str = "builtin", scope: str = "workspace") -> bool:
-        """查询某通道是否已有有效授权。
+    def check(self, channel: str, server_id: str = "builtin",
+              scope: str = "workspace") -> bool:
+        """查询某通道是否已有授权(永久有效,无过期)。
 
         - grant 只对授予它的 server_id 生效(builtin 对 builtin)。
         - 仅 write 通道会有 grant;其余通道永远返回 False(每次问)。
-        - 过期视为无授权。
         """
         if channel != "write":
             return False
         with self.lock:
             g = self.grants.get(channel)
             if not g:
-                return False
-            if g.get("expires", 0) < time.time():
-                self.grants.pop(channel, None)
                 return False
             if g.get("server_id") != server_id:
                 return False
@@ -159,48 +164,119 @@ class SessionTrust:
     def clear(self) -> None:
         with self.lock:
             self.grants.clear()
+        _persist_session_trust()
 
     def to_dict(self) -> dict:
+        """面板展示用:grant 无到期时间(永久),expires_in 恒为 -1。"""
         with self.lock:
-            now = time.time()
             return {
                 "mode": self.mode,
                 "grants": {
                     k: {"server_id": v["server_id"], "scope": v["scope"],
-                        "expires_in": max(0, round(v["expires"] - now))}
+                        "expires_in": -1, "granted_at": v.get("granted_at", 0)}
                     for k, v in self.grants.items()
-                    if v.get("expires", 0) > now
                 },
             }
 
 
-# 会话信任注册表(进程内)。key: session_id
+# ---------- 会话信任持久化(config/risk_trust.json)----------
+
+# backend/application/services/risk_context.py → backend/Symbix_sdk/config/
+_TRUST_CONFIG_PATH = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "Symbix_sdk", "config", "risk_trust.json",
+))
+
+_trust_persist_lock = threading.Lock()
+_trust_loaded = False
+
+
+def _load_persisted_trust() -> None:
+    """启动/首次访问时从 risk_trust.json 恢复会话信任(幂等,只加载一次)。"""
+    global _trust_loaded
+    if _trust_loaded:
+        return
+    _trust_loaded = True
+    try:
+        if not os.path.exists(_TRUST_CONFIG_PATH):
+            return
+        with open(_TRUST_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f) or {}
+        for sid, entry in (data.get("sessions") or {}).items():
+            st = SessionTrust(str(sid))
+            m = entry.get("mode")
+            if m in st._MODES:
+                st.mode = m
+            for ch, g in (entry.get("grants") or {}).items():
+                if isinstance(g, dict) and g.get("server_id"):
+                    st.grants[ch] = {
+                        "server_id": g["server_id"],
+                        "scope": g.get("scope", "workspace"),
+                        "granted_at": g.get("granted_at", 0),
+                    }
+            _session_trusts[sid] = st
+    except Exception:
+        pass
+
+
+def _persist_session_trust() -> None:
+    """把当前全部会话信任写盘(改 mode / grant / clear 时同步落盘)。"""
+    payload = {"sessions": {}}
+    with _session_trusts_lock:
+        for sid, st in _session_trusts.items():
+            payload["sessions"][sid] = {
+                "mode": st.mode,
+                "grants": {
+                    k: {"server_id": v["server_id"], "scope": v["scope"],
+                        "granted_at": v.get("granted_at", 0)}
+                    for k, v in st.grants.items()
+                },
+            }
+    try:
+        os.makedirs(os.path.dirname(_TRUST_CONFIG_PATH), exist_ok=True)
+        with _trust_persist_lock:
+            with open(_TRUST_CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# 会话信任注册表(进程内缓存 + 磁盘持久化)。key: session_id
 _session_trusts: dict = {}
 _session_trusts_lock = threading.Lock()
 
 
 def get_session_trust(session_id: str) -> SessionTrust:
+    """取(或创建)某会话的信任状态;首次访问时先从磁盘恢复。"""
+    _load_persisted_trust()
     with _session_trusts_lock:
         st = _session_trusts.get(session_id)
         if st is None:
-            st = SessionTrust()
+            st = SessionTrust(session_id)
             _session_trusts[session_id] = st
         return st
 
 
 def _clear_server_grants(server_id: str) -> None:
-    """server 从 trusted 降级时清除其名下所有会话 grants。"""
+    """server 从 trusted 降级时清除其名下所有会话 grants(并落盘)。"""
+    changed = False
     with _session_trusts_lock:
         for st in _session_trusts.values():
             with st.lock:
                 for ch in list(st.grants):
                     if st.grants[ch].get("server_id") == server_id:
                         st.grants.pop(ch, None)
+                        changed = True
+    if changed:
+        _persist_session_trust()
 
 
 def clear_session(session_id: str) -> None:
+    """删除某会话全部信任状态(内存 + 磁盘)。"""
+    _load_persisted_trust()
     with _session_trusts_lock:
         _session_trusts.pop(session_id, None)
+    _persist_session_trust()
 
 
 # ---------- exec 命令白名单(配置制)----------
@@ -271,7 +347,7 @@ def classify_for_chat(tool_name: str, arguments, mcp_tools: Optional[list],
     决策链:
       1. 查工具元数据(server_id / annotations)→ risk_classifier 分类
       2. 会话级信任:read 直接放行;auto-pilot(会话开关)放行 write + exec 白名单命令;
-         已有通道 grant 放行;delete / network 永不 auto(每次问)
+         已有通道 grant(永久记住)放行;delete / network 永不 auto(每次问)
 
     Returns:
         (risk: ClassifyResult, needs_approval: bool, auto_passed: bool)
@@ -309,7 +385,7 @@ def classify_for_chat(tool_name: str, arguments, mcp_tools: Optional[list],
                 return risk, False, True
         return risk, True, False
 
-    # write 等:已有该通道的会话 grant → 放行;auto-pilot 下 write 直接放行(会话级信任)
+    # write 等:已有该通道的会话 grant(永久)→ 放行;auto-pilot 下 write 直接放行
     if st.check(risk.channel, server_id=server_id, scope=scope):
         return risk, False, True
     if auto and risk.channel == "write":
@@ -337,7 +413,7 @@ _TRUST_OFF_PATTERNS = [
 def maybe_apply_trust_command(session_id: str, text: str) -> tuple[str, bool]:
     """识别用户消息中的 auto-pilot 开关指令并应用,返回 (处理后的文本, 是否消费)。
 
-    - 开:auto-pilot(会话级)
+    - 开:auto-pilot(会话级,持久化)
     - 关:回到 normal
     指令命中时从消息里移除指令片段(避免污染发给模型的上下文),仅返回提示文本占位。
     """
@@ -361,7 +437,8 @@ def maybe_apply_trust_command(session_id: str, text: str) -> tuple[str, bool]:
 # ---------- 状态查询(供面板 / 路由)----------
 
 def list_sessions_trust() -> dict:
-    """返回所有会话的 trust 状态(供面板展示)。"""
+    """返回所有会话的 trust 状态(供面板展示;含磁盘恢复项)。"""
+    _load_persisted_trust()
     out = {}
     with _session_trusts_lock:
         for sid, st in _session_trusts.items():
