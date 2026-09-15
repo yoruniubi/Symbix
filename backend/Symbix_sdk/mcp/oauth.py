@@ -222,10 +222,14 @@ class OAuthBrowserHandler:
         callback_port: int = DEFAULT_CALLBACK_PORT,
         headless: bool = False,
         timeout_seconds: int = 120,
+        no_browser: bool = False,
     ):
         self.callback_port = callback_port
         self.headless = headless
         self.timeout_seconds = timeout_seconds
+        # 启动期连接场景:true 时不弹浏览器、不启回调服务器,
+        # 授权直接失败(等用户在面板手动授权),避免无人值守时后端弹窗。
+        self.no_browser = no_browser
         self._result: Optional[AuthorizationCodeResult] = None
         self._error: Optional[str] = None
         self._state: Optional[str] = None
@@ -248,6 +252,12 @@ class OAuthBrowserHandler:
     # ---------- SDK 钩子 ----------
     async def redirect_handler(self, authorization_url: str):
         """SDK 调用:打开系统默认浏览器导航到授权 URL,并在本地端口起 HTTP 回调服务。"""
+        if self.no_browser:
+            # 启动期静默降级:不弹浏览器、不开回调服务器,直接标记失败。
+            print(f"[MCP OAuth] 启动期跳过浏览器授权(刷新失败需手动): {str(authorization_url)[:120]}")
+            self._error = "OAuth 刷新失败,需在面板手动重新授权"
+            self._done.set()
+            return
         self.reset()
         url_str = str(authorization_url)
         # 记录 state(从 URL query 提取),用于校验回调
@@ -378,6 +388,7 @@ def ensure_oauth_token(
     callback_port: int = DEFAULT_CALLBACK_PORT,
     on_status: Optional[callable] = None,
     timeout_seconds: int = 120,
+    no_browser: bool = False,
 ) -> str | None:
     """确保该 server 有可用 OAuth access_token(必要时触发浏览器授权)。
 
@@ -387,6 +398,9 @@ def ensure_oauth_token(
       - 无 token -> 触发浏览器授权(redirect/callback 钩子)后换 token
 
     返回 access_token 字符串;失败返回 None(错误信息在返回值外的异常或日志)。
+
+    no_browser:启动期传 True,刷新失败时不弹浏览器(无人值守场景),
+     直接失败,等用户在面板手动授权。
     """
     if not _MCP_SDK_AVAILABLE:
         print("[MCP OAuth] mcp SDK 未安装,无法执行 OAuth")
@@ -394,7 +408,7 @@ def ensure_oauth_token(
     if on_status:
         on_status("starting")
     handler = OAuthBrowserHandler(
-        callback_port=callback_port, timeout_seconds=timeout_seconds
+        callback_port=callback_port, timeout_seconds=timeout_seconds, no_browser=no_browser
     )
 
     storage = token_store.make_storage(server_id)

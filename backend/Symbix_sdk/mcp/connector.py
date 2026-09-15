@@ -236,14 +236,16 @@ class McpRemoteClient:
         allow_oauth: bool = False,
         oauth_store=None,
         oauth_status_cb: Optional[callable] = None,
+        oauth_no_browser: bool = False,
     ):
         self.server_id = server_id
         self.url = (url or "").rstrip("/")
         self.headers = dict(headers or {})
-        self.transport_hint = (transport or "sse").lower()
+        self.transport_hint = (transport or "sse").lower().replace("_", "-")
         self.allow_oauth = allow_oauth
         self.oauth_store = oauth_store
         self.oauth_status_cb = oauth_status_cb
+        self.oauth_no_browser = oauth_no_browser
         self._tools_cache: Optional[List[dict]] = None
         self._message_url: Optional[str] = None
         self._session_id: Optional[str] = None
@@ -319,6 +321,7 @@ class McpRemoteClient:
                 url=self.url,
                 token_store=store,
                 on_status=self.oauth_status_cb,
+                no_browser=getattr(self, "oauth_no_browser", False),
             )
             if token:
                 self.oauth_triggered = True
@@ -605,6 +608,7 @@ class McpServerManager:
         allow_oauth: bool = False,
         oauth_store=None,
         oauth_status_cb: Optional[callable] = None,
+        oauth_no_browser: bool = False,
     ) -> bool:
         """添加并连接远程 MCP server"""
         if server_id in self.servers:
@@ -619,6 +623,7 @@ class McpServerManager:
             allow_oauth=allow_oauth,
             oauth_store=oauth_store,
             oauth_status_cb=oauth_status_cb,
+            oauth_no_browser=oauth_no_browser,
         )
         ok = client.start()
         self.last_error = getattr(client, "last_error", None)
@@ -643,6 +648,7 @@ class McpServerManager:
             allow_oauth = bool(config.get("oauth") or config.get("allow_oauth"))
             oauth_store = config.get("oauth_store")
             oauth_status_cb = config.get("oauth_status_cb")
+            oauth_no_browser = bool(config.get("oauth_no_browser_on_start"))
             return self.add_remote_server(
                 server_id,
                 url,
@@ -651,6 +657,7 @@ class McpServerManager:
                 allow_oauth=allow_oauth,
                 oauth_store=oauth_store,
                 oauth_status_cb=oauth_status_cb,
+                oauth_no_browser=oauth_no_browser,
             )
         command = config.get("command")
         args = config.get("args") or []

@@ -190,8 +190,6 @@ const ROWS = {
   runningLeft:  { row: 2, frames: 8 },
   waving:       { row: 3, frames: 4 },
   jumping:      { row: 4, frames: 5 },
-  // 原始第 7 帧已经恢复站立,放进失败动作会造成"趴下后突然起身"的跳变。
-  // 这里的 frames 是优化后的播放序列长度,不是精灵图原始帧数。
   failed:       { row: 5, frames: 7 },
   waiting:      { row: 6, frames: 6 }, // 被抱起时循环(备用)
   running:      { row: 7, frames: 6 },

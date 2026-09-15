@@ -1,6 +1,8 @@
 import logging
+import os
+import re
 from typing import Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 try:
     from ddgs import DDGS
@@ -13,6 +15,9 @@ except ImportError:
     httpx = None
 
 logger = logging.getLogger(__name__)
+
+# 下载默认最大尺寸(与上传一致:10 MB,文献 PDF 基本够用)
+DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 
 
 def search_online(query: str, max_results: int = 5, timeout: int = 10) -> Dict:
@@ -102,6 +107,119 @@ def fetch_webpage(url: str, timeout: int = 10, user_agent: Optional[str] = None)
         return {"error": f"获取失败: {str(e)}"}
 
 
+def _safe_download_filename(url: str, headers) -> str:
+    """从 URL / Content-Disposition 提取安全文件名,避免路径穿越。"""
+    name = ""
+    cd = (headers or {}).get("content-disposition", "") if isinstance(headers, dict) else ""
+    m = re.search(r'filename\*?\s*=\s*(?:UTF-8\'\')?"?([^"\r\n;]+)"?', cd, re.I)
+    if m:
+        name = unquote(m.group(1).strip())
+    if not name:
+        path = urlparse(url).path
+        name = os.path.basename(path) if path else ""
+        name = unquote(name)
+    if not name or name in (".", ".."):
+        name = "download.bin"
+    # 去除路径分隔符与危险字符,只留安全段
+    name = re.sub(r"[\\/\r\n\x00]", "_", name)
+    name = name.strip(". ") or "download.bin"
+    return name[:160]
+
+
+def download_file(url: str, filename: Optional[str] = None, timeout: int = 30,
+                  max_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES) -> Dict:
+    """通用文件下载:把任意 URL 的响应体保存到 uploads/downloads/ 下。
+
+    适用:下载 PDF / 图片 / 压缩包 / 数据集等二进制文件,之后再交给
+    parse_file / doc_to_markdown 解析。不限制 Content-Type(这是下载工具
+    区别于 fetch_webpage 的意义)。路径固定在 uploads/downloads/ 沙箱内,
+    文件名自动从 Content-Disposition / URL 提取,可用 filename 覆盖。
+    """
+    if httpx is None:
+        return {"error": "httpx 库未安装,请运行 pip install httpx"}
+    if not url or not url.strip():
+        return {"error": "URL 不能为空"}
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc or parsed.scheme not in ("http", "https"):
+        return {"error": f"无效的 URL(必须为 http/https): {url}"}
+
+    try:
+        from Symbix_sdk.tools.file_pipeline import get_uploads_root, is_allowed_extension, assert_path_allowed
+    except Exception as e:
+        return {"error": f"下载失败: 沙箱路径模块不可用: {e}"}
+
+    headers = {"User-Agent": "Symbix-Agent/1.0"}
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with client.stream("GET", url, headers=headers) as resp:
+                resp.raise_for_status()
+                length = int(resp.headers.get("content-length") or 0)
+                if length > max_bytes:
+                    return {"error": f"文件过大: {length} bytes > {max_bytes} bytes"}
+                data = b""
+                for chunk in resp.iter_bytes(chunk_size=64 * 1024):
+                    data += chunk
+                    if len(data) > max_bytes:
+                        return {"error": f"文件过大(下载中止): > {max_bytes} bytes"}
+                content_type = resp.headers.get("content-type", "") or "application/octet-stream"
+                cd_headers = dict(resp.headers)
+    except httpx.TimeoutException:
+        return {"error": f"下载超时(>{timeout}秒)"}
+    except httpx.HTTPStatusError as e:
+        return {"error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}"}
+    except Exception as e:
+        logger.exception("下载失败: %s", url)
+        return {"error": f"下载失败: {str(e)}"}
+
+    if not data:
+        return {"error": "下载内容为空"}
+
+    # 文件名:优先用户指定,其次 Content-Disposition,再 URL 尾部
+    name = (filename or "").strip()
+    if not name:
+        name = _safe_download_filename(url, cd_headers)
+    name = re.sub(r"[\\/\r\n\x00]", "_", name).strip(". ") or "download.bin"
+    name = name[:160]
+
+    # 扩展名不合法时兜底 octet-stream(避免 save_upload 拒绝未知扩展名)
+    if not is_allowed_extension(name):
+        ext = os.path.splitext(name)[1].lower()
+        if not ext:
+            mime_ext = {"application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg",
+                        "image/webp": ".webp", "image/gif": ".gif", "text/csv": ".csv"}
+            name += mime_ext.get(content_type.split(";")[0].strip(), "")
+
+    import uuid
+    safe = re.sub(r"[^\w.\-]", "_", os.path.basename(name))[:120] or "download.bin"
+    unique = f"{uuid.uuid4().hex[:10]}_{safe}"
+    dest_dir = os.path.join(get_uploads_root(), "downloads")
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, unique)
+
+    try:
+        resolved = assert_path_allowed(dest)
+    except Exception as e:
+        return {"error": f"下载失败: 路径不再沙箱内: {e}"}
+
+    try:
+        with open(resolved, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        logger.exception("写入下载文件失败: %s", url)
+        return {"error": f"写入失败: {str(e)}"}
+
+    return {
+        "status": "ok",
+        "path": resolved,
+        "filename": os.path.basename(resolved),
+        "size": len(data),
+        "content_type": content_type,
+        "url": url,
+        "message": f"已下载: {os.path.basename(resolved)} -> {resolved} ({len(data)} bytes)",
+    }
+
+
+
 # 工具注册 Schema
 WEB_TOOLS_SCHEMAS = {
     "search_online": {
@@ -155,6 +273,35 @@ WEB_TOOLS_SCHEMAS = {
                 "user_agent": {
                     "type": "string",
                     "description": "自定义 User-Agent 头，默认为 Symbix-Agent/1.0。",
+                },
+            },
+            "required": ["url"],
+        },
+    },
+    "download_file": {
+        "risk_channel": "write",
+        "func": download_file,
+        "description": (
+            "通用文件下载:把任意 URL(http/https)的响应体保存到本地 uploads/downloads/ 目录。"
+            "适用于下载 PDF / 图片 / 压缩包 / 数据集等二进制文件,下载后再用 parse_file 或 doc_to_markdown 解析。"
+            "不限制 Content-Type,文件名自动从 Content-Disposition 或 URL 提取,可用 filename 参数覆盖。"
+            "路径固定在沙箱内的 uploads/downloads/,自动防路径穿越。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "要下载的 URL(必须为 http:// 或 https://)。",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "可选:保存的文件名(含扩展名)。不传时自动从 Content-Disposition / URL 提取。",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "请求超时时间(秒),默认 30。",
+                    "default": 30,
                 },
             },
             "required": ["url"],

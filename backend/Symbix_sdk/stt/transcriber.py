@@ -193,6 +193,9 @@ class SenseVoiceProvider(STTProvider):
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
+                # cwd=bin 目录:让 exe 的特征缓存(fbank_lfr_cmvn_feature.json)
+                # 落在 stt/bin 而非进程工作目录(backend 根)
+                cwd=stt_bin_dir(),
             )
         except Exception as e:
             raise STTProviderError(f"SenseVoice 枚举设备失败: {e}") from e
@@ -272,6 +275,9 @@ class SenseVoiceProvider(STTProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
+                # cwd=bin 目录:特征缓存(fbank_lfr_cmvn_feature.json)
+                # 写在 stt/bin,dll 也在该目录,避免污染 backend 根
+                cwd=stt_bin_dir(),
             )
         except Exception as e:
             raise STTProviderError(f"SenseVoice 启动失败: {e}") from e

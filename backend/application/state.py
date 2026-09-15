@@ -149,6 +149,8 @@ def start_oauth_connect(
 
 def initialize_mcp_servers():
     """从配置文件启动所有 MCP servers"""
+    import time as _time
+
     servers = mcp_config.get_servers()
     for server_id, config in servers.items():
         try:
@@ -156,10 +158,29 @@ def initialize_mcp_servers():
             # 远程服务:若顶层 mcp_api_key 有该 server 的 key,注入 Authorization: Bearer
             if cfg.get("url"):
                 key = mcp_config.get_api_key(server_id)
-                if key:
+                has_key = bool(key)
+                if has_key:
                     headers = dict(cfg.get("headers") or {})
                     headers.setdefault("Authorization", f"Bearer {key}")
                     cfg["headers"] = headers
+                # 无 API Key 但存过 OAuth token 且仍可刷新 → 启用 OAuth 自动续期
+                # (token 过期但带 refresh_token,connector 遇 401 会静默刷新重连,
+                #  不弹浏览器;否则启动后永远连不上,需手动重授)
+                if not has_key:
+                    tok = mcp_oauth_store.get_tokens_sync(server_id)
+                    refreshable = bool(
+                        tok
+                        and (
+                            tok.get("refresh_token")
+                            or not tok.get("expires_at")
+                            or float(tok.get("expires_at", 0)) > _time.time() + 30
+                        )
+                    )
+                    if refreshable:
+                        cfg["oauth"] = True
+                        cfg["oauth_store"] = mcp_oauth_store
+                        # 启动期不弹浏览器:refresh 失败就让用户在面板手动授权
+                        cfg["oauth_no_browser_on_start"] = True
             success = mcp_manager.add_from_config(server_id, cfg)
             if success:
                 print(f"[MCP] Started server: {server_id}")
