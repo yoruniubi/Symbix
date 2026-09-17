@@ -30,6 +30,22 @@ async def install_npm_mcp(req: InstallNpmRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/mcp/install/uvx")
+async def install_uvx_mcp(req: InstallNpmRequest):
+    """安装 uvx 形式的 MCP server(py 生态,如 mcp-server-sqlite)。"""
+    try:
+        result = mcp_installer.install_uvx_server(
+            req.package_name, req.server_id, req.args
+        )
+        if result.get("status") == "ok":
+            server_config = mcp_config.get_server(req.server_id)
+            if server_config:
+                mcp_manager.add_from_config(req.server_id, server_config)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/mcp/servers")
 async def add_mcp_server(req: AddMcpServerRequest):
     """添加 MCP server（远程 URL 或本地 npm/command）。"""
@@ -287,6 +303,36 @@ async def clear_mcp_oauth_token(server_id: str):
     server_id = (server_id or "").strip()
     mcp_oauth_store.clear(server_id)
     return {"status": "ok", "server_id": server_id, "message": "OAuth token 已清除"}
+
+
+@router.post("/mcp/oauth/authorize/{server_id}")
+async def authorize_mcp_oauth(server_id: str):
+    """显式触发某 server 的 OAuth 浏览器授权(手动授权按钮)。
+
+    适用场景:启动期静默降级失败、token 过期且 refresh 失效导致连不上时,
+    用户点面板上的「授权」按钮主动弹浏览器完成登录。
+    授权成功后后台会自动用新 token 重连 server。
+    """
+    server_id = (server_id or "").strip()
+    config = mcp_config.get_server(server_id)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"MCP '{server_id}' 不存在")
+    url = (config.get("url") or config.get("serverUrl") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail=f"MCP '{server_id}' 不是远程服务,无法 OAuth 授权")
+    # 已有 token → 先清掉旧的(token 已失效时刷新会被拒,重授必须换新)
+    # 仅清 tokens 保留 client_info(复用已有 client 注册,授权 URL 稳定)
+    tok = mcp_oauth_store.get_tokens_sync(server_id)
+    if tok:
+        mcp_oauth_store.clear_tokens(server_id)
+    start_oauth_connect(server_id, url, config)
+    return {
+        "status": "oauth_pending",
+        "server_id": server_id,
+        "connected": False,
+        "has_old_token": bool(tok),
+        "message": "已打开浏览器,请完成 OAuth 登录授权",
+    }
 
 
 @router.get("/mcp/config")

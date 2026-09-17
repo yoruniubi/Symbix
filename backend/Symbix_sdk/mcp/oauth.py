@@ -135,6 +135,16 @@ class TokenStore:
                 del self._data[server_id]
                 self._save()
 
+    def clear_tokens(self, server_id: str):
+        """仅清除 token,保留 client_info(重新授权时复用已有 client 注册,
+        不换 client_id / redirect_uri,授权 URL 保持稳定)。"""
+        with self._lock:
+            ns = self._data.get(server_id)
+            if isinstance(ns, dict):
+                ns["tokens"] = None
+                ns["updated_at"] = None
+                self._save()
+
     def list_servers(self) -> list[str]:
         with self._lock:
             return [k for k, v in self._data.items() if isinstance(v, dict)]

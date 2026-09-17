@@ -15,7 +15,34 @@ from application.state import (
     checkpoint_recorder,
 )
 import sys
+import os
 from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice
+
+
+def _ensure_bundled_runtime_on_path() -> None:
+    """将 SDK 捆绑运行时目录(bun.exe / uv.exe)注入 PATH。
+
+    skill 脚本(open_terminal 里的 `uv run ...` / `bun x ...`)与
+    stdio MCP 子进程都继承本后端进程的环境;注入后即使系统未装
+    node / pip,也能靠 SDK 内置的 bun.exe / uv.exe 拉起 uv / uvx /
+    bunx 语义的命令,不再依赖用户机器预装运行时。
+    """
+    try:
+        from Symbix_sdk.resource_path import resource
+        sdk_dir = str(resource("Symbix_sdk"))
+    except Exception as e:
+        print(f"[runtime] SDK 路径解析失败,跳过 PATH 注入: {e}")
+        return
+    if not os.path.isdir(sdk_dir):
+        return
+    path = os.environ.get("PATH", "")
+    if sdk_dir in path:
+        return
+    os.environ["PATH"] = sdk_dir + os.pathsep + path
+    print(f"[runtime] SDK 运行时目录已加入 PATH: {sdk_dir}")
+
+
+_ensure_bundled_runtime_on_path()
 
 
 def _force_close_sse(reason: str = "") -> None:

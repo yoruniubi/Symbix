@@ -36,6 +36,7 @@
         @open-add-chooser="openAddChooser"
         @toggle-mcp-server="toggleMcpServer"
         @remove-mcp="removeMcp"
+        @authorize-mcp="authorizeMcp"
         @refresh="handleMcpRefresh"
       />
 
@@ -218,7 +219,7 @@ const modelOptions = ref<{ label: string; value: string }[]>([])
 const currentModel = ref('gpt-4o-mini')
 const mcpConfigData = ref<any>(null)
 const mcpToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
-const mcpServerGroups = ref<{ server_id: string; tool_count: number; tools: any[]; error?: string }[]>([])
+const mcpServerGroups = ref<{ server_id: string; tool_count: number; tools: any[]; error?: string; url?: string }[]>([])
 const expandedMcpServers = ref<Set<string>>(new Set())
 const nativeToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
 const hasApiKey = computed(() => !!settings.value.apiKey)
@@ -318,6 +319,31 @@ async function removeMcp(serverId: string) {
     await refreshMcpPanel()
   } catch (e: any) {
     messageUi.error(t('mcpPanel.removeFail', { msg: e.message || e }))
+  }
+}
+
+async function authorizeMcp(serverId: string) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/mcp/oauth/authorize/${encodeURIComponent(serverId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`)
+    messageUi.info(data.message || t('mcpPanel.authorizePrompt'))
+    // 浏览器授权需要用户操作,轮询等待后台任务完成
+    oauthWaiting.value = true
+    const pollResult = await waitOauthConnect(serverId)
+    oauthWaiting.value = false
+    if (pollResult === 'ok') {
+      messageUi.success(t('addMcpModal.oauthDone'))
+    } else {
+      messageUi.warning(t('addMcpModal.oauthError', { msg: pollResult || t('mcpPanel.statusOffline') }))
+    }
+    await refreshMcpPanel()
+  } catch (e: any) {
+    messageUi.error(t('mcpPanel.authorizeFail', { msg: e.message || e }))
   }
 }
 
@@ -1110,9 +1136,15 @@ async function refreshMcpPanel(silent = true) {
       mcpServerGroups.value = data.servers || []
       // 合并配置中尚未连接的 server
       const cfgServers = mcpConfigData.value?.mcpServers || {}
+      // 已连接的分组也补上 url(MCP 面板据此显示 OAuth 授权按钮,仅远程服务)
+      for (const g of mcpServerGroups.value) {
+        const cfg = cfgServers[g.server_id]
+        if (cfg && cfg.url) g.url = cfg.url
+      }
       for (const id of Object.keys(cfgServers)) {
         if (!mcpServerGroups.value.find(g => g.server_id === id)) {
-          mcpServerGroups.value.push({ server_id: id, tool_count: 0, tools: [], error: t('mcpPanel.statusOffline') })
+          const cfg = cfgServers[id]
+          mcpServerGroups.value.push({ server_id: id, tool_count: 0, tools: [], error: t('mcpPanel.statusOffline'), url: cfg?.url })
         }
       }
       expandedMcpServers.value.clear()

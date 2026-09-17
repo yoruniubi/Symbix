@@ -3,9 +3,74 @@ import json
 import threading
 import queue
 import uuid
+import os
+import shutil
 from typing import Optional, Dict, List, Any
 
 import httpx
+
+
+# 可降级为 SDK 内置二进制的运行时分派表:
+#   names  : 配置里出现的命令名(含常见 Windows 变体)
+#   bin    : SDK 捆绑的可执行文件(Symbix_sdk 下相对路径)
+#   prefix : 降级后前置子命令(模拟原 CLI 的语义)
+#   strip  : 原 CLI 专属、降级模式不需要的标志
+#   check  : 系统已安装该 CLI 时不降级
+_RUNNER_FALLBACKS = [
+    {
+        "names": ("npx", "npx.cmd", "npx.exe"),
+        "bin": "Symbix_sdk/bun.exe",
+        "prefix": ["x"],
+        "strip": ["-y"],
+        "check": "npx",
+    },
+    {
+        # uvx 语义 = `uv tool run`:未装 uvx 时用 SDK 内置 uv.exe 模拟
+        "names": ("uvx", "uvx.cmd", "uvx.exe"),
+        "bin": "Symbix_sdk/uv.exe",
+        "prefix": ["tool", "run"],
+        "strip": [],
+        "check": "uvx",
+    },
+]
+
+
+def _resolve_sdk_exe(rel_path: str) -> Optional[str]:
+    """定位 SDK 内置可执行文件(不在 PATH,用 resource 解析绝对路径)。"""
+    try:
+        from Symbix_sdk.resource_path import resource
+        p = resource(rel_path)
+    except Exception:
+        return None
+    if os.path.exists(str(p)):
+        return str(p)
+    return None
+
+
+def resolve_stdio_runner(command: str, args: Optional[List[str]] = None) -> tuple[str, List[str]]:
+    """解析 stdio MCP 的启动命令(统一运行时降级)。
+
+    - `npx`(含 .cmd/.exe 变体):系统无 npx 时降级 SDK 内置
+      bun.exe 的 bunx 语义(`bun x <pkg>`,并剥掉 npx 专属 -y);
+    - `uvx`(含变体):系统无 uvx 时降级 SDK 内置 uv.exe 的
+      `uv tool run <pkg>`(uvx 等价命令);
+    - 其它命令或系统已有对应 CLI:原样返回,绝不误改。
+
+    返回 (command, args)。
+    """
+    base = os.path.basename((command or "").strip()).lower()
+    args = list(args or [])
+    for spec in _RUNNER_FALLBACKS:
+        if base not in spec["names"]:
+            continue
+        if shutil.which(spec["check"]):
+            return command, args
+        exe = _resolve_sdk_exe(spec["bin"])
+        if exe:
+            cleaned = [a for a in args if a not in spec["strip"]]
+            return exe, spec["prefix"] + cleaned
+        return command, args  # SDK 也没有 → 保留原命令,让报错自然暴露
+    return command, args
 
 
 class McpServerClient:
@@ -28,6 +93,12 @@ class McpServerClient:
     def start(self):
         """启动 MCP server 进程"""
         import sys
+        # npx fallback → SDK 内置 bun.exe x(系统没 node 但捆绑了 bun 时生效)
+        resolved_cmd, resolved_args = resolve_stdio_runner(self.command, self.args)
+        effective = resolved_cmd or self.command
+        eff_args = resolved_args if resolved_cmd != self.command else self.args
+        if effective != self.command:
+            print(f"[MCP] '{self.server_id}': 未检测到 npx,使用 '{effective}' 替代")
         try:
             # Windows 下 npx/npm 等是 .cmd 脚本，需要 shell=True 才能找到
             use_shell = sys.platform == "win32"
@@ -39,14 +110,14 @@ class McpServerClient:
                 bufsize=0,
             )
             if use_shell:
-                # Windows shlex.quote 不可靠，手动给含空格的参数加双引号
-                cmd_str = self.command + " " + " ".join(
-                    f'"{a}"' if " " in a else a for a in self.args
+                # Windows shlex.quote 不可靠,手动给含空格的参数加双引号
+                cmd_str = effective + " " + " ".join(
+                    f'"{a}"' if " " in a else a for a in eff_args
                 )
                 self.process = subprocess.Popen(cmd_str, shell=True, **popen_kwargs)
             else:
                 self.process = subprocess.Popen(
-                    [self.command] + self.args, **popen_kwargs
+                    [effective] + eff_args, **popen_kwargs
                 )
 
             # 启动读取线程

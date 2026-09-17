@@ -73,3 +73,6 @@ Thumbs.db
 
 # detect-secrets / pre-commit local
 # (baseline IS tracked)
+
+# binary exe
+*.exe

@@ -43,6 +43,22 @@
             </div>
             <div class="mcp-server-ops" @click.stop>
               <n-button
+                v-if="group.url"
+                size="small"
+                quaternary
+                type="primary"
+                class="panel-icon-btn"
+                :title="$t('mcpPanel.authorize')"
+                @click="handleAuthorizeMcp(group.server_id)"
+              >
+                <template #icon>
+                  <!-- 插头:授权即“接通”OAuth 服务 -->
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>
+                  </svg>
+                </template>
+              </n-button>
+              <n-button
                 size="small"
                 quaternary
                 type="error"
@@ -97,7 +113,7 @@ import { getMcpToolI18n } from '@/utils/mcpToolI18n'
 
 const props = withDefaults(defineProps<{
   activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null
-  mcpServerGroups: { server_id: string; tool_count: number; tools: any[]; error?: string }[]
+  mcpServerGroups: { server_id: string; tool_count: number; tools: any[]; error?: string; url?: string }[]
   mcpToolList: any[]
   expandedMcpServers: Set<string>
   mcpStatusMap: Record<string, { status: string; tools_count?: number; error?: string; transport?: string }>
@@ -110,6 +126,7 @@ const emit = defineEmits<{
   (e: 'update:activePanel', value:'files'| 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null): void
   (e: 'toggleMcpServer', serverId: string): void
   (e: 'removeMcp', serverId: string): void
+  (e: 'authorizeMcp', serverId: string): void
   (e: 'refresh'): void
   (e: 'openAddChooser', kind: 'mcp'): void
 }>()
@@ -148,6 +165,10 @@ function handleToggleMcpServer(serverId: string) {
 
 function handleRemoveMcp(serverId: string) {
   emit('removeMcp', serverId)
+}
+
+function handleAuthorizeMcp(serverId: string) {
+  emit('authorizeMcp', serverId)
 }
 
 function handleRefresh() {
