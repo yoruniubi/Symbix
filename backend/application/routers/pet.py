@@ -15,8 +15,12 @@ from application.services.pet_action import LOOP_ACTIONS, SSE_SHUTDOWN, normaliz
 from Symbix_sdk.color_extract import extract_palette_b64, palette_to_hint
 
 
-# 前端静态资源目录（相对于 backend 运行目录）
-_PUBLIC_PET_DIR = Path(os.environ.get("PET_PUBLIC_DIR", "../Symbix_frontend/public/pet")).resolve()
+# 前端静态资源目录(相对于 backend 运行目录)
+# codex_pet:Codex 桌宠导入(pet.json + spritesheet 位图动画)
+# pixiv_pet:pet-forge 生成的 SVG 桌宠(base.svg + states.json + theme.json)
+_PUBLIC_DIR = Path(os.environ.get("PET_PUBLIC_DIR", "../Symbix_frontend/public")).resolve()
+_CODEX_PET_DIR = Path(os.environ.get("PET_CODEX_DIR", str(_PUBLIC_DIR / "codex_pet"))).resolve()
+_PIXIV_PET_DIR = Path(os.environ.get("PET_PIXIV_DIR", str(_PUBLIC_DIR / "pixiv_pet"))).resolve()
 
 # pet-forge 脚本目录
 # pet.py 在 backend/application/routers/,脚本在 backend/Symbix_sdk/skill/installed_skills/pet-forge/scripts/
@@ -222,7 +226,7 @@ def _safe_folder_name(name: str) -> str:
 
 @router.post("/pet/import-path")
 async def pet_import_from_path(req: PetImportPathRequest):
-    """从本机路径直接拷贝桌宠文件夹到 public/pet/{folder_name}/。
+    """从本机路径直接拷贝桌宠文件夹到 public/codex_pet/{folder_name}/。
 
     桌面端（Tauri）选完目录后只传路径，走本地 shutil 拷贝，
     避免浏览器 multipart 上传大文件夹卡住 / 弹出「是否上传」确认框。
@@ -231,10 +235,10 @@ async def pet_import_from_path(req: PetImportPathRequest):
     meta = _validate_pet_folder(source)
 
     folder_name = _safe_folder_name(req.folder_name or source.name)
-    target_dir = _PUBLIC_PET_DIR / folder_name
+    target_dir = _CODEX_PET_DIR / folder_name
 
     try:
-        _PUBLIC_PET_DIR.mkdir(parents=True, exist_ok=True)
+        _CODEX_PET_DIR.mkdir(parents=True, exist_ok=True)
         if target_dir.exists():
             shutil.rmtree(target_dir, ignore_errors=True)
         # 本地磁盘拷贝，几 MB 通常 < 1s
@@ -264,7 +268,7 @@ async def pet_import_from_path(req: PetImportPathRequest):
         "folder": str(target_dir),
         "folder_name": folder_name,
         "display_name": display_name,
-        "preview": f"/pet/{folder_name}/{preview}",
+        "preview": f"/codex_pet/{folder_name}/{preview}",
         "files_saved": files_saved,
         "message": f"皮肤文件夹 '{folder_name}' 导入成功",
     }
@@ -281,7 +285,7 @@ async def pet_generate(req: PetGenerateRequest):
     3. derive_mirrors（自动镜像补全 left 部件）
     4. validate_states 校验
     5. pack_theme → 主题目录（含 base.svg, states.json, theme.json）
-    6. 复制到 public/pet/{name}/ 供前端访问
+    6. 复制到 public/pixiv_pet/{name}/ 供前端访问
     """
     if generate_rig is None or generate_states_all is None or pack_theme is None:
         raise HTTPException(status_code=503, detail="pet-forge 脚本未正确加载")
@@ -293,12 +297,12 @@ async def pet_generate(req: PetGenerateRequest):
     if "/" in folder_name or "\\" in folder_name or ".." in folder_name:
         raise HTTPException(status_code=400, detail="皮肤名称包含非法字符")
 
-    # 目标目录：public/pet/{folder_name}
-    target_dir = _PUBLIC_PET_DIR / folder_name
+    # 目标目录:public/pixiv_pet/{folder_name}
+    target_dir = _PIXIV_PET_DIR / folder_name
     if target_dir.exists():
         shutil.rmtree(target_dir, ignore_errors=True)
 
-    # 临时工作目录（在系统临时目录下）
+    # 临时工作目录(在系统临时目录下)
     import tempfile
     work_dir = Path(tempfile.mkdtemp(prefix="pet_forge_"))
     try:
@@ -361,11 +365,11 @@ async def pet_generate(req: PetGenerateRequest):
             # schema_path 可选,不传
         )
 
-        # 5. 将工作目录内容复制到 public/pet/{folder_name}
+        # 5. 将工作目录内容复制到 public/pixiv_pet/{folder_name}
         shutil.copytree(work_dir, target_dir, dirs_exist_ok=True)
 
         # 6. 构建返回信息
-        preview = f"/pet/{folder_name}/base.svg"  # 用 SVG 作为预览
+        preview = f"/pixiv_pet/{folder_name}/base.svg"  # 用 SVG 作为预览
         return {
             "status": "ok",
             "folder": str(target_dir),
@@ -396,7 +400,7 @@ async def pet_import_folder(
     """浏览器回退：仅上传关键文件（pet.json / spritesheet 等），避免整夹上传卡死。"""
     folder_name = _safe_folder_name(folder_name)
 
-    target_dir = _PUBLIC_PET_DIR / folder_name
+    target_dir = _CODEX_PET_DIR / folder_name
     if target_dir.exists():
         shutil.rmtree(target_dir, ignore_errors=True)
 
@@ -465,7 +469,7 @@ async def pet_import_folder(
         "folder": str(target_dir),
         "folder_name": folder_name,
         "display_name": display_name,
-        "preview": f"/pet/{folder_name}/{preview}",
+        "preview": f"/codex_pet/{folder_name}/{preview}",
         "files_saved": saved_count,
         "message": f"皮肤文件夹 '{folder_name}' 导入成功",
     }

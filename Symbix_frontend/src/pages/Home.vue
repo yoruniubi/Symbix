@@ -963,9 +963,9 @@ async function onPetSwitched(payload: {
   } catch (e: any) {
     console.error('[pet] failed to switch pet texture:', e)
     // 切换失败时回退到内置 frieren，避免桌宠卡住
-    if (payload.spritesheetPath !== '/pet/frieren/spritesheet.webp') {
+    if (payload.spritesheetPath !== '/codex_pet/frieren/spritesheet.webp') {
       try {
-        await loadPetTexture('/pet/frieren/spritesheet.webp')
+        await loadPetTexture('/codex_pet/frieren/spritesheet.webp')
         try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
       } catch { /* 彻底失败只能提示 */ }
     }
@@ -988,7 +988,7 @@ onMounted(async () => {
   })
 
   // 读取上次保存的皮肤，默认 frieren
-  let spritesheetPath = '/pet/frieren/spritesheet.webp'
+  let spritesheetPath = '/codex_pet/frieren/spritesheet.webp'
   try {
     const savedPetId = localStorage.getItem('currentPetId')
     // 旧版默认内置 '02'/'01' 现已废弃，回退到 frieren
@@ -998,7 +998,10 @@ onMounted(async () => {
         const savedPets = JSON.parse(savedPetsStr)
         const found = savedPets.find((p: any) => p.id === savedPetId)
         if (found && found.preview) {
-          spritesheetPath = found.preview
+          // 旧目录分家前路径 /pet/xxx → /codex_pet/xxx(customPets 存的都是导入的 codex 桌宠)
+          spritesheetPath = found.preview.startsWith('/pet/')
+            ? found.preview.replace(/^\/pet\//, '/codex_pet/')
+            : found.preview
         }
       }
     }
@@ -1010,7 +1013,7 @@ onMounted(async () => {
   } catch (e) {
     // 加载失败（如旧导入皮肤损坏/格式不支持），回退到内置 frieren
     console.warn(`[pet] 加载 ${spritesheetPath} 失败，回退到 frieren`, e)
-    spritesheetPath = '/pet/frieren/spritesheet.webp'
+    spritesheetPath = '/codex_pet/frieren/spritesheet.webp'
     try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
     texture = await Assets.load<Texture>(spritesheetPath)
   }

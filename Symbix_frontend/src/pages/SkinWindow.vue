@@ -292,7 +292,7 @@ const skillReady = ref(true)
 
 const currentPetId = ref('frieren')
 const availablePets = ref<PetSkin[]>([
-  { id: 'frieren', displayName: 'Frieren', preview: '/pet/frieren/spritesheet.webp', source: 'builtin' },
+  { id: 'frieren', displayName: 'Frieren', preview: '/codex_pet/frieren/spritesheet.webp', source: 'builtin' },
 ])
 
 const showSkillModal = ref(false)
@@ -430,7 +430,11 @@ function pushImportedPet(pet: PetSkin) {
 /** 迁移旧数据：将中文 source 转换为英文 */
 function migrateOldPetData(pets: PetSkin[]): PetSkin[] {
   return pets.map(pet => {
-    // 将旧的中文 source 值转换为英文
+    // 1. 旧目录分家前路径 /pet/xxx → /codex_pet/xxx(导入的都是 codex 桌宠)
+    if (pet.preview.startsWith('/pet/')) {
+      pet = { ...pet, preview: pet.preview.replace(/^\/pet\//, '/codex_pet/') }
+    }
+    // 2. 将旧的中文 source 值转换为英文
     if (pet.source === '导入' || pet.source === '已导入') {
       return { ...pet, source: 'imported' }
     }
@@ -477,7 +481,7 @@ async function importViaTauriDialog() {
 
     const result = await res.json()
     const displayName = result.display_name || folderName
-    const preview = result.preview || `/pet/${folderName}/spritesheet.webp`
+    const preview = result.preview || `/codex_pet/${folderName}/spritesheet.webp`
 
     pushImportedPet({
       id: `custom_${Date.now()}`,
@@ -569,7 +573,7 @@ async function importViaBrowserFallback() {
     pushImportedPet({
       id: `custom_${Date.now()}`,
       displayName,
-      preview: `/pet/${folderName}/spritesheet.webp`,
+      preview: `/codex_pet/${folderName}/spritesheet.webp`,
       source: 'imported',
     })
     loadingMsg.destroy()
@@ -602,7 +606,8 @@ async function switchPet(pet: PetSkin) {
     currentPetId.value = pet.id
     localStorage.setItem('currentPetId', pet.id)
 
-    const folderName = pet.preview.replace(/^\/pet\//, '').replace(/\/.*$/, '')
+    // 从 preview 路径提取文件夹名(兼容 /pet/ 旧前缀、/codex_pet/、/pixiv_pet/)
+    const folderName = pet.preview.replace(/^\/(?:pet|codex_pet|pixiv_pet)\//, '').replace(/\/.*$/, '')
     // 内置皮肤（非 custom_）直接用 id 作为文件夹名；自定义皮肤从 preview 路径提取
     const petFolder = pet.id.startsWith('custom_') ? folderName : pet.id
 
@@ -629,7 +634,7 @@ function removePet(id: string) {
     void notifyPetSwitched({
       petId: 'frieren',
       petFolder: 'frieren',
-      spritesheetPath: '/pet/frieren/spritesheet.webp',
+      spritesheetPath: '/codex_pet/frieren/spritesheet.webp',
       displayName: 'Frieren',
     })
   }
