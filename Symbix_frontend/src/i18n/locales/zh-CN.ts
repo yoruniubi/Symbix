@@ -429,7 +429,7 @@ export default {
     empty: '暂无皮肤',
     namePlaceholder: '例如 my-pet',
     pickFolderTitle: '选择 Codex 桌宠文件夹（含 pet.json）',
-    skillMessage: '请使用 pet-forge 技能为我生成一个新的桌宠皮肤。\n\n皮肤名称：{name}\n外观描述：{prompt}\n\n请严格按照 pet-forge skill 的流水线流程：generate_rig → validate_rig → generate_states_batch → derive_mirrors → validate_states → pack_theme。',
+    skillMessage: '请使用 pet-forge 技能为我生成一个新的桌宠皮肤。\n\n皮肤名称:{name}\n外观描述:{prompt}\n\n请按照 pet-forge skill 的工作流:你自己直接产出 base.svg 与 states.json(不要调用任何生成脚本),然后依次用脚本校验 validate_rig → derive_mirrors → validate_states → pack_theme,打包输出到 public/pixiv_pet/ 目录。',
   },
 
   // ===== Setting Page =====

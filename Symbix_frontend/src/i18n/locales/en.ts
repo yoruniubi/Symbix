@@ -430,7 +430,7 @@ export default {
     empty: 'No skins yet',
     namePlaceholder: 'e.g. my-pet',
     pickFolderTitle: 'Select Codex pet folder (with pet.json)',
-    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\nFollow the pet-forge skill pipeline strictly: generate_rig → validate_rig → generate_states_batch → derive_mirrors → validate_states → pack_theme.',
+    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\nFollow the pet-forge skill workflow: produce base.svg and states.json yourself directly (do not call any generation script), then run validate_rig → derive_mirrors → validate_states → pack_theme to validate and pack into public/pixiv_pet/.',
   },
 
   // ===== Setting Page =====
