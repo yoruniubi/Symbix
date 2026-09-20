@@ -248,6 +248,7 @@ const skillForm = ref({
   repo_url: '',
   branch: '',
   overwrite: false,
+  cli_package: '',
 })
 const mcpForm = ref({
   server_id: '',
@@ -1164,33 +1165,59 @@ async function submitCreateSkill() {
   creatingSkill.value = true
   try {
     if (skillAddMode.value === 'github') {
-      const repo = skillForm.value.repo_url.trim()
-      if (!repo) {
-        messageUi.warning('请填写 GitHub 仓库地址')
-        return
-      }
-      const res = await fetch(`${BACKEND_URL}/skills/install/github`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repo_url: repo,
-          skill_name: skillForm.value.skill_name.trim(),
-          branch: skillForm.value.branch.trim(),
-          overwrite: !!skillForm.value.overwrite,
-        }),
-      })
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`
-        try {
-          const err = await res.json()
-          detail = err.detail || err.message || detail
-        } catch {
-          detail = await res.text() || detail
+      const cliPackage = skillForm.value.cli_package.trim()
+      if (cliPackage) {
+        // 直接安装名称(npx skills add <name>,无 npx 时降级 SDK 内置 bun.exe)
+        const resPack = await fetch(`${BACKEND_URL}/skills/install/cli`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            package: cliPackage,
+            skill_name: skillForm.value.skill_name.trim(),
+            overwrite: !!skillForm.value.overwrite,
+          }),
+        })
+        if (!resPack.ok) {
+          let detail = `HTTP ${resPack.status}`
+          try {
+            const err = await resPack.json()
+            detail = err.detail || err.message || detail
+          } catch {
+            detail = await resPack.text() || detail
+          }
+          throw new Error(detail)
         }
-        throw new Error(detail)
+        const dataPack = await resPack.json()
+        messageUi.success(dataPack.message || 'Skill 安装成功')
+      } else {
+        const repo = skillForm.value.repo_url.trim()
+        if (!repo) {
+          messageUi.warning('请填写 GitHub 仓库地址或直接安装名称')
+          return
+        }
+        const res = await fetch(`${BACKEND_URL}/skills/install/github`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repo_url: repo,
+            skill_name: skillForm.value.skill_name.trim(),
+            branch: skillForm.value.branch.trim(),
+            overwrite: !!skillForm.value.overwrite,
+          }),
+        })
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`
+          try {
+            const err = await res.json()
+            detail = err.detail || err.message || detail
+          } catch {
+            detail = await res.text() || detail
+          }
+          throw new Error(detail)
+        }
+        const data = await res.json()
+        messageUi.success(data.message || 'Skill 安装成功')
       }
-      const data = await res.json()
-      messageUi.success(data.message || 'Skill 安装成功')
     } else {
       const name = skillForm.value.skill_name.trim()
       if (!name) {
@@ -1225,7 +1252,7 @@ async function submitCreateSkill() {
     showAddSkillModal.value = false
     skillForm.value = {
       skill_name: '', display_name: '', description: '', purpose: '', instructions: '',
-      repo_url: '', branch: '', overwrite: false,
+      repo_url: '', branch: '', overwrite: false, cli_package: '',
     }
     await refreshSkillList()
   } catch (e: any) {

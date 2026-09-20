@@ -18,6 +18,7 @@ from application.services.pet_action import LOOP_ACTIONS, SSE_SHUTDOWN, normaliz
 _PUBLIC_DIR = Path(os.environ.get("PET_PUBLIC_DIR", "../Symbix_frontend/public")).resolve()
 _CODEX_PET_DIR = Path(os.environ.get("PET_CODEX_DIR", str(_PUBLIC_DIR / "codex_pet"))).resolve()
 
+router = APIRouter(tags=["pet"])
 
 
 class PetActionRequest(BaseModel):

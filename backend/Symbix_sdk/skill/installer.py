@@ -1,6 +1,7 @@
-"""从 GitHub 仓库安装 Skill（对标 Claude Code: npx skills add <repo> --skill <name>）"""
+"""从仓库/包名安装 Skill(对标 Claude Code: npx skills add <repo> --skill <name>)"""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -167,7 +168,7 @@ def uninstall_skill(skill_name: str, target_dir: str) -> dict:
     name = (skill_name or "").strip()
     if not name:
         return {"ok": False, "error": "skill_name 不能为空"}
-    # 安全：只允许目录名
+    # 安全:只允许目录名
     if "/" in name or "\\" in name or name in (".", ".."):
         return {"ok": False, "error": "非法 skill 名称"}
     path = os.path.join(target_dir, name)
@@ -175,3 +176,123 @@ def uninstall_skill(skill_name: str, target_dir: str) -> dict:
         return {"ok": False, "error": f"Skill '{name}' 不存在"}
     shutil.rmtree(path)
     return {"ok": True, "skill_name": name, "message": f"Skill '{name}' 已删除"}
+
+
+def _resolve_cli_executable(*names: str) -> Optional[str]:
+    """在 PATH 中查找可执行文件,支持 .cmd/.exe 变体。"""
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+class SkillCliError(RuntimeError):
+    """skills CLI 不可用/无法启动时抛出(HTTP 503)。"""
+
+
+def install_skill_via_cli(
+    package: str,
+    target_dir: str,
+    skill_name: str = "",
+    overwrite: bool = False,
+) -> dict:
+    """通过官方 skills CLI 安装(对标 `npx skills add <name>`)。
+
+    支持仓库短名(vercel-labs/agent-skills)、包名(notion)、GitHub URL 等;本机无 npx 时自动降级 SDK 内置 bun.exe(`bun x skills add`)。
+
+    :param package: add 的目标(仓库短名 / 包名 / URL)
+    :param target_dir: 安装目标目录
+    :param skill_name: 可选,仓库内指定 skill 名
+    :param overwrite: 是否覆盖
+    """
+    import subprocess as sp
+    from Symbix_sdk.resource_path import resource
+
+    package = (package or "").strip()
+    if not package:
+        raise ValueError("package 不能为空")
+    skill_name = (skill_name or "").strip()
+
+    # 运行器:优先 npx,未装则降级 SDK 内置 bun.exe
+    npx = _resolve_cli_executable("npx", "npx.cmd", "npx.exe")
+    bun = None
+    if not npx:
+        try:
+            bun = str(resource("Symbix_sdk/bun.exe"))
+            if not os.path.exists(bun):
+                bun = None
+        except Exception:
+            bun = None
+
+    if npx:
+        base = ["npx", "-y", "skills", "add", package, "--json", "-y", "--copy"]
+        if skill_name:
+            base += ["--skill", skill_name]
+    elif bun:
+        base = [bun, "x", "skills", "add", package, "--json", "-y", "--copy"]
+        if skill_name:
+            base += ["--skill", skill_name]
+    else:
+        return {"ok": False, "error": "未检测到 npx 且无 SDK 内置 bun.exe,无法运行 skills CLI", "run_type": None}
+
+    use_shell = bool(npx)  # npx 是 .cmd 脚本需 shell;bun.exe 是原生二进制走参数列表
+    tmp_root = tempfile.mkdtemp(prefix="symbix-skill-cli-")
+    try:
+        try:
+            if use_shell:
+                cmd_line = base[0] + " " + " ".join(f'"{a}"' if " " in a else a for a in base[1:])
+                result = sp.run(cmd_line, cwd=tmp_root, capture_output=True, shell=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+            else:
+                result = sp.run(base, cwd=tmp_root, capture_output=True, shell=False, text=True, encoding="utf-8", errors="replace", timeout=600)
+        except sp.TimeoutExpired:
+            return {"ok": False, "error": "skills add 超时(>600s)", "run_type": "npx" if npx else "bun"}
+        except FileNotFoundError:
+            return {"ok": False, "error": "npx 或 bun.exe 启动失败", "run_type": "npx" if npx else "bun"}
+
+        stdout = result.stdout or ""
+        # skills CLI 会输出 npm 警告行,JSON 在后面,取最后一个 [ .. ]
+        start = stdout.find("[")
+        end = stdout.rfind("]")
+        installed = []
+        if start >= 0 and end > start:
+            try:
+                data = json.loads(stdout[start:end + 1])
+                installed = [d for d in data if d.get("status") == "installed"]
+            except json.JSONDecodeError:
+                pass
+
+        if result.returncode != 0 or not installed:
+            detail = (result.stderr or result.stdout or "").strip()
+            return {
+                "ok": False,
+                "error": f"skills add 失败(rc={result.returncode}): {detail[-300:]}",
+                "run_type": "npx" if npx else "bun",
+            }
+
+        # 安装成功后把产物从临时 cwd 拷到目标目录
+        # CLI 输出里给出实际安装路径
+        first = installed[0]
+        name = first.get("name", "")
+        src = first.get("path", "")
+        if not name or not src or not os.path.isdir(src):
+            return {"ok": False, "error": f"CLI 输出缺失安装路径: {first}", "run_type": "npx" if npx else "bun"}
+
+        dest_path = os.path.join(target_dir, name)
+        if os.path.exists(dest_path):
+            if not overwrite:
+                return {"ok": False, "error": f"Skill '{name}' 已存在,如需覆盖请设置 overwrite=true", "run_type": "npx" if npx else "bun"}
+            shutil.rmtree(dest_path)
+        os.makedirs(target_dir, exist_ok=True)
+        shutil.copytree(src, dest_path)
+
+        return {
+            "ok": True,
+            "skill_name": name,
+            "path": dest_path,
+            "source": package,
+            "run_type": "npx" if npx else "bun",
+            "message": f"Skill '{name}' 已通过 {'npx' if npx else 'bun'} skills CLI 安装",
+        }
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)

@@ -2,7 +2,7 @@
 import os
 from fastapi import APIRouter, HTTPException
 
-from application.schemas import CreateSkillRequest, InstallSkillGithubRequest
+from application.schemas import CreateSkillRequest, InstallSkillCliRequest, InstallSkillGithubRequest
 from application.state import BASE_DIR, skill_registry, tool_registry
 
 router = APIRouter(tags=["skills"])
@@ -65,6 +65,40 @@ async def install_skill_github(req: InstallSkillGithubRequest):
         "skill_name": result.get("skill_name"),
         "path": result.get("path"),
         "source": result.get("source"),
+        "message": result.get("message"),
+        "count": len(skill_registry.list()),
+    }
+
+
+@router.post("/skills/install/cli")
+async def install_skill_cli(req: InstallSkillCliRequest):
+    """通过官方 skills CLI 直接安装(对标: npx skills add <name>,支持包名/仓库短名/URL)"""
+    from Symbix_sdk.skill.installer import SkillCliError, install_skill_via_cli
+
+    if not (req.package or "").strip():
+        raise HTTPException(status_code=400, detail="package 不能为空")
+    try:
+        result = install_skill_via_cli(
+            package=req.package,
+            skill_name=req.skill_name,
+            target_dir=skill_registry.skills_dir,
+            overwrite=req.overwrite,
+        )
+    except SkillCliError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "安装 skill 失败")
+
+    skill_registry.scan()
+    tool_registry.refresh_skills()
+    return {
+        "status": "ok",
+        "skill_name": result.get("skill_name"),
+        "path": result.get("path"),
+        "source": result.get("source"),
+        "run_type": result.get("run_type"),
         "message": result.get("message"),
         "count": len(skill_registry.list()),
     }

@@ -14,7 +14,14 @@
     </n-tabs>
     <n-form label-placement="top" size="small">
       <template v-if="mode === 'github'">
-        <n-form-item :label="$t('addSkillModal.repoLabel')" required>
+        <n-form-item :label="$t('addSkillModal.cliLabel')">
+          <n-input v-model:value="form.cli_package" :placeholder="$t('addSkillModal.cliPlaceholder')" />
+          <template #feedback>
+            <span style="color: var(--n-text-color-3); font-size: 12px;">{{ $t('addSkillModal.cliHint') }}</span>
+          </template>
+        </n-form-item>
+        <n-divider style="margin: 4px 0 12px;">{{ $t('addSkillModal.orDivider') }}</n-divider>
+        <n-form-item :label="$t('addSkillModal.repoLabel')">
           <n-input v-model:value="form.repo_url" :placeholder="$t('addSkillModal.repoPlaceholder')" />
         </n-form-item>
         <n-form-item :label="$t('addSkillModal.skillNameLabel')">
@@ -70,6 +77,7 @@ defineProps<{
     repo_url: string
     branch: string
     overwrite: boolean
+    cli_package: string
   }
 }>()
 

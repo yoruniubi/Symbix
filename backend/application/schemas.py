@@ -141,3 +141,10 @@ class InstallSkillGithubRequest(BaseModel):
     skill_name: str = ""
     branch: str = ""
     overwrite: bool = False
+
+
+class InstallSkillCliRequest(BaseModel):
+    """通过 skills CLI 直接安装(对标: npx skills add <name>)"""
+    package: str
+    skill_name: str = ""
+    overwrite: bool = False
