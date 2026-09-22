@@ -1,6 +1,6 @@
 """共享辅助:交互工具判定、SSE 批处理、checkpoint 发射、工具链消息构建等。
 
-拆分自 chat.py 的公共部分,供 files_api / nonstream / approve / stream 复用。
+拆分自 chat.py 的公共部分,供 files_api / approve / stream 复用。
 """
 import uuid
 import json as _json

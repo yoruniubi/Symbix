@@ -190,6 +190,8 @@ const emit = defineEmits<{
   'update:model': [model: string]
   stop: []
   'update:voice-enabled': [value: boolean]
+  /** 无实际会话时首次上传/发声会生成预留会话 id,通知父组件建会话时复用 */
+  'reserve-session': [id: string]
 }>()
 
 const messageUi = useMessage()
@@ -198,6 +200,9 @@ const inputRef = ref<any>(null)
 const attachments = ref<AttachmentItem[]>([])
 const isRecording = ref(false)
 const showModelPopover = ref(false)
+
+/** 无实际会话时预留的会话 id(附件先落到 uploads/{预留id}/,建会话时复用) */
+const reservedSessionId = ref<string>('')
 
 const { t } = useI18n()
 
@@ -312,8 +317,18 @@ async function uploadFile(raw: File) {
   try {
     const form = new FormData()
     form.append('files', raw, raw.name)
-    // 优先用父组件传入的会话 id;新对话尚未建 session 时用 pending 目录
-    form.append('session_id', props.sessionId || 'pending')
+    // 优先用父组件传入的会话 id;新对话尚未建 session 时生成一个预留 UUID
+    // (替代旧 pending 占位),使附件落到 uploads/{该uuid}/,父组件建会话时复用同一 id,
+    // 删除对话即可级联清理这些文件。
+    let sid = props.sessionId || ''
+    if (!sid) {
+      if (!reservedSessionId.value) {
+        reservedSessionId.value = crypto.randomUUID()
+        emit('reserve-session', reservedSessionId.value)
+      }
+      sid = reservedSessionId.value
+    }
+    form.append('session_id', sid)
     const res = await fetch(`${BACKEND_URL}/upload`, {
 
       method: 'POST',

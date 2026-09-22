@@ -128,12 +128,13 @@ def _safe_download_filename(url: str, headers) -> str:
 
 def download_file(url: str, filename: Optional[str] = None, timeout: int = 30,
                   max_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES) -> Dict:
-    """通用文件下载:把任意 URL 的响应体保存到 uploads/downloads/ 下。
+    """通用文件下载:把任意 URL 的响应体保存到 uploads/{session_id}/downloads/ 下。
 
     适用:下载 PDF / 图片 / 压缩包 / 数据集等二进制文件,之后再交给
     parse_file / doc_to_markdown 解析。不限制 Content-Type(这是下载工具
-    区别于 fetch_webpage 的意义)。路径固定在 uploads/downloads/ 沙箱内,
+    区别于 fetch_webpage 的意义)。路径固定在会话级 downloads 沙箱内,
     文件名自动从 Content-Disposition / URL 提取,可用 filename 覆盖。
+    会话 id 从 checkpoint 当前上下文读取;非对话环境回退 uploads/downloads/(共享目录)。
     """
     if httpx is None:
         return {"error": "httpx 库未安装,请运行 pip install httpx"}
@@ -192,7 +193,19 @@ def download_file(url: str, filename: Optional[str] = None, timeout: int = 30,
     import uuid
     safe = re.sub(r"[^\w.\-]", "_", os.path.basename(name))[:120] or "download.bin"
     unique = f"{uuid.uuid4().hex[:10]}_{safe}"
-    dest_dir = os.path.join(get_uploads_root(), "downloads")
+    # 会话级目录:优先从 checkpoint 当前上下文取 session_id,
+    # 使文件归属发起下载的对话,删除对话时可级联清理。
+    sid = ""
+    try:
+        from Symbix_sdk.checkpoint import get_current
+        sid = (get_current() or ("",))[0] or ""
+    except Exception:
+        sid = ""
+    if sid:
+        san = re.sub(r"[^\w\-]+", "_", sid)[:80] or "default"
+        dest_dir = os.path.join(get_uploads_root(), san, "downloads")
+    else:
+        dest_dir = os.path.join(get_uploads_root(), "downloads")
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, unique)
 
@@ -282,10 +295,11 @@ WEB_TOOLS_SCHEMAS = {
         "risk_channel": "write",
         "func": download_file,
         "description": (
-            "通用文件下载:把任意 URL(http/https)的响应体保存到本地 uploads/downloads/ 目录。"
+            "通用文件下载:把任意 URL(http/https)的响应体保存到本地 uploads/<会话id>/downloads/ 目录。"
+            "(未处于对话上下文时回退共享 uploads/downloads/。)"
             "适用于下载 PDF / 图片 / 压缩包 / 数据集等二进制文件,下载后再用 parse_file 或 doc_to_markdown 解析。"
             "不限制 Content-Type,文件名自动从 Content-Disposition 或 URL 提取,可用 filename 参数覆盖。"
-            "路径固定在沙箱内的 uploads/downloads/,自动防路径穿越。"
+            "路径固定在该会话 downloads 沙箱内,随对话删除级联清理。"
         ),
         "parameters": {
             "type": "object",

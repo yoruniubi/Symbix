@@ -204,6 +204,42 @@ _pending_questions: dict[str, dict] = {}
 # 让路由可以返回明确的“正在处理”状态,避免同一个写文件工具执行两次。
 _processing_approvals: set[str] = set()
 
+# ============ 进行中生成任务注册表 ============
+_session_tasks: dict[str, set] = {}
+
+
+def register_session_task(sid: str, task) -> None:
+    """注册会话进行中的生成任务;生成器退出时主动注销。"""
+    if not sid:
+        return
+    _session_tasks.setdefault(sid, set()).add(task)
+
+
+def unregister_session_task(sid: str, task) -> None:
+    """生成器结束/被取消时注销任务,避免泄漏引用。"""
+    if not sid:
+        return
+    tasks = _session_tasks.get(sid)
+    if tasks:
+        tasks.discard(task)
+        if not tasks:
+            _session_tasks.pop(sid, None)
+
+
+def cancel_session_tasks(sid: str) -> int:
+    """取消该会话所有进行中的生成任务,返回取消个数。用于删除会话时终止 chat/action。"""
+    tasks = _session_tasks.pop(sid, None)
+    if not tasks:
+        return 0
+    cancelled = 0
+    for t in list(tasks):
+        if not t.done():
+            t.cancel()
+            cancelled += 1
+    return cancelled
+
+kill_session_activity = cancel_session_tasks  # 语义别名:删除会话时一键终止
+
 # ============ 上下文压缩阈值 ============
 COMPRESS_THRESHOLD = 16
 RECENT_KEEP = 12

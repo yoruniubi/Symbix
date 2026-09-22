@@ -430,7 +430,7 @@ export default {
     empty: 'No skins yet',
     namePlaceholder: 'e.g. my-pet',
     pickFolderTitle: 'Select Codex pet folder (with pet.json)',
-    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\nFollow the pet-forge skill workflow: produce base.svg and states.json yourself directly (do not call any generation script), then run validate_rig → derive_mirrors → validate_states → pack_theme to validate and pack into public/pixiv_pet/.',
+    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\nFollow the pet-forge skill workflow: produce base.svg and states.json yourself directly (do not call any generation script), then run validate_rig → derive_mirrors → validate_states → pack_theme, and finally pack directly to the frontend static dir absolute path F:/Symbix/Symbix_frontend/public/pixiv_pet/<pet-name> (relative to project root: Symbix_frontend/public/pixiv_pet/<pet-name>); do not write into the skill dir first and copy later.',
   },
 
   // ===== Setting Page =====

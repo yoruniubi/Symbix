@@ -97,8 +97,31 @@ async def save_markdown(payload: SessionPayload):
 
 @router.post("/api/delete_markdown")
 async def delete_markdown(req: DeleteMarkdownRequest):
-    """按 session_id 删除 Markdown + memory 中的消息/摘要 + 关联附件(uploads/) + checkpoint/blob"""
+    """删除会话:终止进行中 chat/action + 清理审批/任务/附件/checkpoint/blob 等全部关联数据"""
     sid = req.session_id or "default"
+
+    # 0) 终止该会话所有进行中的生成任务(SSE 流 / approve 续跑 / 非流 chat),
+    #    保证对话删除后该会话的 chat/action 立即停止,不再产生副作用。
+    try:
+        from application.state import cancel_session_tasks as kill_activity
+        killed = kill_activity(sid)
+        if killed:
+            print(f"[Delete] cancelled {killed} running task(s) of session {sid}")
+    except Exception as e:
+        print(f"[Delete] cancel_session_tasks failed: {e}")
+
+    # 0.5) 清理该会话挂起的审批/提问上下文(这些 approval 已不可续跑)
+    try:
+        from application.state import _pending_approvals, _pending_questions
+        _drop = [aid for aid, ctx in _pending_approvals.items()
+                 if ctx.get("session_id") == sid]
+        for aid in _drop:
+            _pending_approvals.pop(aid, None)
+            _pending_questions.pop(aid, None)
+            print(f"[Delete] dropped pending approval {aid} of session {sid}")
+    except Exception as e:
+        print(f"[Delete] drop pending approvals failed: {e}")
+
     file_path = _get_md_path(sid)
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -115,15 +138,15 @@ async def delete_markdown(req: DeleteMarkdownRequest):
         clear_risk_session(sid)
     except Exception as e:
         print(f"[Risk] clear_session failed: {e}")
-    # 解绑关联的定时任务(任务本体保留,仅断开 session_id 引用,下一次运行自动新建 schedule__ 会话)
+    # 删除关联的定时任务(区别于以前仅解绑:删除对话时任务一并作废)
     try:
         from application.state import job_manager
-        released = job_manager.release_session(sid)
-        if released:
-            print(f"[Jobs] released session {sid} from jobs: {released}")
+        killed_jobs = job_manager.delete_by_session(sid)
+        if killed_jobs:
+            print(f"[Jobs] deleted session {sid} jobs: {killed_jobs}")
     except Exception as e:
-        print(f"[Jobs] release_session failed: {e}")
-    # 级联清理附件目录 uploads/{sanitized_sid}/
+        print(f"[Jobs] delete_by_session failed: {e}")
+    # 级联清理附件目录 uploads/{sanitized_sid}/(含该会话专属的 downloads/pending 子目录)
     try:
         from Symbix_sdk.tools.file_pipeline import session_upload_dir
         upload_dir = session_upload_dir(sid)

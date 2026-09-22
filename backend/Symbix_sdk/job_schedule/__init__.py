@@ -109,6 +109,19 @@ class JobManager:
         self.storage.delete_history(job_id)
         return deleted
 
+    def delete_by_session(self, session_id: str) -> list[str]:
+        """删除会话时级联:找到所有绑定该 session 的定时任务并彻底删除(含调度器与历史)。
+        返回被删除的 job id 列表。区别于 release_session(仅解绑),这里任务本体也删。"""
+        deleted = []
+        for job in self.storage.list_meta():
+            if job.get("session_id") == session_id:
+                try:
+                    self.delete(job["id"])
+                    deleted.append(job["id"])
+                except Exception as e:
+                    print(f"[Jobs] delete_by_session failed for {job.get('id')}: {e}")
+        return deleted
+
     def pause(self, job_id: str) -> dict:
         existing = self.storage.get_meta(job_id)
         if not existing:

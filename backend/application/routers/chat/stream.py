@@ -15,6 +15,8 @@ from application.state import (
     tool_registry,
     _pending_approvals,
     _pending_questions,
+    register_session_task,
+    unregister_session_task,
 )
 from application.services.risk_context import classify_for_chat, maybe_apply_trust_command
 from application.services.memory_ops import (
@@ -51,6 +53,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
     """AI 流式对话接口 (SSE) - 支持完整的 tool_calls 循环和审批"""
 
     async def generate():
+        # 注册本会话进行中任务:删除对话时可一并取消,终止 chat/action。
+        _gen_task = asyncio.current_task()
+        register_session_task(request.session_id, _gen_task)
         try:
             # ── 重试标记：如果前端传了 superseded_round_id，标记旧 round ──
             if request.superseded_round_id:
@@ -614,6 +619,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             traceback.print_exc()
             yield format_sse({"type": "error", "content": str(e)})
             yield "data: [DONE]\n\n"
+        finally:
+            unregister_session_task(request.session_id, _gen_task)
 
     return StreamingResponse(
         generate(),

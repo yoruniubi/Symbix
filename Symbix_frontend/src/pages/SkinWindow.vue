@@ -378,8 +378,11 @@ async function triggerSkillGenerate() {
   const prompt = skillForm.value.prompt.trim()
   if (!petName || !prompt) return
 
-  // 可选参考图：以 base64 dataURL 形式带到消息中,后端 /upload 路径会接走
-  const refImage = skillForm.value.refImage?.dataUrl || null
+  // 可选参考图:整个对象(dataUrl + name + mime)传给聊天窗口,后者 /upload 接走
+  // 注意:必须发对象而非仅 dataUrl 字符串——chat 端的 payload.refImage.dataUrl 依赖对象结构
+  const refImage = skillForm.value.refImage
+    ? { ...skillForm.value.refImage }
+    : null
 
   // 构造发送给 AI 的消息
   const messageText = t('skinWindow.skillMessage', { name: petName, prompt })

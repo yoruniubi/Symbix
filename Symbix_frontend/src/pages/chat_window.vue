@@ -128,6 +128,7 @@
         @update:model="setModel"
         @stop="handleStopGeneration"
         @update:voice-enabled="voiceEnabled = $event"
+        @reserve-session="pendingSessionId = $event"
       />
     </div>
 
@@ -199,7 +200,9 @@ const { messages, sessions, activeSessionId, persistSessions, getActiveSession }
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
-/** 朗读开关：AI 回复后自动朗读 */
+/** 首次上传/发声时预留的会话 id(ChatInput 生成),建会话时复用,保证附件目录归属一致 */
+const pendingSessionId = ref<string>('')
+/** 朗读开关:AI 回复后自动朗读 */
 const voiceEnabled = ref(false)
 /** 标记是否为用户主动中断（避免 abort 导致的错误被当成真实错误处理） */
 let userAborted = false
@@ -659,7 +662,13 @@ async function uploadRefImage(ref: { dataUrl: string; name: string; mime: string
   const file = new File([blob], ref.name || 'ref.png', { type: ref.mime || blob.type })
   const form = new FormData()
   form.append('files', file, file.name)
-  form.append('session_id', activeSessionId.value || 'pending')
+  // 皮肤生成跨窗口上传:优先当前会话;无会话时预留一个 id,建会话时复用
+  let sid = activeSessionId.value || pendingSessionId.value
+  if (!sid) {
+    sid = crypto.randomUUID()
+    pendingSessionId.value = sid
+  }
+  form.append('session_id', sid)
   const resp = await fetch(`${BACKEND_URL}/upload`, { method: 'POST', body: form })
   if (!resp.ok) throw new Error(`upload HTTP ${resp.status}`)
   const data = await resp.json()
@@ -678,11 +687,16 @@ async function handleSkinGenPayload(payload: any) {
   // 超过 5 分钟丢弃，防陈旧请求随事件重放
   if (payload.ts && Date.now() - payload.ts > 5 * 60 * 1000) return
   let files: any[] = []
-  if (payload.refImage?.dataUrl) {
+  // 兼容两种载体:新格式为对象 {dataUrl,name,mime},旧格式为纯 dataUrl 字符串
+  const ref = payload.refImage
+  const refObj = (ref && typeof ref === 'object')
+    ? ref
+    : (typeof ref === 'string' && ref ? { dataUrl: ref, name: 'ref.png', mime: 'image/png' } : null)
+  if (refObj?.dataUrl) {
     try {
-      files = await uploadRefImage(payload.refImage)
+      files = await uploadRefImage(refObj)
     } catch (e) {
-      console.warn('[chat] 上传参考图失败，仅发送文本:', e)
+      console.warn('[chat] 上传参考图失败,仅发送文本:', e)
     }
   }
   // 延迟一帧保证 ChatInput 等子组件已挂载
@@ -746,7 +760,9 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
 
   // 新对话首轮:创建带 UUID 的 session,并激活
   if (!activeSessionId.value) {
-    const newId = crypto.randomUUID()
+    // 优先复用上传/发声时预留的会话 id,保证附件目录归属一致并随会话删除级联清理
+    const newId = pendingSessionId.value || crypto.randomUUID()
+    pendingSessionId.value = ''
     const title = displayContent.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || t('chat.newChatTitle')
     sessions.value.unshift({
       id: newId,

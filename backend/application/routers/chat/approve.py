@@ -15,6 +15,8 @@ from application.state import (
     _pending_approvals,
     _processing_approvals,
     _pending_questions,
+    register_session_task,
+    unregister_session_task,
 )
 from application.services.risk_context import classify_for_chat, get_session_trust
 from application.services.memory_ops import (
@@ -217,6 +219,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             # checkpoint 计数袭用外层 chat_approve 的局部变量:嵌套函数内对它们做 += 必须显式 nonlocal,
             # 否则 Python 会按本函数局部赋值导致 UnboundLocalError("cannot access local variable ...").
             nonlocal ckpt_tool_count, ckpt_failed, ckpt_start_ts
+            # 注册本会话进行中任务:删除对话时可一并取消,终止 chat/action。
+            _gen_task = asyncio.current_task()
+            register_session_task(session_id, _gen_task)
             try:
                 # 先把已执行的步骤发给前端
                 yield format_sse({"type": "steps", "steps": steps})
@@ -642,6 +647,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 yield "data: [DONE]\n\n"
             finally:
                 _processing_approvals.discard(req.approval_id)
+                unregister_session_task(session_id, _gen_task)
 
     except Exception as exc:
         # 工具执行或生成器构建阶段失败

@@ -272,19 +272,7 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
     for c in candidates:
         if os.path.isdir(os.path.dirname(c)):
             return c
-    # 3) 都不存在:回退到 cwd 相对解析若仍 sandbox 内
-    try:
-        cwd_abs = os.path.abspath(os.path.expanduser(norm))
-    except Exception:
-        cwd_abs = None
-    if cwd_abs is not None and not _in_forbidden(cwd_abs):
-        for root_abs in roots_abs:
-            try:
-                if os.path.commonpath([cwd_abs, root_abs]) == root_abs:
-                    return cwd_abs
-            except ValueError:
-                continue
-    # 4) 最后凑合:选第一个 sandbox 内候选(允许新文件可解析)
+    # 3) 其余情况:选第一个 sandbox 内候选(新文件落在项目根首先命中)
     return candidates[0] if candidates else None
 
 

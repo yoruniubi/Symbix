@@ -44,9 +44,66 @@ def _find_rg() -> str | None:
             return cand
     return None
 
+def create_file(file_path: str, content: str) -> str:
+    """创建新文件并写入内容。
 
+    与 edit_file 的区别:仅用于**新建**文件;文件已存在时返回错误(避免误覆盖已有内容)。
+    二进制/办公文档(docx/xlsx/pptx/pdf/图片等)请用 doc_tools 读写。
+    """
+    if file_path is None or content is None:
+        return "Error: file_path 和 content 都不能为空"
+    try:
+        path = assert_path_allowed(file_path)
+        if os.path.isdir(path):
+            return f"Error: 路径是目录: {path}"
+        if os.path.exists(path):
+            return f"Error: 文件已存在: {path}"
+        # 职责边界:二进制办公文档/图片/PDF 不能用纯文本创建(会损坏文件)。
+        _BIN_SUFFIX = (
+            ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+        )
+        if path.lower().endswith(_BIN_SUFFIX):
+            return (
+                f"create_file 不处理二进制/办公文档({os.path.splitext(path)[1]}),"
+                "新建此类文件请用 doc_tools 的 md_to_docx / md_to_xlsx / md_to_pptx / md_to_pdf。"
+            )
+        # 父目录不存在时自动创建(避免写失败)
+        parent = os.path.dirname(path)
+        if parent and not os.path.exists(parent):
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        # ── checkpoint:记录创建事件(新建文件无 before 快照,只记 after)──
+        session_id, round_id = get_current()
+        try:
+            recorder = get_recorder() if (session_id and round_id) else None
+        except Exception:
+            recorder = None
+        if recorder is not None:
+            try:
+                hash_after = recorder.put_blob(content) if content else None
+                recorder.emit_file_op(
+                    session_id=session_id,
+                    round_id=round_id,
+                    op="create",
+                    path=path,
+                    size_before=None,
+                    size_after=len(content),
+                    hash_before=None,
+                    hash_after=hash_after,
+                    blob_stored=bool(content),
+                )
+            except Exception:
+                pass  # checkpoint 失败不影响主流程
+        return f"File created: {path}"
+    except Exception as e:
+        return f"Error creating file {file_path}: {e}"
+    
 def edit_file(file_path: str, new_content: str) -> str:
     """编辑(覆盖写入)文件 —— 仅限纯文本类文件(md/txt/代码/配置)。"""
+    if file_path is None or new_content is None:
+        return "Error: file_path 和 new_content 都不能为空"
     try:
         path = assert_path_allowed(file_path)
         # 职责边界:二进制办公文档/图片/PDF 不能用纯文本覆盖写(会损坏文件)。
@@ -525,6 +582,30 @@ def search_file_with_name(
 # ---------------------------------------------------------------------------
 
 FILE_TOOLS_SCHEMAS = {
+    "create_file": {
+        "risk_channel": "write",
+        "func": create_file,
+        "description": (
+            "创建新文件并写入内容(仅用于新建文件,文件已存在时返回错误,不会覆盖)。"
+            "适合新建代码/配置/markdown/文本文件。"
+            "修改已存在的文件请用 edit_file(支持覆盖写入含新建);"
+            "docx/xlsx/pptx/pdf/图片等二进制文件不要用本工具(会损坏),请用 md_to_* 生成。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "要创建的文件路径（新文件,父目录不存在会自动创建）",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "要写入的文件内容",
+                },
+            },
+            "required": ["file_path", "content"],
+        },
+    },
     "edit_file": {
         "risk_channel": "write",
         "func": edit_file,
