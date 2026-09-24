@@ -96,6 +96,8 @@ async def install_skill_cli(req: InstallSkillCliRequest):
     return {
         "status": "ok",
         "skill_name": result.get("skill_name"),
+        "skill_names": result.get("skill_names"),
+        "installed": result.get("installed"),
         "path": result.get("path"),
         "source": result.get("source"),
         "run_type": result.get("run_type"),

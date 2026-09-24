@@ -345,13 +345,6 @@ class SymbixClient:
 
         messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
         caps = resolve_capabilities(raw_model, provider)
-        # 不支持视觉模型时，主动降级为纯文本（防止 multimodal 端点 400）。
-        if image_parts and not caps.get("supports_vision"):
-            for m in messages:
-                if isinstance(m.get("content"), list):
-                    m["content"] = "".join(
-                        p.get("text", "") for p in m["content"] if p.get("type") == "text"
-                    ) or "[user message]"
 
         print(">>> [chat] model:", raw_model, "base:", raw_base, "caps:", caps)
         return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps)
@@ -391,6 +384,7 @@ class SymbixClient:
         override_api_base: str = None,
         override_model: str = None,
         image_parts: Optional[list[dict]] = None,
+        supports_vision: Optional[bool] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         流式输出统一的 dict 事件（原生 HTTP）:
@@ -404,7 +398,7 @@ class SymbixClient:
         raw_base = override_api_base or provider.api_base
         api_key = override_api_key or provider.api_key
 
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts, supports_vision=supports_vision)
 
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
         print(f"[stream] {provider_type} → {url}, model={model_name}")

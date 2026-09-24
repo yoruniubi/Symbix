@@ -73,8 +73,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
             # auto-pilot 自然语言开关指令(消费时替换为提示占位)
             user_for_llm, _consumed = maybe_apply_trust_command(request.session_id, user_for_llm)
-            # 有图片时,异步探测模型视觉能力并按需降级
-            image_parts = await _filter_image_parts(image_parts, model, api_key, api_base)
+            # 有图片时,异步探测模型视觉能力;无视觉模型降级在 client._build_messages 内(取色+文本)
+            image_parts, supports_vision = await _filter_image_parts(image_parts, model, api_key, api_base)
             mem_msg = request.message
             if request.attachments:
                 names = [
@@ -156,6 +156,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 override_api_base=api_base or None,
                 override_model=model or None,
                 image_parts=image_parts or None,
+                supports_vision=supports_vision,
             ):
                 if event["type"] == "stream_reset":
                     # 上游连接中断，前端已渲染的这部分内容作废，通知其清空重新开始
@@ -206,6 +207,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 registry=skill_registry,
                 tools=mcp_tools,
                 image_parts=image_parts or None,
+                supports_vision=supports_vision,
             )
             cum_tool_tokens = 0
 

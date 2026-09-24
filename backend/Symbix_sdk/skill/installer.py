@@ -271,28 +271,42 @@ def install_skill_via_cli(
             }
 
         # 安装成功后把产物从临时 cwd 拷到目标目录
-        # CLI 输出里给出实际安装路径
-        first = installed[0]
-        name = first.get("name", "")
-        src = first.get("path", "")
-        if not name or not src or not os.path.isdir(src):
-            return {"ok": False, "error": f"CLI 输出缺失安装路径: {first}", "run_type": "npx" if npx else "bun"}
+        # CLI 输出里给出所有实际安装路径(可能一次 install 装多个 skill)
+        copied: list[dict] = []
+        for item in installed:
+            nm = item.get("name", "")
+            src = item.get("path", "")
+            if not nm or not src or not os.path.isdir(src):
+                # 个别条目缺路径不致命,跳过它继续装其余的
+                continue
+            dest_path = os.path.join(target_dir, nm)
+            if os.path.exists(dest_path):
+                if not overwrite:
+                    # 已存在时不覆盖,且不再继续?不——仅跳过该 skill,不整体失败
+                    copied.append({"name": nm, "path": dest_path, "skipped": "exists"})
+                    continue
+                shutil.rmtree(dest_path)
+            os.makedirs(target_dir, exist_ok=True)
+            shutil.copytree(src, dest_path)
+            copied.append({"name": nm, "path": dest_path, "skipped": False})
 
-        dest_path = os.path.join(target_dir, name)
-        if os.path.exists(dest_path):
-            if not overwrite:
-                return {"ok": False, "error": f"Skill '{name}' 已存在,如需覆盖请设置 overwrite=true", "run_type": "npx" if npx else "bun"}
-            shutil.rmtree(dest_path)
-        os.makedirs(target_dir, exist_ok=True)
-        shutil.copytree(src, dest_path)
+        if not copied:
+            return {"ok": False, "error": f"CLI 无可用安装产物: {installed}", "run_type": "npx" if npx else "bun"}
 
+        installed_names = [c["name"] for c in copied]
+        msg = (
+            f"{len(installed_names)} 个 Skill 已通过 {'npx' if npx else 'bun'} skills CLI 安装:"
+            f" {', '.join(installed_names)}"
+        )
         return {
             "ok": True,
-            "skill_name": name,
-            "path": dest_path,
+            "skill_name": installed_names[0],
+            "skill_names": installed_names,
+            "installed": copied,
+            "path": copied[0]["path"],
             "source": package,
             "run_type": "npx" if npx else "bun",
-            "message": f"Skill '{name}' 已通过 {'npx' if npx else 'bun'} skills CLI 安装",
+            "message": msg,
         }
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)

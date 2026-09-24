@@ -280,15 +280,17 @@ async def _filter_image_parts(
     model: str,
     api_key: str,
     api_base: str,
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """
-    根据模型视觉能力过滤 image_parts。
-    有图片且模型不支持视觉时，异步探测并降级为空列表。
+    探测模型视觉能力并返回 (image_parts, supports_vision)。
+
+    不再把 image_parts 清空——无视觉模型时由 client._build_messages 内部
+    降级为"取色 + 文本描述"(提取参考图主色拼进 prompt),让 skill 生成
+    SVG 时颜色能贴合参考图。有视觉时保留多模态 image_parts。
     """
     if not image_parts:
-        return image_parts
+        return image_parts, False
     supports = await check_vision(model, api_key, api_base)
     if not supports:
-        print(f"[chat] 模型 {model} 不支持视觉，{len(image_parts)} 张图片降级为文本描述")
-        return []
-    return image_parts
+        print(f"[chat] 模型 {model} 不支持视觉,{len(image_parts)} 张图片降级为取色+文本描述")
+    return image_parts, supports

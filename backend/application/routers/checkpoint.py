@@ -115,33 +115,78 @@ async def file_op_diff(session_id: str, record_id: str):
 
 @router.post("/sessions/{session_id}/checkpoint/file-op/{record_id}/restore")
 async def file_op_restore(session_id: str, record_id: str):
-    """回溯写：用 hash_before 的内容覆盖回写 path（delete 场景则重建文件）。
+    """回溯写 / 撤销新建。
 
-    高风险操作：沙箱校验 + 恢复动作本身也 emit 一条 file_op 保持审计链。
+    - edit/delete 场景:用 hash_before 内容回写覆盖 path(delete 则重建文件)
+    - create 场景(无 hash_before):回溯语义 = 删除该文件(撤销新建),
+      与「AI 创建了错误的文件想撤回」的操作意图一致
+
+    高风险操作:沙箱校验 + 恢复动作本身也 emit 一条 file_op 保持审计链。
     """
+    import os
+    import shutil
+
     rec = checkpoint_recorder.store.get_record(record_id)
     if not rec:
         raise HTTPException(status_code=404, detail="record not found")
     if rec.get("kind") != "file_op":
         raise HTTPException(status_code=400, detail="record is not a file_op")
     payload = rec.get("payload") or {}
-    if not payload.get("blob_stored") or not payload.get("hash_before"):
+    if rec.get("session_id") != session_id:
+        raise HTTPException(status_code=400, detail="record 不属于该 session")
+
+    op = payload.get("op", "")
+    path = payload.get("path", "")
+    has_before = bool(payload.get("blob_stored") and payload.get("hash_before"))
+
+    # 沙箱校验:不允许恢复到沙箱外路径
+    try:
+        path = assert_path_allowed(path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"路径校验失败: {e}")
+
+    # —— create 场景:无 before 快照,回溯 = 删除新建的文件
+    if op == "create" and not has_before:
+        if os.path.exists(path):
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"撤销新建失败: {e}")
+        # 撤销动作本身 emit 一条 file_op(op="uncreate") 保持审计链;
+        # 保留 hash_before 指向被删内容,让用户仍可查看 / 二次恢复
+        checkpoint_recorder.emit_file_op(
+            session_id=session_id,
+            round_id=rec.get("round_id", "restore"),
+            op="uncreate",
+            path=path,
+            size_before=payload.get("size_after"),
+            size_after=0,
+            hash_before=payload.get("hash_after"),
+            hash_after=None,
+            blob_stored=True,
+        )
+        return {
+            "record_id": record_id,
+            "session_id": session_id,
+            "path": path,
+            "restored": True,
+            "action": "uncreate",
+            "size_after": 0,
+        }
+
+    # —— 其余场景必须有 before 快照才能回退
+    if not has_before:
         raise HTTPException(
             status_code=400,
             detail="该记录未存储可回退内容(二进制/超限文件无法恢复)",
         )
-    if rec.get("session_id") != session_id:
-        raise HTTPException(status_code=400, detail="record 不属于该 session")
 
     content_before = checkpoint_recorder.get_blob(payload["hash_before"])
     if content_before is None:
         raise HTTPException(status_code=404, detail="before blob not found")
-
-    # 沙箱校验：不允许恢复到沙箱外路径
-    try:
-        path = assert_path_allowed(payload.get("path", ""))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"路径校验失败: {e}")
 
     # 当前文件内容(如果存在)作为 after 快照
     cur_content = None
@@ -153,7 +198,6 @@ async def file_op_restore(session_id: str, record_id: str):
 
     # 写入恢复内容
     try:
-        import os
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -162,7 +206,7 @@ async def file_op_restore(session_id: str, record_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"恢复写入失败: {e}")
 
-    # 恢复动作本身也要 emit 一条 file_op（op="restore"）
+    # 恢复动作本身也要 emit 一条 file_op(op="restore") 保持审计链
     hash_cur = checkpoint_recorder.put_blob(cur_content) if cur_content else None
     hash_restored = checkpoint_recorder.put_blob(content_before)
     checkpoint_recorder.emit_file_op(
@@ -182,6 +226,7 @@ async def file_op_restore(session_id: str, record_id: str):
         "session_id": session_id,
         "path": path,
         "restored": True,
+        "action": "restore",
         "hash_after": hash_restored,
         "size_after": len(content_before),
     }

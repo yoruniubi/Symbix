@@ -145,12 +145,12 @@
           <div v-else class="diff-no-blob">
             {{ $t('checkpointPanel.diffNoBlob') }}
           </div>
-          <div class="diff-restore" v-if="diffData?.blob_stored && diffData?.op !== 'delete'">
+          <div class="diff-restore" v-if="canRestore">
             <n-button type="warning" size="small" @click="handleRestore" :loading="restoring">
               <template #icon>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
               </template>
-              {{ $t('checkpointPanel.restore') }}
+              {{ restoreButtonText }}
             </n-button>
           </div>
         </div>
@@ -187,6 +187,38 @@ const expanded = ref<Set<string>>(new Set())
 // Diff dialog
 const diffVisible = ref(false)
 const diffData = ref<any>(null)
+
+// —— 回溯按钮语义按 op 区分:
+//   create   → 撤销新建(删除该文件)
+//   uncreate → 恢复被撤销删除的文件(重建)
+//   其他     → 用 before 快照回写覆盖
+const canRestore = computed(() => {
+  const d = diffData.value
+  if (!d) return false
+  if (d.op === 'create' || d.op === 'uncreate') return true
+  return !!d.blob_stored && d.op !== 'delete'
+})
+
+const restoreButtonText = computed(() => {
+  const op = diffData.value?.op
+  if (op === 'create') return t('checkpointPanel.undoCreate')
+  if (op === 'uncreate') return t('checkpointPanel.restoreFile')
+  return t('checkpointPanel.restore')
+})
+
+const restoreConfirmText = computed(() => {
+  const op = diffData.value?.op
+  if (op === 'create') return t('checkpointPanel.undoCreateConfirm')
+  if (op === 'uncreate') return t('checkpointPanel.restoreFileConfirm')
+  return t('checkpointPanel.restoreConfirm')
+})
+
+const restoreSuccessText = computed(() => {
+  const op = diffData.value?.op
+  if (op === 'create') return t('checkpointPanel.undoCreateSuccess')
+  if (op === 'uncreate') return t('checkpointPanel.restoreFileSuccess')
+  return t('checkpointPanel.restoreSuccess')
+})
 const restoring = ref(false)
 const pruning = ref(false)
 
@@ -349,8 +381,8 @@ async function handleRestore() {
   const sid = activeSession.value
   if (!diffData.value || !sid) return
   ;(window as any).$dialog?.warning?.({
-    title: t('checkpointPanel.restore'),
-    content: t('checkpointPanel.restoreConfirm'),
+    title: restoreButtonText.value,
+    content: restoreConfirmText.value,
     positiveText: t('common.confirm'),
     negativeText: t('common.cancel'),
     onPositiveClick: async () => {
@@ -365,7 +397,7 @@ async function handleRestore() {
           ;(window as any).$message?.error?.(`${t('checkpointPanel.restoreFail', { msg: err.detail || res.status }) }`)
           return
         }
-        ;(window as any).$message?.success?.(t('checkpointPanel.restoreSuccess'))
+        ;(window as any).$message?.success?.(restoreSuccessText.value)
         diffVisible.value = false
         await loadTimeline()
       } catch (e: any) {

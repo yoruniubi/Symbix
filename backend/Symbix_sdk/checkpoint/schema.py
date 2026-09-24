@@ -58,8 +58,8 @@ class ToolCallRecord(BaseModel):
 
 
 class FileOpRecord(BaseModel):
-    """文件操作 — read / write / append / delete / move，及 agent 恢复动作的 restore。"""
-    op: Literal["read", "write", "append", "replace", "delete", "move", "create", "restore"]
+    """文件操作 — read / write / append / delete / move / create,及 agent 恢复动作的 restore、撤销新建的 uncreate。"""
+    op: Literal["read", "write", "append", "replace", "delete", "move", "create", "restore", "uncreate"]
     path: str
     size_before: Optional[int] = None
     size_after: Optional[int] = None
