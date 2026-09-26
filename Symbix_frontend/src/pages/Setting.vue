@@ -161,6 +161,57 @@
         </n-form>
       </n-card>
 
+      <!-- 弹幕设置卡片 -->
+      <n-card :title="t('setting.companion')" class="setting-card">
+        <n-form label-placement="top">
+          <n-form-item :label="t('setting.companionEnabled')">
+            <div class="inline-row">
+              <n-switch
+                v-model:value="companionForm.enabled"
+                :loading="companionLoading"
+                @update:value="onCompanionChange('enabled')"
+              />
+              <n-text depth="3" style="font-size: 12px;">
+                {{ t('setting.companionEnabledHint') }}
+              </n-text>
+            </div>
+          </n-form-item>
+          <n-form-item :label="t('setting.companionIdle')">
+            <div class="inline-row">
+              <n-switch
+                v-model:value="companionForm.idle_enabled"
+                :disabled="!companionForm.enabled"
+                :loading="companionLoading"
+                @update:value="onCompanionChange('idle_enabled')"
+              />
+              <n-text depth="3" style="font-size: 12px;">
+                {{ t('setting.companionIdleHint') }}
+              </n-text>
+            </div>
+          </n-form-item>
+          <n-form-item :label="t('setting.companionGreeting')">
+            <div class="inline-row">
+              <n-switch
+                v-model:value="companionForm.greeting_enabled"
+                :disabled="!companionForm.enabled"
+                :loading="companionLoading"
+                @update:value="onCompanionChange('greeting_enabled')"
+              />
+              <n-text depth="3" style="font-size: 12px;">
+                {{ t('setting.companionGreetingHint') }}
+              </n-text>
+            </div>
+          </n-form-item>
+          <n-space justify="end">
+            <n-button secondary :disabled="companionLoading" @click="testCompanion">
+              {{ t('setting.companionTest') }}
+            </n-button>
+            <n-button secondary :disabled="companionLoading" @click="resetCompanion">
+              {{ t('setting.companionReset') }}
+            </n-button>
+          </n-space>
+        </n-form>
+      </n-card>
 
       <!-- STT 设置卡片 -->
       <n-card :title="t('setting.stt')" class="setting-card">
@@ -338,6 +389,7 @@ import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
 import { useTheme } from '@/composables/useTheme'
 import { useLocale } from '@/composables/useLocale'
+import { useCompanion, type CompanionSettings } from '@/composables/useCompanion'
 import {
   useNotify,
   playNotifySound,
@@ -365,6 +417,42 @@ const {
   resetNotifySettings,
   defaultSettings,
 } = useNotify()
+const companion = useCompanion()
+const companionForm = ref<CompanionSettings>({ ...companion.defaultSettings })
+const companionLoading = ref(false)
+
+async function loadCompanionForm() {
+  companionLoading.value = true
+  try {
+    await companion.loadCompanionSettings()
+    companionForm.value = { ...companion.companionSettings.value }
+  } finally {
+    companionLoading.value = false
+  }
+}
+
+function onCompanionChange(key: keyof CompanionSettings) {
+  void companion.saveCompanionSettings({ [key]: companionForm.value[key] })
+}
+
+async function resetCompanion() {
+  companionLoading.value = true
+  try {
+    await companion.resetCompanionSettings()
+    companionForm.value = { ...companion.defaultSettings }
+  } finally {
+    companionLoading.value = false
+  }
+}
+
+async function testCompanion() {
+  const ok = await companion.testDanmaku()
+  if (ok) {
+    message.success(t('setting.companionTestTriggered'))
+  } else {
+    message.error(t('setting.companionTestFailed'))
+  }
+}
 
 function onLocaleChange(value: string) {
   setLocale(value)
@@ -595,6 +683,7 @@ onMounted(() => {
   notifyForm.value = { ...notifySettings.value }
   loadVoiceConfig()
   loadSttDevices()
+  void loadCompanionForm()
 })
 
 async function saveNotify() {

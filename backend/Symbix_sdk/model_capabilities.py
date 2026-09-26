@@ -84,10 +84,14 @@ async def probe_vision(
         }
     ]
 
-    # 推断请求 URL
+    # 推断请求 URL —— 必须与 client._resolve_endpoint 的 base 处理保持一致:
+    # api_base 不以 /v1 结尾时自动补 /v1;否则会打到中转站前端页面
+    # (SPA fallback 对任意路径返回 200 HTML),导致误判视觉能力。
     base = (api_base or "").rstrip("/")
     if not base:
         base = "https://api.openai.com/v1"
+    if not base.endswith("/v1"):
+        base = base + "/v1"
     url = f"{base}/chat/completions"
 
     headers = {
@@ -108,6 +112,25 @@ async def probe_vision(
             resp = await client.post(url, headers=headers, json=body)
 
         if resp.status_code == 200:
+            # 校验响应体是真实 OpenAI JSON,不能只看状态码:
+            # 中转站 SPA fallback 会对任意路径返回 200 HTML 页面,
+            # 若按 200 就判支持,会把无视觉模型误判为支持视觉。
+            ctype = (resp.headers.get("content-type") or "").lower()
+            if "json" not in ctype:
+                print(f"[vision-probe] {model} 200 但 content-type={ctype or '?'} 非 JSON,按不支持处理")
+                return False
+            try:
+                j = resp.json()
+            except Exception:
+                print(f"[vision-probe] {model} 200 但响应体解析失败,按不支持处理")
+                return False
+            if not isinstance(j, dict) or ("choices" not in j and "object" not in j):
+                print(f"[vision-probe] {model} 200 但响应体不是 OpenAI 格式,按不支持处理")
+                return False
+            # 顺带确认没有错误字段
+            if isinstance(j.get("error"), dict):
+                print(f"[vision-probe] {model} 200 但响应带 error 字段,按不支持处理")
+                return False
             return True
 
         # 解析错误信息，用于日志

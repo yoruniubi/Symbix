@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "idle_enabled": true,
+  "greeting_enabled": true,
+  "idle_interval_s": 600
+}

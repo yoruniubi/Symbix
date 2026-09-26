@@ -33,26 +33,14 @@
 
         <n-tooltip placement="right" trigger="hover">
           <template #trigger>
-            <button
-              class="icon-btn mode-btn"
-              @click="togglePetMode"
-              :aria-label="petMode === 'relax' ? $t('home.switchWork') : $t('home.switchRelax')"
-            >
-              <!-- 当前休闲 → 显示公文包,提示可切换到工作 -->
-              <svg v-if="petMode === 'relax'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-                <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-              <!-- 当前工作 → 显示笑脸,提示可切换到休闲快乐模式 -->
-              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-                <line x1="9" y1="9" x2="9.01" y2="9"/>
-                <line x1="15" y1="9" x2="15.01" y2="9"/>
+            <button class="icon-btn" @click="openJournalWindow" :aria-label="$t('home.journal')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
               </svg>
             </button>
           </template>
-          {{ petMode === 'relax' ? $t('home.toggleWork') : $t('home.toggleRelax') }}
+          {{ $t('home.journal') }}
         </n-tooltip>
 
         <n-tooltip placement="right" trigger="hover">
@@ -102,18 +90,7 @@ type PetMode = 'work' | 'relax'
 const petMode = ref<PetMode>((localStorage.getItem('petMode') as PetMode) || 'relax')
 
 function togglePetMode() {
-  petMode.value = petMode.value === 'relax' ? 'work' : 'relax'
-  localStorage.setItem('petMode', petMode.value)
-  if (petMode.value === 'work') {
-    playState('idle', false)
-    snapToBottomRight()
-    showBubble(t('home.workModeHint'), 2000)
-  } else {
-    if (currentState === 'idle') {
-      scheduleRandom(800)
-    }
-    showBubble(t('home.relaxModeHint'), 2000)
-  }
+  // 第三按钮已改为手账;工作/休闲模式保留在 localStorage,不再提供切换入口。
 }
 
 async function snapToBottomRight() {
@@ -904,6 +881,96 @@ async function openSettingWindow() {
   })
 }
 
+async function openJournalWindow() {
+  await openOrCreateWindow('journal', {
+    url: '/journal',
+    title: t('home.windowJournal'),
+    width: 420,
+    height: 620,
+  })
+}
+
+// ---- 全屏弹幕窗口(透明 + 鼠标点击穿透) ----
+// 在最大的显示器上铺满,alwaysOnTop + skipTaskbar + focusable=false,
+// 创建后再 setIgnoreCursorEvents(true),点击直接穿透到桌面/其他窗口。
+async function ensureDanmakuWindow() {
+  try {
+    // 先检查后端配置:弹幕总开关关闭则不创建
+    try {
+      const res = await fetch('http://127.0.0.1:8000/danmaku/config')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.config?.enabled === false) return
+      }
+    } catch { /* 后端不可达时按开启处理 */ }
+    const existing = await WebviewWindow.getByLabel('danmaku')
+    if (existing) {
+      return
+    }
+    const { availableMonitors } = await import('@tauri-apps/api/window')
+    let mw = 0
+    let mh = 0
+    let mx = 0
+    let my = 0
+    try {
+      const monitors = await availableMonitors()
+      if (monitors.length) {
+        // 选面积最大的显示器,物理像素 / scaleFactor 换成逻辑像素
+        for (const m of monitors) {
+          const w = m.size.width / (m.scaleFactor || 1)
+          const h = m.size.height / (m.scaleFactor || 1)
+          if (w * h > mw * mh) {
+            mw = w
+            mh = h
+            mx = m.position.x / (m.scaleFactor || 1)
+            my = m.position.y / (m.scaleFactor || 1)
+          }
+        }
+      }
+    } catch { /* fallthrough */ }
+    if (!mw || !mh) {
+      mw = window.screen.width
+      mh = window.screen.height
+    }
+    const win = new WebviewWindow('danmaku', {
+      url: '/danmaku',
+      title: 'Danmaku',
+      x: mx,
+      y: my,
+      width: mw,
+      height: mh,
+      transparent: true,
+      decorations: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      focusable: false,
+      resizable: false,
+      shadow: false,
+    })
+    // 创建后双保险:穿透 + 不可聚焦
+    try {
+      await win.setIgnoreCursorEvents(true)
+      await win.setFocusable(false)
+    } catch (e) {
+      console.warn('[danmaku] setIgnoreCursorEvents failed:', e)
+    }
+  } catch (e) {
+    console.warn('[danmaku] window create failed:', e)
+  }
+}
+
+/** 根据配置关闭弹幕窗(仅总开关) */
+async function closeDanmakuWindow() {
+  try {
+    const win = await WebviewWindow.getByLabel('danmaku')
+    if (win) await win.close()
+  } catch (e) {
+    console.warn('[danmaku] window close failed:', e)
+  }
+}
+
+let unlistenDanmakuCfg: UnlistenFn | null = null
+
 // ---- 皮肤切换 ----
 let unlistenPetSwitched: UnlistenFn | null = null
 let onPetStorage: ((e: StorageEvent) => void) | null = null
@@ -1029,6 +1096,25 @@ onMounted(async () => {
   scheduleRandom()
   // 订阅后端 emit_pet_action → SSE,驱动远程动作
   void connectPetEvents()
+  // 全屏弹幕窗口(透明 + 鼠标穿透),静默创建
+  void ensureDanmakuWindow()
+
+  // 监听弹幕开关变化:总开关关闭时关窗,开启时建窗
+  try {
+    unlistenDanmakuCfg = await listen<{ config?: { enabled?: boolean } }>(
+      'danmaku-config-changed',
+      (event) => {
+        const enabled = event.payload?.config?.enabled
+        if (enabled === false) {
+          void closeDanmakuWindow()
+        } else if (enabled === true) {
+          void ensureDanmakuWindow()
+        }
+      },
+    )
+  } catch (e) {
+    console.warn('[danmaku] config listen failed:', e)
+  }
 
   // 聊天窗口通过 Tauri event 广播 Agent 生命周期,避免 thinking 动作只播放一遍。
   try {
@@ -1090,6 +1176,10 @@ onUnmounted(() => {
   if (unlistenPetSwitched) {
     unlistenPetSwitched()
     unlistenPetSwitched = null
+  }
+  if (unlistenDanmakuCfg) {
+    unlistenDanmakuCfg()
+    unlistenDanmakuCfg = null
   }
   if (unlistenAgentStatus) {
     unlistenAgentStatus()

@@ -106,6 +106,30 @@ class PetEventBus:
         return self._closed
 
 
+    def publish(self, event: dict) -> dict:
+        """通用事件发布:推送任意结构事件到全部订阅者(桌宠弹幕/手账等复用总线)。"""
+        ev = dict(event or {})
+        ev.setdefault("id", uuid.uuid4().hex[:12])
+        ev.setdefault("ts", time.time())
+        with self._lock:
+            self._history.append(ev)
+            queues = list(self._subscribers)
+        for q in queues:
+            try:
+                q.put_nowait(ev)
+            except asyncio.QueueFull:
+                try:
+                    _ = q.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    q.put_nowait(ev)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        return ev
+
     def emit(
         self,
         action: str,

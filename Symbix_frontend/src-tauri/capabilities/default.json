@@ -29,6 +29,8 @@
     "core:window:allow-is-focused",
     "core:window:allow-request-user-attention",
     "core:window:allow-set-always-on-top",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-set-focusable",
     "core:window:allow-get-all-windows",
     "core:webview:allow-get-all-webviews",
     "notification:default",

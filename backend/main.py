@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,7 @@ from application.state import (
 )
 import sys
 import os
-from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice
+from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku
 
 
 def _ensure_bundled_runtime_on_path() -> None:
@@ -74,6 +75,32 @@ UvicornServer.shutdown = _shutdown_close_sse_first  # type: ignore[method-assign
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """应用生命周期:退出时再兜底关一次 SSE + MCP。"""
+    # 陪伴:空闲弹幕 + 时段问候定时器(每 60s 检查一次)
+    _danmaku_task: asyncio.Task | None = None
+
+    async def _companion_loop():
+        import datetime as _dt
+        from application.services.danmaku_service import emit_idle_danmaku_if_quiet, emit_danmaku, _hour_greeting
+        greeted_hour = -1  # 每个小时档只问候一次
+        while True:
+            try:
+                now = _dt.datetime.now()
+                hour = now.hour
+                # 时段问候:整点进入新档时提示一次
+                if hour != greeted_hour and _hour_greeting(hour):
+                    emit_danmaku("morning" if hour < 9 else "afternoon" if hour < 16 else "evening" if hour < 23 else "night")
+                    greeted_hour = hour
+                # 空闲提醒:间隔取配置(danmaku_config.json idle_interval_s)
+                from application.services.danmaku_service import danmaku_cfg as _dm_cfg
+                emit_idle_danmaku_if_quiet(min_interval_s=float(_dm_cfg.cfg.idle_interval_s or 600))
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+
+    try:
+        _danmaku_task = asyncio.create_task(_companion_loop())
+    except Exception as e:
+        print(f"[companion] danmaku loop failed: {e}")
     # 启动 job schedule：注入业务单例并恢复任务
     try:
         job_manager.build(
@@ -94,6 +121,11 @@ async def lifespan(_app: FastAPI):
         print(f"[job] failed to start JobScheduler: {e}")
     yield
     _force_close_sse("lifespan")
+    try:
+        if _danmaku_task:
+            _danmaku_task.cancel()
+    except Exception:
+        pass
     try:
         job_manager.shutdown()
         print("[job] JobScheduler stopped")
@@ -130,6 +162,8 @@ app.include_router(checkpoint.router)
 app.include_router(risk.router)
 app.include_router(jobs.router)
 app.include_router(voice.router)
+app.include_router(journal.router)
+app.include_router(danmaku.router)
 
 
 @app.get("/")

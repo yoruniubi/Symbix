@@ -28,6 +28,8 @@ export default {
     windowChat: 'Symbix - Chat',
     windowSkin: 'Symbix - Skins',
     windowSetting: 'Symbix - Settings',
+    journal: 'Journal',
+    windowJournal: 'Symbix - Journal',
   },
 
   // ===== Chat Window =====
@@ -579,6 +581,18 @@ export default {
     providerZhipu: 'GLM',
     providerMistral: 'Mistral',
     providerCustom: 'Custom',
+    // Companion (danmaku)
+    companion: 'Companion Danmaku',
+    companionEnabled: 'Danmaku Master Switch',
+    companionEnabledHint: 'Pet shows floating danmaku responses to your messages',
+    companionIdle: 'Idle Danmaku',
+    companionIdleHint: 'Pet occasionally whispers when it has been idle',
+    companionGreeting: 'Greeting Danmaku',
+    companionGreetingHint: 'Greetings in morning / afternoon / evening / late night',
+    companionReset: 'Reset danmaku settings',
+    companionTest: 'Test',
+    companionTestTriggered: 'A test danmaku fired~',
+    companionTestFailed: 'Failed to send test danmaku, check backend',
   },
 
   // ===== Model Setting Page =====
@@ -710,5 +724,21 @@ export default {
     noData: 'No data',
     symbixtitle: 'Symbix',
     pullToResize: 'Drag to resize panel',
+  },
+
+  // ===== Journal Window =====
+  journal: {
+    title: 'Journal',
+    prevDay: 'Previous day',
+    nextDay: 'Next day',
+    loading: 'Flipping through memories...',
+    retry: 'Retry',
+    timeout: 'That day seems far away, try again~',
+    msgCount: 'Messages',
+    memCount: 'Memories',
+    sectionMemories: "Today's memories",
+    sectionTips: "AI's little notes",
+    sectionHighlights: 'Conversation highlights',
+    empty: 'Nothing recorded on this day yet~',
   },
 }

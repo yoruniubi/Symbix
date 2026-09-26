@@ -591,6 +591,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 "act_mode": act_mode,
                 "act_plan": act_plan,
             })
+            # 陪伴:任务完成 → 弹幕庆祝(静默失败不影响主流程)
+            try:
+                from application.services.danmaku_service import emit_danmaku
+                emit_danmaku("complete")
+            except Exception:
+                pass
             # — checkpoint: 一轮 user_msg → agent 完成,记 round 总结点
             _emit_round_summary(
                 request.session_id, ckpt_round_id,
@@ -619,6 +625,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         except Exception as e:
             import traceback
             traceback.print_exc()
+            # 陪伴:出错 → 弹幕安抚(静默失败不影响主流程)
+            try:
+                from application.services.danmaku_service import emit_danmaku
+                emit_danmaku("error")
+            except Exception:
+                pass
             yield format_sse({"type": "error", "content": str(e)})
             yield "data: [DONE]\n\n"
         finally:

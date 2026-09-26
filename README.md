@@ -1,71 +1,59 @@
 # Symbix 🐾
 
+<p align="center">
+  <img src="Symbix_frontend/public/logo/logo.png" alt="Symbix Logo" width="200"/>
+</p>
+
 > 一个全能的「情绪陪伴型」AI 桌宠 Agent。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
-Symbix 把 **AI Agent** 装进一只 **桌面宠物** 里:它不止是你桌面上会跳会跑的小可爱,更是一个**能自己干活**的智能体——读文件、改代码、查资料、跑命令、下载论文、写轮子、生成新皮肤……全部通过自然对话驱动,并且把每一步行为都记录成可回溯的「行为 Checkpoint」。
+<!-- 技术栈 -->
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)]()
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.137-009688?logo=fastapi&logoColor=white)]()
+[![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)]()
+[![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)]()
+[![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)]()
+[![PixiJS](https://img.shields.io/badge/PixiJS-8-e11d74?logo=pixi.js&logoColor=white)]()
+[![naive-ui](https://img.shields.io/badge/naive--ui-2-0080ff)]()
+
+Symbix 把 **AI Agent** 装进一只 **桌面宠物** 里:它不止是你桌面上会跳会跑的小可爱,更是一个**能自己干活**的智能体——读文件、改代码、查资料、跑命令、下载论文、写轮子、生成新皮肤......全部通过自然对话驱动,并且把每一步行为都记录成可回溯的「行为 Checkpoint」。
 
 ---
 
-## ✨ 特性总览
+## ✨ 它都能做什么?
 
-### 🖥️ 桌宠
-- **PixiJS 8 渲染** 的 spritesheet 桌宠,透明置顶,280×260 小窗常驻桌面
-- 工作 / 休闲双模式,动作事件总线(`emit_pet_action`)驱动动画与气泡
-- **pet-forge 皮肤流水线**:rig → states → mirrors → validate → pack,AI 直接生成整套桌宠皮肤
-- 支持 Codex 桌宠导入,一键换肤
+### 🖥️ 一只活的桌宠
+- 一只**常驻桌面**的透明小宠物,会动、会跳、会冒气泡跟你说话
+- **工作 / 休闲双模式**,干活时认真,摸鱼时卖萌
+- **AI 也能帮你换皮肤**:直接描述想要的形象,它帮你生成一套新桌宠皮肤;也支持导入现有桌宠
 
-### 🧠 Agent 大脑
-- **多 Provider 支持**:OpenAI / Anthropic / Gemini / DeepSeek / Groq / Mistral / Kimi / Qwen / 智谱 / Moonshot / xAI / OpenRouter 等 13+ 家,统一原生 httpx 驱动,**零 litellm 依赖**
-- 原生 SSE 流式对话,自动适配各家协议(OpenAI / Anthropic / Gemini)
-- 多轮 tool calls 循环 + 跨审批上下文累积,模型不「失忆」
+### 🧠 一个会干活的 AI 大脑
+- 支持 **OpenAI / Claude / Gemini / DeepSeek 等 13+ 家模型**,随便切换
+- **一边聊天一边干活**:你说需求,它自己学会调用工具把事办完,不用你手动操作
+- 长对话**不失忆**:自动压缩上下文,聊再久也记得你
 
-### 🛠️ 工具与技能
-- **内置工具**:文件读写 / 搜索替换 / 终端 / 网页抓取 / 论文搜索下载解析 / 桌宠动作……
-- **三级风险审批**:SAFE 自动放行 / MEDIUM 审批 / HIGH 强制审批,可配置会话信任通道,防 AI 乱写文件
-- **Skill 系统**:关键词触发 + prompt 注入 + 工具注册,支持 GitHub 一键安装 / 自定义创建
-- **MCP 协议**:stdio + 远程 HTTP 双通道,支持 **OAuth 自动登录** / API Key / 面板化管理
+### 🛠️ 十八般武艺
+- **文件与代码**:读文件、改代码、搜内容、跑命令,你口头说就行
+- **查资料**:搜索网页、下载并解析论文,一步到位
+- **技能插件(Skill)**:装一个技能它就多一门手艺,支持一键安装
+- **安全防呆**:它要改你的文件前会先问你,高风险的动手会拦住让你确认,不怕乱来
+- **连接更多工具(MCP)**:把外部服务接进来,扩展无限可能
 
-### 🗂️ 记忆与回溯
-- SQLite 持久化对话 / 摘要 / 用户画像 / 定时任务
-- **行为 Checkpoint**:每一步工具调用与文件改动都留 blob 快照,AI 改错文件可一键回溯恢复
-- 上下文压缩(阈值触发 AI 摘要),长对话不降智
-- **Job Schedule**:cron / interval 定时任务,跑完桌宠开心跳一下
+### 🗂️ 干过的活都能找回
+- **行为回溯**:它每一步干了什么都记着,改错文件了?一键还原
+- **聊天记忆**:对话和记忆存在本地,关掉再开也不丢
+- **定时任务**:让它每天定点提醒你、帮你做事
 
-### 🔊 语音
-- **STT**:SenseVoice 本地流式识别(逐句直达聊天),或云端 OpenAI 兼容 STT
-- **TTS**:Edge TTS / OpenAI 兼容 TTS,句子级流式朗读
+### 🔊 能听会说
+- **语音输入**:张嘴说就行,本地识别飞快
+- **语音朗读**:它把回答念给你听,像真人一样交流
 
-### 🌍 界面
-- Vue 3 + TypeScript + Vite,naive-ui 组件库,完整的**中英双语 i18n**
-- Tauri 2 桌面壳,四页面:桌宠主页 / 聊天 / 换肤 / 设置
-
----
-
-## 🏗️ 架构
-
-```
-Symbix/
-├── backend/                  Python FastAPI 后端
-│   ├── main.py               FastAPI 入口
-│   ├── application/          业务层 (routers / state / memory_ops)
-│   └── Symbix_sdk/           自研 SDK
-│       ├── client.py         AI 客户端(多 Provider SSE)
-│       ├── memory/           记忆与上下文
-│       ├── mcp/              MCP 协议支持
-│       ├── tools/            工具系统
-│       ├── skill/            Skill 系统 + pet-forge 皮肤生成
-│       ├── checkpoint/       行为回溯
-│       ├── stt/ tts/         语音
-│       └── ...
-├── Symbix_frontend/          Vue 3 + Vite + Tauri 桌面应用
-│   └── src/
-│       ├── pages/            主页 / 聊天 / 换肤 / 设置
-│       └── src-tauri/        Rust 桌面壳
-└── AGENTS.md                 项目开发指南
-```
+### 🌍 处处贴心
+- 桌面窗口(Windows / macOS / Linux)+ 完整**中英双语**
+- **四个页面**清晰分工:桌宠主页 / 聊天 / 换肤 / 设置
 
 ---
 
@@ -121,5 +109,9 @@ npm run tauri dev    # Tauri 桌面应用
 - [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) — 本地语音识别
 
 ---
+
+## 🔗 友情链接
+- [linux do社区](https://linux.do) — 新的理想社区
+
 
 **Symbix — 让 AI 陪你生活,也替你干活。** 🐾

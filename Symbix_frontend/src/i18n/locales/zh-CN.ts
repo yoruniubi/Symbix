@@ -28,6 +28,8 @@ export default {
     windowChat: 'Symbix - 对话',
     windowSkin: 'Symbix - 换肤',
     windowSetting: 'Symbix - 设置',
+    journal: '手账',
+    windowJournal: 'Symbix - 手账',
   },
 
   // ===== Chat Window =====
@@ -578,6 +580,18 @@ export default {
     providerZhipu: 'GLM',
     providerMistral: 'Mistral',
     providerCustom: '自定义',
+    // Companion (陪伴弹幕)
+    companion: '陪伴弹幕',
+    companionEnabled: '弹幕总开关',
+    companionEnabledHint: '开启后,桌宠会用飘字弹幕回应你的消息',
+    companionIdle: '空闲漫游弹幕',
+    companionIdleHint: '长时间没互动时,桌宠偶尔轻轻说句话',
+    companionGreeting: '时段问候弹幕',
+    companionGreetingHint: '早上 / 下午 / 晚上 / 深夜的问候',
+    companionReset: '重置弹幕设置',
+    companionTest: '测试一下',
+    companionTestTriggered: '已触发一条测试弹幕~',
+    companionTestFailed: '测试弹幕发送失败,请检查后端',
   },
 
   // ===== Model Setting Page =====
@@ -709,5 +723,20 @@ export default {
     noData: '暂无数据',
     symbixtitle: 'Symbix',
     pullToResize: '拖动调整面板宽度',
+  },
+  // ===== Journal Window =====
+  journal: {
+    title: '手账',
+    prevDay: '前一天',
+    nextDay: '后一天',
+    loading: '翻翻回忆中...',
+    retry: '重试',
+    timeout: '这一天好像有点远,再试试~',
+    msgCount: '消息数',
+    memCount: '记住的事',
+    sectionMemories: '今天记住的事',
+    sectionTips: 'AI 的小巧思',
+    sectionHighlights: '对话亮点',
+    empty: '这一天还没有记录~',
   },
 }

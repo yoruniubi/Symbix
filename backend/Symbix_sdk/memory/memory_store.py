@@ -215,13 +215,35 @@ class MemoryStore:
     # ═══════════════════════════════════════════════════════════════
 
     def _ensure_conn(self) -> sqlite3.Connection:
-        """延迟初始化 SQLite 连接，线程安全。"""
+        """延迟初始化 SQLite 连接,线程安全。首次连接时创建 memories 表。"""
         if self._conn is None:
             with self._lock:
                 if self._conn is None:
                     self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
                     self._conn.execute("PRAGMA journal_mode=WAL")
                     self._conn.execute("PRAGMA foreign_keys=ON")
+                    # memories 表(长期记忆)。之前只连库不建表,
+                    # run_pipeline INSERT 会直接 no such table → 补上。
+                    self._conn.execute("""
+                        CREATE TABLE IF NOT EXISTS memories (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id TEXT NOT NULL DEFAULT 'default',
+                            content TEXT NOT NULL,
+                            category TEXT NOT NULL DEFAULT 'other',
+                            tokens TEXT NOT NULL DEFAULT '',
+                            status TEXT NOT NULL DEFAULT 'active',
+                            superseded_by INTEGER,
+                            source_session_id TEXT,
+                            confidence REAL DEFAULT 1.0,
+                            access_count INTEGER NOT NULL DEFAULT 0,
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        )
+                    """)
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_mem_user_status ON memories(user_id, status)"
+                    )
+                    self._conn.commit()
         return self._conn
 
     # ═══════════════════════════════════════════════════════════════

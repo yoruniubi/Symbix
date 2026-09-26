@@ -555,7 +555,7 @@ small {
   resize: none;
   margin: 8px;
   padding: 10px;
-  background: var(--surface);
+  background: var(--bg-surface);
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
