@@ -1,3 +1,7 @@
+# ── Private docs (personal notes, never commit) ──
+Agents.md
+关于在此项目开发过程中学习感悟.md
+
 # ── Secrets & local runtime data (never commit) ──
 .env
 .env.*
