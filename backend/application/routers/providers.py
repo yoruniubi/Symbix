@@ -43,6 +43,25 @@ async def activate_provider(name: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/providers/{name}/model")
+async def update_provider_model(name: str, body: dict):
+    """仅更新 provider 的 model(不改 api_key / api_base / 能力位)。
+    供 ChatInput 切换模型时同步到 providers.json,让非流式后台链路
+    (generate_title / 记忆压缩 / 记忆提取 / 定时任务)也能用到最新模型。
+    """
+    new_model = (body.get("model") or "").strip()
+    if not new_model:
+        raise HTTPException(status_code=400, detail="model 不能为空")
+    if name not in provider_registry.providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+    try:
+        provider_registry.providers[name].model = new_model
+        provider_registry.save()
+        return {"status": "ok", "message": f"Provider '{name}' model updated to {new_model}"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/model/capabilities")
 async def model_capabilities(model: str = ""):
     """

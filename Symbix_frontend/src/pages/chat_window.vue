@@ -582,6 +582,19 @@ function handleRetryMessage(idx: number) {
 function setModel(model: string) {
   currentModel.value = model
   saveSettings({ model })
+  // 同步到后端 providers.json 的 default provider(只改 model,不碰 api_key/base/systemPrompt):
+  // 让 generate_title / 记忆压缩 / 记忆提取 / 定时任务等非流式后台链路也能用最新模型。
+  void fetch(`${BACKEND_URL}/providers/default/model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  }).then((res) => {
+    if (!res.ok) {
+      console.warn('[chat] sync model to backend failed:', res.status)
+    }
+  }).catch((e) => {
+    console.warn('[chat] sync model to backend error:', e)
+  })
 }
 
 function newChat() {

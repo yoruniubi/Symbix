@@ -367,15 +367,14 @@ class MemoryStore:
         model = override_model or self.model
         system_prompt = EXTRACTION_PROMPT.replace("{chunk}", dialogue_chunk)
 
-        
         try:
-            self.llm_client.system_prompt = system_prompt   # 补上：之前算了没用
             result = await self.llm_client.chat(
                 user_input="请提取记忆事实。",
                 history=[],
                 override_model=model,
                 override_api_key=override_api_key,
                 override_api_base=override_api_base,
+                system_prompt=system_prompt,
             )
             raw = result.get("content", "").strip()
         except Exception as e:
@@ -477,13 +476,13 @@ class MemoryStore:
         model = override_model or self.model
 
         try:
-            self.llm_client.system_prompt = prompt  
             result = await self.llm_client.chat(
                 user_input="请判断记忆操作。",
                 history=[],
                 override_model=model,
                 override_api_key=override_api_key,
                 override_api_base=override_api_base,
+                system_prompt=prompt,
             )
             raw = result.get("content", "").strip()
         except Exception as e:

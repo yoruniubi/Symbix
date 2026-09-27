@@ -149,9 +149,12 @@ class SymbixClient:
         return url, "openai_compat", headers, model_name
 
     def _build_messages(self, history, user_input, registry=None, tools=None, image_parts=None,
-                         supports_vision: Optional[bool] = None):
+                         supports_vision: Optional[bool] = None,
+                         system_prompt: Optional[str] = None):
         messages = []
-        system = self.system_prompt or ""
+        # 显式传入的 system_prompt 优先(后台链路如记忆提取/决策),
+        # 不覆盖全局 self.system_prompt,避免并发跑到一半被读走污染值。
+        system = system_prompt if system_prompt is not None else (self.system_prompt or "")
         # 如果调用方未显式指定，则从 active provider 推断视觉能力
         if image_parts and supports_vision is None:
             try:
@@ -337,13 +340,17 @@ class SymbixClient:
         override_api_base: str = None,
         override_model: str = None,
         image_parts: Optional[list[dict]] = None,
+        system_prompt: Optional[str] = None,
     ) -> dict:
         provider = self.registry.get_active()
         raw_model = override_model or provider.model
         raw_base = override_api_base or provider.api_base
         api_key_val = override_api_key or provider.api_key
 
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
+        # 显式传入的 system_prompt 优先(如记忆提取/决策等后台链路),
+        # 直达 _build_messages,不碰全局 self.system_prompt → 并发安全。
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools,
+                                        image_parts=image_parts, system_prompt=system_prompt)
         caps = resolve_capabilities(raw_model, provider)
 
         print(">>> [chat] model:", raw_model, "base:", raw_base, "caps:", caps)
