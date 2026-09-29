@@ -70,6 +70,9 @@
               <span class="step-badge" :class="step.status">{{ statusLabel(step.status) }}</span>
               <svg class="step-expand-arrow" :class="{ expanded: expandedSteps[Number(i)] }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
+            <div v-if="step.progress" class="step-progress">
+              <span class="step-progress-dot"></span>{{ step.progress }}
+            </div>
             <div v-show="expandedSteps[Number(i)]" class="step-details">
               <div v-if="step.arguments" class="step-detail-row">
                 <div class="detail-label">{{ t('chat.param') }}</div>
@@ -77,7 +80,7 @@
               </div>
               <div v-if="step.result" class="step-detail-row">
                 <div class="detail-label">{{ t('chat.result') }}</div>
-                <pre class="detail-pre">{{ truncateResult(step.result) }}</pre>
+                <pre class="detail-pre">{{ formatStepResult(step) }}</pre>
               </div>
             </div>
           </div>
@@ -340,6 +343,10 @@ const TOOL_ICONS: Record<string, string> = {
   emit_pet_action: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
   // 交互澄清
   ask_clarifying_question: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  // 子 Agent 委派(A2A-lite)
+  delegate_task: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
+  // 子 Agent 编队(并行扇出)
+  delegate_tasks: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   check_agent_status: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
   play_status_animation: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9z"/></svg>',
   // 技能
@@ -394,6 +401,8 @@ function formatToolName(name: string): string {
     delete_file: t('chat.toolDeleteFile'),
     execute_command: t('chat.toolExecuteCommand'),
     ask_clarifying_question: t('chat.toolAskClarifyingQuestion'),
+    delegate_task: t('chat.toolDelegateTask'),
+    delegate_tasks: t('chat.toolDelegateTasks'),
   }
   if (map[name]) return map[name]
   if (name.startsWith('skill__')) return `${t('chat.toolSkill')}: ${name.replace(/^skill__/, '')}`
@@ -429,6 +438,21 @@ function truncateResult(raw: string): string {
   if (!raw) return t('chat.emptyResult')
   if (raw.length > 800) return raw.slice(0, 800) + '\n\n... ' + t('chat.resultTruncated', { count: raw.length })
   return raw
+}
+
+/** 子 Agent 委派类工具:结果放宽截断阈值,并格式化成缩进 JSON 便于阅读 */
+const DELEGATE_TOOLS = ['delegate_task', 'delegate_tasks']
+const DELEGATE_RESULT_LIMIT = 4000
+
+function formatStepResult(step: any): string {
+  const raw = String(step?.result || '')
+  if (!raw) return t('chat.emptyResult')
+  if (!DELEGATE_TOOLS.includes(step?.name)) return truncateResult(raw)
+  const pretty = formatJson(raw)
+  if (pretty.length > DELEGATE_RESULT_LIMIT) {
+    return pretty.slice(0, DELEGATE_RESULT_LIMIT) + '\n\n... ' + t('chat.resultTruncated', { count: pretty.length })
+  }
+  return pretty
 }
 
 function retry() {
@@ -941,6 +965,27 @@ onMounted(() => {
 }
 .step-card.running .step-name, .step-card.pending .step-name { 
   color: var(--text-primary); 
+}
+
+.step-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 6px 30px;
+  font-size: 11px;
+  color: var(--text-muted, currentColor);
+}
+.step-progress-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-500, #EF6B6E);
+  flex-shrink: 0;
+  animation: step-progress-pulse 1.2s ease-in-out infinite;
+}
+@keyframes step-progress-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 .step-badge {

@@ -294,7 +294,6 @@ const systemPromptPresets = computed(() => [
   { label: t('modelSetting.presetCreative'), text: t('modelSetting.presetCreativeText') },
 ])
  
-
 function applySystemPromptPreset(preset: { label: string; text: string }) {
   if (form.value.systemPrompt === preset.text) {
     form.value.systemPrompt = ''

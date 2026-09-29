@@ -1,17 +1,4 @@
-"""工具调用风险分级(通道化 V2)。
-
-设计原则(2026-09 重构):
-  - 工具按「行为通道」分级,而非按工具名硬编码集合。
-  - 原生工具在声明处带 `risk_channel`(见 builtin/*.py 的 *_SCHEMAS);
-    本文件不再维护工具名集合,只做通道→等级映射 + 参数级危险升级 + override。
-  - MCP 工具(server_id 非 builtin)由 connector 注入 annotations / server 信任,
-    经 classify 时走启发式/annotation 归通道(见 _classify_mcp_tool)。
-
-通道(风险从低到高):
-  read(放行) < write(会话首问) < exec(命令) < network(外部副作用) < delete(破坏性)
-"""
 from __future__ import annotations
-
 import os
 import re
 import json

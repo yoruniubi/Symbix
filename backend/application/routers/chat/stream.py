@@ -43,6 +43,7 @@ from application.routers.chat.helpers import (
     _assert_tool_pairing,
     _prepare_user_message,
     _filter_image_parts,
+    _stream_tool_events,
     MAX_CUM_TOOL_TOKENS,
 )
 
@@ -210,6 +211,13 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 supports_vision=supports_vision,
             )
             cum_tool_tokens = 0
+            # 子 Agent 委派所需的请求级模型参数(不同模型/网关时与主 Agent 保持一致)
+            _delegate_ctx = {
+                "api_key": api_key,
+                "api_base": api_base,
+                "model": model,
+                "session_id": request.session_id,
+            }
 
             while tool_calls_raw and round_count < max_rounds:
                 # 客户端断连检测:前端 abort / 删 session 会断 SSE 连接,后端需主动停、避免后端继续跑 tool。
@@ -458,7 +466,13 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         return
 
                     _ctx_set_current(request.session_id, ckpt_round_id)
-                    tool_output = tool_registry.execute(tc_name, tc_args)
+                    tool_output = ""
+                    async for _kind, _payload in _stream_tool_events(tc_name, tc_args, _delegate_ctx):
+                        if _kind == "progress":
+                            if isinstance(_payload, dict):
+                                yield format_sse({"type": "delegate_progress", "name": tc_name, **_payload})
+                        else:
+                            tool_output = _payload
                     if not isinstance(tool_output, str):
                         tool_output = _json.dumps(tool_output, ensure_ascii=False)
                     steps.append({

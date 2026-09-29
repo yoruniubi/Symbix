@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Callable, Any
+import asyncio
 import json
 import inspect
 import os
@@ -12,8 +13,6 @@ class NativeToolkit:
         self.tool_schemas: dict[str, dict] = {}
         self._skill_registry = None  # 关联的 SkillRegistry，用于注册 skill 为工具
         self._skill_tool_names: set[str] = set()  # 追踪哪些工具名来自 skill
-
-    # ---- Skill 注册管理 ----
 
     def set_skill_registry(self, registry):
         """关联 SkillRegistry，把每个已加载 skill 注册为可调用工具"""
@@ -179,6 +178,81 @@ class NativeToolkit:
         return result
 
     # ---- 工具执行 ----
+
+    def is_async_tool(self, name: str) -> bool:
+        """判断某工具是否为 async 函数(如 delegate_task),需 await 执行。
+
+        除普通 async 函数外,也兼容实现了 async __call__ 的可调用对象。
+        """
+        func = self.tools.get(name)
+        if func is None:
+            return False
+        if asyncio.iscoroutinefunction(func):
+            return True
+        call = getattr(func, "__call__", None)
+        return call is not None and asyncio.iscoroutinefunction(call)
+
+    async def execute_tool_async(
+        self,
+        name: str,
+        arguments: dict | str,
+        on_event=None,
+        ctx: dict | None = None,
+    ) -> str:
+        """异步执行工具(同步/异步函数均可),返回结果字符串。
+
+        Args:
+            name: 工具名称
+            arguments: 工具参数(dict 或 JSON 字符串)
+            on_event: 可选异步回调,注入给声明了 `_on_event` 形参的工具(用于进度推送)
+            ctx: 可选上下文(如请求级 api_key/model),注入给声明了 `_ctx` 形参的工具
+
+        Returns:
+            工具执行结果字符串;失败时返回 `[Error] ...` 文本而非抛异常
+        """
+        func = self.tools.get(name)
+        if not func:
+            return f"[Error] Tool '{name}' not found"
+
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                return f"[Error] Invalid JSON arguments: {arguments}"
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return f"[Error] Invalid arguments for tool '{name}': expected a JSON object"
+
+        try:
+            sig = inspect.signature(func)
+            params = set(sig.parameters)
+            accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            # 内部注入形参不由模型提供
+            internal = {"_on_event", "_ctx"}
+            if not accepts_kwargs:
+                allowed = params - internal
+                unknown = sorted(set(arguments) - allowed)
+                if unknown:
+                    return (
+                        f"[Error] Unsupported arguments for tool '{name}': {unknown}. "
+                        f"Supported arguments: {sorted(allowed)}. "
+                        "Please retry with only supported arguments."
+                    )
+            kwargs = dict(arguments)
+            if "_on_event" in params:
+                kwargs["_on_event"] = on_event
+            if "_ctx" in params:
+                kwargs["_ctx"] = ctx
+            result = func(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            return str(result) if result is not None else ""
+        except Exception as e:
+            return f"[Error] Execution failed: {e}"
 
     def execute_tool(self, name: str, arguments: dict | str) -> str:
         """执行指定工具并返回结果字符串

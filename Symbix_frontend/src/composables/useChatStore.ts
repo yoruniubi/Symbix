@@ -7,6 +7,7 @@ export interface ToolCallStep {
   result?: string
   status: 'pending' | 'awaiting_approval' | 'approved' | 'rejected' | 'done' | 'skipped'
   need_approval?: boolean
+  progress?: string
 }
 
 export interface Message {

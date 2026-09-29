@@ -32,6 +32,37 @@ class ToolRegistry:
         """返回仅 skill 工具"""
         return self.native.get_skill_tools()
 
+    def is_async_tool(self, tool_name: str) -> bool:
+        """该工具是否为异步工具(delegate_task 等),需走 execute_async。"""
+        if tool_name in self.native.tools:
+            return self.native.is_async_tool(tool_name)
+        return False
+
+    async def execute_async(
+        self,
+        tool_name: str,
+        arguments,
+        on_event=None,
+        ctx: dict | None = None,
+    ) -> str:
+        """异步执行工具。原生异步工具走 await;其余回退到同步 execute。
+
+        on_event / ctx 会注入给声明了同名形参的工具(delegate_task 用于进度推送与请求级模型参数)。
+        """
+        if isinstance(arguments, str):
+            try:
+                arguments = _json.loads(arguments) if arguments else {}
+            except _json.JSONDecodeError:
+                return f"[Error] Invalid JSON arguments for tool '{tool_name}': {arguments!r}"
+        if arguments is None:
+            arguments = {}
+
+        if tool_name in self.native.tools:
+            return await self.native.execute_tool_async(
+                tool_name, arguments, on_event=on_event, ctx=ctx
+            )
+        return self.execute(tool_name, arguments)
+
     def execute(self, tool_name: str, arguments) -> str:
         # 统一标准化 arguments：可能是 str(JSON) 或 dict，远端 MCP server 要 dict。
         # 模型有时把 arguments 当字符串传，则先解析。

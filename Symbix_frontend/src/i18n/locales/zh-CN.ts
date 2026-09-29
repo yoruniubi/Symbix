@@ -113,6 +113,17 @@ export default {
     toolDeleteFile: '删除文件',
     toolExecuteCommand: '执行命令',
     toolAskClarifyingQuestion: '向用户提问',
+    toolDelegateTask: '委派子 Agent',
+    toolDelegateTasks: '并行委派子 Agent 编队',
+    delegateUsingTool: '{role}正在检索 {tool}',
+    delegateThinking: '{role}正在分析…',
+    delegateBatchUsingTool: '子 Agent 编队 {done}/{total} · {role} 检索 {tool}',
+    delegateBatchThinking: '子 Agent 编队 {done}/{total} · {role} 分析中',
+    delegateRole_researcher: '代码检索员',
+    delegateRole_analyst: '问题分析员',
+    delegateRole_designer: '方案设计员',
+    delegateRole_tester: '测试设计员',
+    delegateRole_reviewer: '代码审查员',
   },
 
   // ===== Chat Input =====

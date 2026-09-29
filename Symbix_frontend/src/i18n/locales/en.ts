@@ -114,6 +114,17 @@ export default {
     toolDeleteFile: 'Delete file',
     toolExecuteCommand: 'Execute command',
     toolAskClarifyingQuestion: 'Ask user',
+    toolDelegateTask: 'Delegate to sub-agent',
+    toolDelegateTasks: 'Delegate to sub-agent team',
+    delegateUsingTool: '{role} searching {tool}',
+    delegateThinking: '{role} analyzing…',
+    delegateBatchUsingTool: 'Sub-agent team {done}/{total} · {role} searching {tool}',
+    delegateBatchThinking: 'Sub-agent team {done}/{total} · {role} analyzing',
+    delegateRole_researcher: 'Code researcher',
+    delegateRole_analyst: 'Problem analyst',
+    delegateRole_designer: 'Solution designer',
+    delegateRole_tester: 'Test designer',
+    delegateRole_reviewer: 'Code reviewer',
   },
 
   // ===== Chat Input =====

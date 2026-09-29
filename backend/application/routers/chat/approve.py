@@ -38,6 +38,8 @@ from application.routers.chat.helpers import (
     _estimate_tool_tokens,
     _steps_to_tool_messages,
     _assert_tool_pairing,
+    _execute_tool,
+    _stream_tool_events,
     MAX_CUM_TOOL_TOKENS,
 )
 
@@ -67,6 +69,13 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     api_key = ctx["api_key"]
     api_base = ctx["api_base"]
     model = ctx["model"]
+    # 子 Agent 委派所需的请求级模型参数(与主 Agent 一致)
+    _delegate_ctx = {
+        "api_key": api_key,
+        "api_base": api_base,
+        "model": model,
+        "session_id": ctx["session_id"],
+    }
     round_count = ctx["round_count"]
     act_mode = ctx.get("act_mode", "reactive")
     act_plan = ctx.get("act_plan", [])
@@ -111,7 +120,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     _st.grant(_approve_risk.channel, server_id=_approve_risk.server_id)
                 except Exception:
                     pass
-            out = tool_registry.execute(pending_tc["name"], pending_tc["arguments"])
+            out = await _execute_tool(pending_tc["name"], pending_tc["arguments"], _delegate_ctx)
             if not isinstance(out, str):
                 out = _json.dumps(out, ensure_ascii=False)
             steps.append({
@@ -190,7 +199,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 r_out = f"[安全策略] 本轮还包含审批工具 '{tc['name']}'，但一次只能审批一个。请单独确认后再继续。"
             else:
                 _ctx_set_current(ctx["session_id"], ckpt_round_id)
-                r_out = tool_registry.execute(tc["name"], tc["arguments"])
+                r_out = await _execute_tool(tc["name"], tc["arguments"], _delegate_ctx)
                 if not isinstance(r_out, str):
                     r_out = _json.dumps(r_out, ensure_ascii=False)
             tool_results.append({
@@ -531,7 +540,14 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             return
 
                         _ctx_set_current(session_id, ckpt_round_id)
-                        out = tool_registry.execute(tc_name, tc_args)
+                        out = ""
+                        # 异步工具(delegate_task/delegate_tasks)边跑边把进度推成 SSE
+                        async for _kind, _payload in _stream_tool_events(tc_name, tc_args, _delegate_ctx):
+                            if _kind == "progress":
+                                if isinstance(_payload, dict):
+                                    yield format_sse({"type": "delegate_progress", "name": tc_name, **_payload})
+                            else:
+                                out = _payload
                         if not isinstance(out, str):
                             out = _json.dumps(out, ensure_ascii=False)
                         steps.append({"type": "tool_result", "tool_call_id": tc_id, "name": tc_name, "content": out})

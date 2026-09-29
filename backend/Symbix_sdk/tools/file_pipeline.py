@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import base64
 import csv
 import io
@@ -651,7 +650,6 @@ def _unescape_xml(s: str) -> str:
     )
 
 
-
 def _parse_docx_bytes(data: bytes, max_chars: int) -> str:
     try:
         import zipfile
@@ -674,7 +672,6 @@ def _parse_docx_bytes(data: bytes, max_chars: int) -> str:
         return text or "[DOCX 无文本内容]"
     except Exception as e:
         return f"[DOCX 解析失败: {e}]"
-
 
 
 def _parse_xlsx_bytes_native(xlsx_path: str, max_chars: int) -> str:

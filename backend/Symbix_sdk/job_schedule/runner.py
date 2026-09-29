@@ -122,6 +122,15 @@ class JobRunner:
                     _risk = classify_tool_risk(fn["name"], args)
                     risk_level, risk_reason = _risk.level, _risk.reason
 
+                    # 后台无人值守:不派发子 Agent(耗 token 且无进度出口,失败无感知)
+                    if fn["name"] == "delegate_task":
+                        skip_msg = "[系统] 定时任务中不派发子 Agent,请直接使用只读工具完成任务。"
+                        tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],
+                                             "content": skip_msg, "arguments": fn.get("arguments")})
+                        steps.append({"type": "tool_result", "tool_call_id": fn["id"], "name": fn["name"],
+                                      "content": skip_msg})
+                        continue
+
                     # auto_safe:非 SAFE 跳过；否则非 SAFE 也跳过（后台无人审批，一律不执行写操作）
                     if risk_level != ToolRiskLevel.SAFE:
                         skip_msg = (
@@ -135,7 +144,11 @@ class JobRunner:
                         continue
 
                     _ctx_set_current(sid, ckpt_round_id)
-                    out = self.tool_registry.execute(fn["name"], fn.get("arguments"))
+                    # 异步工具(delegate_task 类)必须 await,否则拿到的是 coroutine
+                    if self.tool_registry.is_async_tool(fn["name"]):
+                        out = await self.tool_registry.execute_async(fn["name"], fn.get("arguments"))
+                    else:
+                        out = self.tool_registry.execute(fn["name"], fn.get("arguments"))
                     if not isinstance(out, str):
                         out = _json.dumps(out, ensure_ascii=False)
                     tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],

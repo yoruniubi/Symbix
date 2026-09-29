@@ -112,9 +112,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
-
 const { t } = useI18n()
-
 const BACKEND_URL = 'http://127.0.0.1:8000'
 
 interface Tip {
@@ -142,7 +140,6 @@ const currentDate = ref(todayStr())
 const loading = ref(false)
 const loadError = ref('')
 const journal = ref<JournalData | null>(null)
-
 const memories = computed(() => journal.value?.memories ?? [])
 const aiTips = computed(() => journal.value?.ai_tips ?? [])
 const stats = computed(() => journal.value?.stats ?? { message_count: 0, memory_count: 0 })

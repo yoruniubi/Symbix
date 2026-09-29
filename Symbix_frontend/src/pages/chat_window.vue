@@ -158,7 +158,6 @@
   </div>
 </template>
 
-
 <script setup lang="ts">
 import SkillPanel from '@/components/panels/SkillPanel.vue'
 import McpPanel from '@/components/panels/McpPanel.vue'
@@ -181,9 +180,7 @@ import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
 import { fetch } from '@tauri-apps/plugin-http'
 import { useI18n } from 'vue-i18n'
-
 const { t } = useI18n()
-
 const messageUi = useMessage()
 const { settings, loadSettings, saveSettings } = useSettings()
 const { fetchModels, chatCompletion } = useApiClient()
@@ -195,18 +192,13 @@ import { safeLog } from '@/utils/logMask'
 import { feedSpeechSentence, flushSpeechSentence, speakStart, stopSpeak } from '@/utils/backend'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
-
 const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
-/** 首次上传/发声时预留的会话 id(ChatInput 生成),建会话时复用,保证附件目录归属一致 */
 const pendingSessionId = ref<string>('')
-/** 朗读开关:AI 回复后自动朗读 */
 const voiceEnabled = ref(false)
-/** 标记是否为用户主动中断（避免 abort 导致的错误被当成真实错误处理） */
 let userAborted = false
-/** 本轮流式是否已开启句子级朗读(用于结束时 flush 尾巴)。 */
 let ttsStreaming = false
 interface Skill {
   name: string
@@ -992,6 +984,7 @@ function handleSSEEvent(
       if (target) {
         target.result = evt.content || ''
         target.status = status
+        target.progress = undefined  // 子 Agent 完成,清除进行中的进度文案
       } else {
         steps.push({
           id: evt.id || '',
@@ -1006,6 +999,37 @@ function handleSSEEvent(
         arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
       }))
       nextTick(() => scrollToBottom())
+      break
+    }
+
+    case 'delegate_progress': {
+      // 子 Agent(delegate_task / delegate_tasks)执行期间的后台进度:更新对应 step 卡片的进度文案
+      const roleKey = evt.agent_role ? `chat.delegateRole_${evt.agent_role}` : ''
+      const roleLabel = roleKey ? t(roleKey) : t('chat.toolDelegateTask')
+      const target = steps.find((s: any) => s.name === evt.name) ||
+        msg.steps?.find((s: any) => s.name === evt.name)
+      if (target) {
+        if (evt.total) {
+          // 批量扇出:显示「几路并行、已完成几路」
+          const vars = {
+            done: evt.done ?? 0,
+            total: evt.total,
+            role: roleLabel,
+            tool: evt.tool || '',
+          }
+          target.progress = evt.phase === 'tool_start'
+            ? t('chat.delegateBatchUsingTool', vars)
+            : t('chat.delegateBatchThinking', vars)
+        } else {
+          target.progress = evt.phase === 'tool_start'
+            ? t('chat.delegateUsingTool', { role: roleLabel, tool: evt.tool || '' })
+            : t('chat.delegateThinking', { role: roleLabel })
+        }
+        msg.steps = steps.map((s: any) => ({
+          ...s,
+          arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+        }))
+      }
       break
     }
 

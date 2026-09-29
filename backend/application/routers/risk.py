@@ -9,7 +9,6 @@ from Symbix_sdk.tools.risk_classifier import (
     get_overrides,
     set_override,
     remove_override,
-    ToolRiskLevel,
 )
 from application.services.risk_context import (
     get_session_trust,

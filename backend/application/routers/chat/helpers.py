@@ -2,6 +2,7 @@
 
 拆分自 chat.py 的公共部分,供 files_api / approve / stream 复用。
 """
+import asyncio
 import uuid
 import json as _json
 
@@ -17,6 +18,65 @@ _INTERACTION_TOOLS = {"ask_clarifying_question"}
 
 def _is_interaction_tool(name: str) -> bool:
     return name in _INTERACTION_TOOLS
+
+
+# ═══════════════ 工具执行(同步/异步统一入口) ═══════════════
+# 绝大多数工具是同步函数;delegate_task(子 Agent 委派)是 async,需 await。
+# 这里统一封装,避免每个执行点都写 if/await 分支。
+
+async def _execute_tool(name: str, arguments, ctx: dict | None = None, on_event=None) -> str:
+    """执行工具并保证返回 str。异步工具(delegate_task)走 await,其余同步。
+
+    Args:
+        name: 工具名
+        arguments: 参数(dict/JSON 字符串)
+        ctx: 请求级上下文(api_key/api_base/model),透传给异步工具
+        on_event: 可选异步进度回调,透传给异步工具
+    """
+    from application.state import tool_registry
+
+    if tool_registry.is_async_tool(name):
+        out = await tool_registry.execute_async(name, arguments, on_event=on_event, ctx=ctx)
+    else:
+        out = tool_registry.execute(name, arguments)
+    if not isinstance(out, str):
+        out = _json.dumps(out, ensure_ascii=False)
+    return out
+
+
+async def _stream_tool_events(name: str, arguments, ctx: dict | None = None):
+    """执行工具;若是异步工具,期间把进度事件 yield 出来。
+
+    产出元组:
+      ("progress", event_dict) —— 子 Agent 进度(仅异步工具会有)
+      ("result", str)          —— 最终工具结果(始终是最后一项)
+    """
+    from application.state import tool_registry
+
+    if not tool_registry.is_async_tool(name):
+        out = tool_registry.execute(name, arguments)
+        yield ("result", out if isinstance(out, str) else _json.dumps(out, ensure_ascii=False))
+        return
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _on_event(ev: dict) -> None:
+        await queue.put(ev)
+
+    task = asyncio.create_task(
+        tool_registry.execute_async(name, arguments, on_event=_on_event, ctx=ctx)
+    )
+    while not task.done():
+        try:
+            ev = await asyncio.wait_for(queue.get(), timeout=0.25)
+            yield ("progress", ev)
+        except asyncio.TimeoutError:
+            continue
+    # 收尾:排空剩余进度,再取最终结果
+    while not queue.empty():
+        yield ("progress", queue.get_nowait())
+    out = await task
+    yield ("result", out if isinstance(out, str) else _json.dumps(out, ensure_ascii=False))
 
 
 def _parse_interaction_request(tool_output: str) -> dict | None:
