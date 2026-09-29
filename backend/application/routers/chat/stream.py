@@ -212,10 +212,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             )
             cum_tool_tokens = 0
             # 子 Agent 委派所需的请求级模型参数(不同模型/网关时与主 Agent 保持一致)
+            # 子 Agent 可单独配置模型(model_setting 页「子 Agent 模型」),未配置则沿用主模型;
+            # api_key / api_base 仍与主模型共用。
             _delegate_ctx = {
                 "api_key": api_key,
                 "api_base": api_base,
-                "model": model,
+                "model": provider_registry.get_sub_model() or model,
                 "session_id": request.session_id,
             }
 

@@ -33,7 +33,7 @@
               </svg>
             </div>
             <div class="add-card-body">
-              <div class="add-card-title">{{ t('skinWindow.skillGenerate') }}<span v-if="!skillReady" class="soon-tag">{{ t('skinWindow.comingSoon') }}</span></div>
+              <div class="add-card-title">{{ t('skinWindow.skillGenerate') }}<span v-if="!skillReady" class="soon-tag">{{ skillBadgeText }}</span></div>
               <div class="add-card-desc">{{ t('skinWindow.skillGenerateDesc') }}</div>
             </div>
             <svg class="add-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -167,7 +167,7 @@
       </div>
       <template #footer>
         <n-space justify="center">
-          <n-button type="primary" @click="triggerSkillGenerate" :disabled="!canGenerateSkill">
+          <n-button type="primary" @click="triggerSkillGenerate" :disabled="!canGenerateSkill || !skillReady">
             {{ t('skinWindow.modalGenerate') }}
           </n-button>
         </n-space>
@@ -287,8 +287,18 @@ async function notifyPetSwitched(payload: {
 const message = useMessage()
 const router = useRouter()
 
-/** Skill 是否已接入（你指定 skill 后改为 true 并实现 generate） */
-const skillReady = ref(true)
+/**
+ * pet-forge 可用性。三种状态要分开:
+ *   ready   = 后端已确认装好,可生成
+ *   missing = 后端确认未安装
+ *   error   = 后端连不上、状态未知(不能误报成“未安装”)
+ */
+const skillState = ref<'ready' | 'missing' | 'error'>('ready')
+const skillReady = computed(() => skillState.value === 'ready')
+/** 卡片未就绪时显示的状态标签文案 */
+const skillBadgeText = computed(() =>
+  skillState.value === 'error' ? t('skinWindow.backendOffline') : t('skinWindow.comingSoon')
+)
 
 const currentPetId = ref('frieren')
 const availablePets = ref<PetSkin[]>([
@@ -315,21 +325,25 @@ const canGenerateSkill = computed(() => {
 })
 
 async function openSkillGenerate() {
-  showSkillModal.value = true
-  // 尝试获取 skill 列表确认 pet-forge 可用
+  // 先确认 pet-forge 可用再开弹窗,避免弹窗已开、生成按钮却无处可去
   try {
     const res = await fetch(`${BACKEND_URL}/skills`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     skillList.value = data.skills
     const petForge = data.skills?.find((s: any) => s.name === 'pet-forge')
     if (!petForge) {
+      skillState.value = 'missing'
       message.warning(t('skinWindow.petForgeMissing'))
-      skillReady.value = false
-    } else {
-      skillReady.value = true
+      return
     }
-  } catch {
-    // 后端不可用时仍可打开弹窗
+    skillState.value = 'ready'
+    showSkillModal.value = true
+  } catch (err) {
+    // 后端没起/网络异常 ≠ skill 未安装,状态单独标记,并给用户明确反馈
+    skillState.value = 'error'
+    console.warn('[skin] fetch skills failed:', err)
+    message.error(t('skinWindow.backendUnreachable'))
   }
 }
 
@@ -372,7 +386,7 @@ function clearRefImage() {
 }
 
 async function triggerSkillGenerate() {
-  if (!canGenerateSkill.value) return
+  if (!canGenerateSkill.value || !skillReady.value) return
 
   const petName = skillForm.value.name.trim()
   const prompt = skillForm.value.prompt.trim()

@@ -5,6 +5,8 @@ interface Settings {
   baseUrl: string
   model: string
   systemPrompt: string
+  // 子 Agent(delegate_task)专用模型;留空表示与主模型相同
+  subModel: string
 }
 
 const settings = ref<Settings>({
@@ -12,6 +14,7 @@ const settings = ref<Settings>({
   baseUrl: '',
   model: '',
   systemPrompt: '',
+  subModel: '',
 })
 
 export function useSettings() {
@@ -30,7 +33,7 @@ export function useSettings() {
   }
 
   function resetSettings() {
-    settings.value = { apiKey: '', baseUrl: '', model: '', systemPrompt: '' }
+    settings.value = { apiKey: '', baseUrl: '', model: '', systemPrompt: '', subModel: '' }
     localStorage.removeItem('symbix_settings')
   }
 

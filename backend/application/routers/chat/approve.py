@@ -69,11 +69,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     api_key = ctx["api_key"]
     api_base = ctx["api_base"]
     model = ctx["model"]
-    # 子 Agent 委派所需的请求级模型参数(与主 Agent 一致)
+    # 子 Agent 委派所需的请求级模型参数(与主 Agent 一致;子 Agent 可单独配模型)
     _delegate_ctx = {
         "api_key": api_key,
         "api_base": api_base,
-        "model": model,
+        "model": provider_registry.get_sub_model() or model,
         "session_id": ctx["session_id"],
     }
     round_count = ctx["round_count"]

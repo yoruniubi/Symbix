@@ -17,6 +17,7 @@ class ProviderConfig:
     supports_vision: Optional[bool] = None
     supports_prompt_cache: Optional[bool] = None     # 是否发 cache_control / prompt_cache_key
     api_kind: Optional[str] = None    # "openai_compat" | "anthropic" | "gemini" | None(自动推断)
+    sub_model: Optional[str] = None   # 子 Agent(delegate_task)专用模型;None/空 = 沿用主模型
 
 
 # 基于模型前缀的内置能力默认表。用户可在 providers.json 覆盖。
@@ -142,6 +143,7 @@ class ProviderRegistry:
                     "supports_vision": p.supports_vision,
                     "supports_prompt_cache": p.supports_prompt_cache,
                     "api_kind": p.api_kind,
+                    "sub_model": p.sub_model,
                 }
                 for name, p in self.providers.items()
             },
@@ -149,11 +151,19 @@ class ProviderRegistry:
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-    def add(self, name: str, model: str, api_key: str = None, api_base: str = None):
-        self.providers[name] = ProviderConfig(name, model, api_key, api_base)
+    def add(self, name: str, model: str, api_key: str = None, api_base: str = None,
+            sub_model: str = None):
+        self.providers[name] = ProviderConfig(name, model, api_key, api_base,
+                                              sub_model=(sub_model or None))
         if self.active is None:
             self.active = name
         self.save()
+
+    def get_sub_model(self) -> str:
+        """返回子 Agent 专用模型;未配置(或空字符串)时返回 "",调用方回退到主模型。"""
+        if self.active is None:
+            return ""
+        return (self.providers[self.active].sub_model or "").strip()
 
     def set_active(self, name: str):
         if name not in self.providers:

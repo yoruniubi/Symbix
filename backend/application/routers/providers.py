@@ -14,6 +14,7 @@ async def list_providers():
         name: {
             "model": p.model,
             "api_base": p.api_base,
+            "sub_model": p.sub_model or "",
         }
         for name, p in provider_registry.providers.items()
     }
@@ -28,6 +29,7 @@ async def add_provider(request: ProviderAddRequest):
             model=request.model,
             api_key=request.api_key,
             api_base=request.api_base,
+            sub_model=request.sub_model,
         )
         return {"status": "ok", "message": f"Provider '{request.name}' added"}
     except Exception as e:
@@ -48,6 +50,8 @@ async def update_provider_model(name: str, body: dict):
     """仅更新 provider 的 model(不改 api_key / api_base / 能力位)。
     供 ChatInput 切换模型时同步到 providers.json,让非流式后台链路
     (generate_title / 记忆压缩 / 记忆提取 / 定时任务)也能用到最新模型。
+
+    body 里带 sub_model 时一并更新子 Agent 模型("" 表示清空 → 回退主模型)。
     """
     new_model = (body.get("model") or "").strip()
     if not new_model:
@@ -56,6 +60,8 @@ async def update_provider_model(name: str, body: dict):
         raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
     try:
         provider_registry.providers[name].model = new_model
+        if "sub_model" in body:
+            provider_registry.providers[name].sub_model = (body.get("sub_model") or "").strip() or None
         provider_registry.save()
         return {"status": "ok", "message": f"Provider '{name}' model updated to {new_model}"}
     except Exception as e:

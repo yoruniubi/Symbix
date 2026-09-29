@@ -55,6 +55,7 @@ class ProviderAddRequest(BaseModel):
     model: str
     api_key: str = None
     api_base: str = None
+    sub_model: str = None   # 可选:子 Agent(delegate_task)专用模型
 
 
 class MessageItem(BaseModel):

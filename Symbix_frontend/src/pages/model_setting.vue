@@ -70,16 +70,45 @@
                 </n-input-group>
               </n-form-item>
             </div>
+
+            <div class="form-section">
+              <n-form-item :label="t('modelSetting.subAgentModel')">
+                <div class="field-stack">
+                  <n-input-group>
+                    <n-select
+                      v-model:value="form.subModel"
+                      :options="subModelOptions"
+                      filterable
+                      tag
+                      clearable
+                      :placeholder="t('modelSetting.subAgentModelPlaceholder')"
+                      style="flex: 1"
+                    />
+                    <n-button
+                      v-if="selectedProvider === 'custom'"
+                      :loading="fetchingModels"
+                      @click="handleFetchModels"
+                      style="width: 110px; flex-shrink: 0;"
+                    >
+                      {{ fetchingModels ? t('modelSetting.fetching') : t('modelSetting.fetchModels') }}
+                    </n-button>
+                  </n-input-group>
+                  <div class="field-hint">{{ t('modelSetting.subAgentModelHint') }}</div>
+                </div>
+              </n-form-item>
+            </div>
+
             <div class="form-section">
               <n-form-item :label="t('modelSetting.systemPrompt')">
-                <n-input
-                  v-model:value="form.systemPrompt"
-                  type="textarea"
-                  :autosize="{ minRows: 3, maxRows: 8 }"
-                  :placeholder="t('modelSetting.systemPromptPlaceholder')"
-                />
-                <template #extra>
+                <div class="field-stack">
+                  <n-input
+                    v-model:value="form.systemPrompt"
+                    type="textarea"
+                    :autosize="{ minRows: 3, maxRows: 8 }"
+                    :placeholder="t('modelSetting.systemPromptPlaceholder')"
+                  />
                   <div class="preset-tags">
+                    <span class="preset-label">{{ t('modelSetting.presetLabel') }}</span>
                     <n-tag
                       v-for="preset in systemPromptPresets"
                       :key="preset.label"
@@ -92,7 +121,7 @@
                       {{ preset.label }}
                     </n-tag>
                   </div>
-                </template>
+                </div>
               </n-form-item>
             </div>
 
@@ -126,9 +155,9 @@ interface Provider {
   id: string
   name: string
   icon: string
-  baseUrl: string        // 官方地址,空字符串表示自动处理
-  needsBase: boolean     // 是否需要显示 baseUrl 输入框
-  models: string[]       // model string 列表
+  baseUrl: string        
+  needsBase: boolean    
+  models: string[]       
 }
 
 // 简洁单色 SVG 图标（currentColor，随卡片选中态变色）
@@ -275,18 +304,26 @@ const providers: Provider[] = [
 
 const customBaseUrl = ref('')
 const customModel = ref('')
+const customSubModel = ref('')
 const selectedProvider = ref<string>('custom')
-const form = ref({ apiKey: '', baseUrl: '', model: '', systemPrompt: '' })
+const form = ref({ apiKey: '', baseUrl: '', model: '', systemPrompt: '', subModel: '' })
 const modelOptions = ref<{ label: string; value: string }[]>([])
+const subModelOptions = ref<{ label: string; value: string }[]>([])
 const fetchingModels = ref(false)
 const testing = ref(false)
+
+/** 保证当前填的 value 在可选项里(否则 n-select 会显示空) */
+function ensureOption(options: { label: string; value: string }[], value: string) {
+  if (!value) return options
+  if (options.some(o => o.value === value)) return options
+  return [{ label: value, value }, ...options]
+}
 
 const currentProviderNeedsBase = computed(() => {
   const p = providers.find(p => p.id === selectedProvider.value)
   return p?.needsBase ?? false
 })
 const systemPromptPresets = computed(() => [
-  { label: t('modelSetting.presetGeneral'), text: t('modelSetting.presetGeneralText') },
   { label: t('modelSetting.presetCode'), text: t('modelSetting.presetCodeText') },
   { label: t('modelSetting.presetTranslate'), text: t('modelSetting.presetTranslateText') },
   { label: t('modelSetting.presetWriting'), text: t('modelSetting.presetWritingText') },
@@ -309,16 +346,19 @@ onMounted(() => {
     baseUrl: settings.value.baseUrl || '',
     model: settings.value.model || '',
     systemPrompt: settings.value.systemPrompt || '',
+    subModel: settings.value.subModel || '',
   }
 
   const model = settings.value.model || ''
   const baseUrl = settings.value.baseUrl || ''
   customBaseUrl.value = settings.value.baseUrl || ''
   customModel.value = settings.value.model || ''
+  customSubModel.value = settings.value.subModel || ''
   // 如果有 baseUrl 说明是自定义
   if (baseUrl) {
     selectedProvider.value = 'custom'
     modelOptions.value = model ? [{ label: model, value: model }] : []
+    subModelOptions.value = form.value.subModel ? [{ label: form.value.subModel, value: form.value.subModel }] : []
     return
   }
 
@@ -329,9 +369,11 @@ onMounted(() => {
   if (matched) {
     selectedProvider.value = matched.id
     modelOptions.value = matched.models.map(m => ({ label: m, value: m }))
+    subModelOptions.value = ensureOption([...modelOptions.value], form.value.subModel)
   } else {
     selectedProvider.value = 'custom'
     modelOptions.value = model ? [{ label: model, value: model }] : []
+    subModelOptions.value = form.value.subModel ? [{ label: form.value.subModel, value: form.value.subModel }] : []
   }
 })
 
@@ -340,6 +382,7 @@ function selectProvider(p: Provider) {
   if (selectedProvider.value === 'custom') {
     customBaseUrl.value = form.value.baseUrl
     customModel.value = form.value.model
+    customSubModel.value = form.value.subModel
   }
 
   selectedProvider.value = p.id
@@ -348,13 +391,20 @@ function selectProvider(p: Provider) {
     // 切回自定义时，恢复之前保存的内容
     form.value.baseUrl = customBaseUrl.value
     form.value.model = customModel.value
+    form.value.subModel = customSubModel.value
     modelOptions.value = customModel.value
       ? [{ label: customModel.value, value: customModel.value }]
+      : []
+    subModelOptions.value = customSubModel.value
+      ? [{ label: customSubModel.value, value: customSubModel.value }]
       : []
   } else {
     form.value.baseUrl = p.baseUrl
     modelOptions.value = p.models.map(m => ({ label: m, value: m }))
     form.value.model = p.models[0] || ''
+    // 子 Agent 模型不强制跟随主模型;但换了厂商后原来的值可能失效,失效则清空(回退用主模型)
+    form.value.subModel = p.models.includes(form.value.subModel) ? form.value.subModel : ''
+    subModelOptions.value = ensureOption([...modelOptions.value], form.value.subModel)
   }
 }
 
@@ -367,10 +417,10 @@ async function handleFetchModels() {
   try {
     const models = await fetchModels(form.value.apiKey, form.value.baseUrl)
     // 自定义接口的模型统一加 openai/ 前缀
-    modelOptions.value = models.map(id => ({
-      label: id,
-      value: id,
-    }))
+    const options = models.map(id => ({ label: id, value: id }))
+    modelOptions.value = options
+    // 拉到的模型列表同样给子 Agent 选择器用(保留已填但不在列表里的值)
+    subModelOptions.value = ensureOption([...options], form.value.subModel)
     if (models.length > 0) {
       message.success(t('modelSetting.fetchSuccess', { count: models.length }))
       if (!form.value.model) {
@@ -414,7 +464,13 @@ async function handleSave() {
     const resp = await fetch(`${BACKEND_URL}/providers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'default', model: form.value.model, api_key: form.value.apiKey, api_base: form.value.baseUrl }),
+      body: JSON.stringify({
+        name: 'default',
+        model: form.value.model,
+        api_key: form.value.apiKey,
+        api_base: form.value.baseUrl,
+        sub_model: form.value.subModel || '',
+      }),
     })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     await fetch(`${BACKEND_URL}/providers/default/activate`, { method: 'POST' })
@@ -427,8 +483,9 @@ async function handleSave() {
 
 function handleReset() {
   resetSettings()
-  form.value = { apiKey: '', baseUrl: '', model: '', systemPrompt: '' }
+  form.value = { apiKey: '', baseUrl: '', model: '', systemPrompt: '', subModel: '' }
   modelOptions.value = []
+  subModelOptions.value = []
   selectedProvider.value = 'custom'
   message.info(t('modelSetting.resetDone'))
 }
@@ -570,7 +627,31 @@ function handleReset() {
 .preset-tags {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0;
+  margin-top: 2px;
+}
+
+/* 预设标签前的说明文字 */
+.preset-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+/* 输入框 + 说明/标签的竖向排列容器(n-form-item 的 blank 是 flex 行，需抱成列) */
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* 表单项下方的说明文案 */
+.field-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary, var(--text-secondary));
   margin-top: 4px;
 }
 
