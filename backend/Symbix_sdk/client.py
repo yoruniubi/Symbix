@@ -5,6 +5,10 @@ from typing import AsyncGenerator, Optional
 from .providers import ProviderRegistry, ProviderConfig, resolve_capabilities
 from .color_extract import extract_palette_b64, palette_to_hint
 
+# 自动匹配到的技能指南:超过该体积就不整篇塞进「当轮用户消息」,
+# 改为提示模型用 `skill__<name>` 工具按需加载(如 skill-creator 的 33.6KB SKILL.md)。
+SKILL_INJECT_MAX_BYTES = 12000
+
 
 def _sanitize_tools(tools: list[dict]) -> list[dict]:
     """统一清洗 tool 列表，确保符合 OpenAI function-calling 严格 schema：
@@ -179,10 +183,20 @@ class SymbixClient:
             "  - 用户要执行命令 → 用 `execute_command` 或 `open_terminal`\n"
             "- 如果不确定用哪个工具，先用 `list_files` 或 `search_files` 探索环境\n"
             "- 工具执行成功后，向用户总结结果；失败则说明原因并尝试其他方法\n\n"
+            "## 多步任务先报计划（必须遵守）\n"
+            "- 任务需要 3 步以上、要改动多个文件/系统状态、或方案存在多种取舍时，**先调用 `propose_plan`** "
+            "把待办清单提交给用户确认，等用户点头后再动手；不要一上来就改文件。\n"
+            "- 用户确认后会收到「计划已确认」+ 清单，按顺序执行并在每步完成后简要说明进展；"
+            "用户提出修改时，按新要求重新 `propose_plan` 确认。\n"
+            "- 简单问答、单步操作、纯读取/解释类请求不要报计划，直接做。\n\n"
             "## Skill 使用规则(必须先查看,再执行)\n"
             "- 用户请求可能对应某个已安装技能时,**先主动调用对应的 `skill__<skill-name>` 工具**加载完整指南,再按指南执行;不要只靠列表里的一行简介猜做法。\n"
             "- 不确定用户需求对应哪个技能时,可从上方[可用技能列表]按描述与触发关键词判断,必要时调用多个相关技能。\n"
-            "- 技能指南中的步骤、脚本、参考文件路径都以指南本身为准,严格按指南执行。\n\n"
+            "- 技能指南中的步骤、脚本、参考文件路径都以指南本身为准,严格按指南执行。\n"
+            "- 技能指南返回时会带一份**文件清单**(技能目录里有哪些文件、多大、首行摘要);"
+            "读技能内文件时,优先 `skill__<name>(search=\"关键词\")` 定位,再 `section=\"标题\"` / "
+            "`paths=[\"文件#标题\"]` / `paths=[\"文件:100-180\"]` 精读,或 `paths=[...]` **一次读多个**;"
+            "不要逐个 `read_file`,更不要猜技能目录里的路径。\n\n"
             "## Skill 创建规则(必须遵守)\n"
             "- 创建新 skill 时,**必须**写入目录:`backend/Symbix_sdk/skill/installed_skills/<skill-name>/`\n"
             "- **优先使用 `create_skill` 工具**生成完整骨架（SKILL.md + agents/scripts/references/assets），"
@@ -194,29 +208,40 @@ class SymbixClient:
             "- 禁止把 skill 写到项目根目录、临时目录或其他无关路径"
         )
 
+        # ── system 前缀:只放会话内**不变化**的内容 ──────────────────
+        # 上游 prompt cache 按前缀 token 匹配,system 里一旦混入「每轮不同」的内容
+        # (如按关键词匹配到的技能全文),整段前缀缓存就会失效、每轮重新 prefill。
+        # 因此:技能清单(会话内稳定)留在 system;匹配到的技能正文放到「当轮用户消息」。
         if registry:
-            skill_overview = registry.inject_skill_overview()
-            system += skill_overview
-            skill_injection = registry.inject_relevant(user_input)
-            if skill_injection:
-                system += "\n\n[匹配到的技能指南]\n"
-                system += skill_injection
+            system += registry.inject_skill_overview()
 
         if tools:
+            # 工具描述已在本次请求的 tools 字段里发过一遍,这里不再重复抄一遍:
+            # 只留行为原则 + 一行名字表(工具名几十个也只有几百字节)。
             tool_names = [t["function"]["name"] for t in tools if t.get("type") == "function"]
             if tool_names:
-                tool_instructions = (
+                system += (
                     "\n\n[工具使用说明]\n"
-                    "你可以使用以下工具来完成任务。当需要执行操作时，"
-                    "请直接调用相应的工具函数，而不是告诉用户你无法执行。\n"
-                    f"可用工具: {', '.join(tool_names)}\n"
-                    "工具描述:\n"
+                    "你可以使用以下工具来完成任务。当需要执行操作时,"
+                    "请直接调用相应的工具函数,而不是告诉用户你无法执行;"
+                    "工具的完整参数说明见本次请求的 tools 定义,不要凭猜测填参数。\n"
+                    f"可用工具({len(tool_names)} 个): {', '.join(tool_names)}"
                 )
-                for t in tools:
-                    if t.get("type") == "function":
-                        f = t["function"]
-                        tool_instructions += f"- {f['name']}: {f['description']}\n"
-                system += tool_instructions
+
+        # ── 当轮动态内容:匹配到的技能指南(不进 system) ─────────────
+        # 紧跟在用户请求前面,模型注意力更好;且不污染 system 前缀。
+        user_prefix = ""
+        if registry:
+            skill_injection = registry.inject_relevant(
+                user_input or "", max_bytes=SKILL_INJECT_MAX_BYTES
+            )
+            if skill_injection:
+                user_prefix = (
+                    "[匹配到你请求的技能,请严格按其中的指南执行;指南里提到的文件路径"
+                    "用 `skill__<name>` 工具读取]\n"
+                    + skill_injection.strip()
+                    + "\n\n"
+                )
 
         if system:
             messages.append({"role": "system", "content": system})
@@ -238,10 +263,10 @@ class SymbixClient:
                 image_summary = ", ".join(image_summary_parts)
                 messages.append({
                     "role": "user",
-                    "content": f"{user_input or ''}\n{image_summary}".strip(),
+                    "content": f"{user_prefix}{user_input or ''}\n{image_summary}".strip(),
                 })
                 return messages
-            content_parts = [{"type": "text", "text": user_input or ""}]
+            content_parts = [{"type": "text", "text": f"{user_prefix}{user_input or ''}"}]
             if user_input:
                 content_parts.append({
                     "type": "text",
@@ -267,11 +292,11 @@ class SymbixClient:
                         "image_url": {"url": f"data:{mime};base64,{b64}"},
                     })
             if len(content_parts) == 1:
-                messages.append({"role": "user", "content": user_input or ""})
+                messages.append({"role": "user", "content": f"{user_prefix}{user_input or ''}"})
             else:
                 messages.append({"role": "user", "content": content_parts})
         else:
-            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "user", "content": f"{user_prefix}{user_input}"})
         return messages
 
     # ── 非流式（原生 HTTP，复用流式管道聚合）────────
@@ -367,13 +392,15 @@ class SymbixClient:
         override_api_base: str = None,
         override_model: str = None,
         image_parts: Optional[list[dict]] = None,
+        system_prompt: Optional[str] = None,
     ) -> dict:
         provider = self.registry.get_active()
         raw_model = override_model or provider.model
         raw_base = override_api_base or provider.api_base
         api_key_val = override_api_key or provider.api_key
 
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools,
+                                        image_parts=image_parts, system_prompt=system_prompt)
         messages = self._build_tool_result_messages(messages, tool_results)
         caps = resolve_capabilities(raw_model, provider)
 
@@ -392,6 +419,7 @@ class SymbixClient:
         override_model: str = None,
         image_parts: Optional[list[dict]] = None,
         supports_vision: Optional[bool] = None,
+        system_prompt: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         流式输出统一的 dict 事件（原生 HTTP）:
@@ -405,7 +433,8 @@ class SymbixClient:
         raw_base = override_api_base or provider.api_base
         api_key = override_api_key or provider.api_key
 
-        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts, supports_vision=supports_vision)
+        messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts,
+                                        supports_vision=supports_vision, system_prompt=system_prompt)
 
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
         print(f"[stream] {provider_type} → {url}, model={model_name}")
@@ -459,9 +488,10 @@ class SymbixClient:
             async with client.stream("POST", url, headers=headers, json=body) as resp:
                 if resp.status_code != 200:
                     error_text = await resp.aread()
-                    print(f"[Anthropic] HTTP {resp.status_code}: {error_text.decode()[:500]}")
+                    print(f"[Anthropic] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
                     yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                    yield {"type": "done", "content": ""}
+                    # done 带上 error:非流式聚合链路(_chat_raw)只有 done 事件,不带就会被当成「成功且内容为空」
+                    yield {"type": "done", "content": "", "error": f"HTTP {resp.status_code}: {error_text.decode(errors='replace')[:300]}"}
                     return
 
                 async for line in resp.aiter_lines():
@@ -585,9 +615,10 @@ class SymbixClient:
                     async with client.stream("POST", url, headers=headers, json=body) as resp:
                         if resp.status_code != 200:
                             error_text = await resp.aread()
-                            print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode()[:500]}")
+                            print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
                             yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                            yield {"type": "done", "content": ""}
+                            # done 带上 error:非流式聚合链路(_chat_raw)只有 done 事件
+                            yield {"type": "done", "content": "", "error": f"HTTP {resp.status_code}: {error_text.decode(errors='replace')[:300]}"}
                             return
 
                         async for line in resp.aiter_lines():
@@ -714,9 +745,10 @@ class SymbixClient:
             async with client.stream("POST", url, headers=headers, json=body) as resp:
                 if resp.status_code != 200:
                     error_text = await resp.aread()
-                    print(f"[Gemini] HTTP {resp.status_code}: {error_text.decode()[:500]}")
+                    print(f"[Gemini] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
                     yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                    yield {"type": "done", "content": ""}
+                    # done 带上 error:非流式聚合链路(_chat_raw)只有 done 事件
+                    yield {"type": "done", "content": "", "error": f"HTTP {resp.status_code}: {error_text.decode(errors='replace')[:300]}"}
                     return
 
                 async for line in resp.aiter_lines():

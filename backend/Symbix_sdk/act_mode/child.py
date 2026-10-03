@@ -96,7 +96,7 @@ def build_child_tools(toolkit, allowed: frozenset | None = None) -> list[dict]:
     for spec in toolkit.get_openai_tools():
         fn = spec.get("function") or {}
         name = fn.get("name")
-        if name in allow and name != "delegate_task":
+        if name in allow and name not in ("delegate_task", "delegate_tasks"):
             out.append(spec)
     return out
 

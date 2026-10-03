@@ -164,6 +164,11 @@ def _merge_channels(channels: list) -> str:
 def _heuristic_channel(tool_name: str) -> Optional[str]:
     """按工具名启发式猜通道(低置信度)。命中返回通道,否则 None。"""
     n = tool_name.lower()
+    # 技能工具(skill__<name>)由服务端自己注册,只读技能目录内的文本文件
+    # (路径安全在 skill_files 里用 realpath 卡住),因此固定按只读处理;否则
+    # 会落到「未分类工具,需确认」→ 每次加载技能都弹审批。
+    if n.startswith("skill__"):
+        return "read"
     # 精确/前缀匹配,注意顺序:删除类词优先
     if any(k in n for k in ("delete", "remove", "purge", "clear", "destroy", "unlink", "truncate")):
         return "delete"

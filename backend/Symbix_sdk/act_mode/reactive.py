@@ -22,4 +22,7 @@ class ReactiveAgent:
             registry=None,
             tools=None,
         )
+        # 上游报错时 content 为空,记日志避免「空回复」被当成正常结果
+        if result.get("error") and not (result.get("content") or "").strip():
+            print(f"[ActMode] reactive 上游报错: {result['error']}")
         return result.get("content") or ""

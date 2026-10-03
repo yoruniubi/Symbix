@@ -267,11 +267,84 @@ class OpenAICompatTTSProvider(TTSProvider):
         return TTSResult(audio=audio, format=fmt, engine=self.name)
 
 
+# ---------------- 自定义 HTTP GET 语音服务 ----------------
+
+def parse_custom_servers(raw: str) -> list[str]:
+    """拆自定义 TTS 地址(每行一个),忽略空行/注释行与非 http(s) 的行。"""
+    out: list[str] = []
+    for line in (raw or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if not s.lower().startswith(("http://", "https://")):
+            continue
+        out.append(s.rstrip("/"))
+    return out
+
+
+class CustomHTTPProvider(TTSProvider):
+    """自定义 HTTP TTS:GET {server}?text=..&speaker=..&speed=..
+
+    适配 GPT-SoVITS / Bert-VITS2 等本地一键包(GET 请求直接返回音频字节)。
+    地址支持多行(每行一个),按调用次数轮询,便于多个实例分担请求。
+    """
+
+    name = "custom"
+    cloud = False  # 本地/自建服务,设置页与 edge 同类展示
+
+    def __init__(self, servers: str = "") -> None:
+        self.servers = parse_custom_servers(servers)
+        self._rr = 0
+
+    def available(self) -> bool:
+        return bool(self.servers)
+
+    def voices(self) -> list[dict]:
+        # speaker 由用户手填(各服务命名差异太大),没有可枚举的音色表
+        return []
+
+    async def synthesize(self, text: str, voice: str = "", speed: float = 1.0) -> TTSResult:
+        try:
+            import httpx
+        except Exception as e:
+            raise TTSProviderError(f"httpx 未安装: {e}") from e
+
+        server = self.servers[self._rr % len(self.servers)]
+        self._rr = (self._rr + 1) % len(self.servers)
+        params: dict[str, object] = {
+            "text": text,
+            "speed": max(0.25, min(4.0, float(speed))),
+        }
+        if voice:
+            params["speaker"] = voice
+        try:
+            # trust_env=False:自建/本地服务不应走系统代理(否则 127.0.0.1 会被代理拦成 502)
+            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+                r = await client.get(server, params=params)
+        except Exception as e:
+            raise TTSProviderError(f"自定义 TTS 连接失败({server}): {e}") from e
+        if r.status_code != 200:
+            raise TTSProviderError(f"自定义 TTS 返回 {r.status_code}: {r.text[:300]}")
+        audio = r.content
+        if not audio:
+            raise TTSProviderError("自定义 TTS 返回空音频")
+        # 依 Content-Type 猜格式(自定义服务多数返回 wav,少数 mp3)
+        ctype = r.headers.get("content-type", "").lower()
+        if "mpeg" in ctype or "mp3" in ctype or audio[:3] == b"ID3":
+            fmt = "mp3"
+        elif "wav" in ctype or audio[:4] == b"RIFF" or audio[:4] == b"OggS":
+            fmt = "wav"
+        else:
+            fmt = "wav"
+        return TTSResult(audio=audio, format=fmt, engine=self.name)
+
+
 # ---------------- 注册表 + 引擎 ----------------
 
 PROVIDER_CLASSES: dict[str, type[TTSProvider]] = {
     EdgeProvider.name: EdgeProvider,
     OpenAICompatTTSProvider.name: OpenAICompatTTSProvider,
+    CustomHTTPProvider.name: CustomHTTPProvider,
 }
 
 
@@ -288,6 +361,9 @@ class TTSConfig:
     openai_api_key: str = ""
     openai_base_url: str = ""     # 空 = 官方 https://api.openai.com/v1
     openai_model: str = "tts-1"
+    # 自定义 HTTP GET 服务(GPT-SoVITS / Bert-VITS2 …)
+    voice_custom: str = ""        # speaker 名;空 = 不传该参数
+    custom_servers: str = ""      # 多行文本,每行一个地址;按调用次数轮询
 
     def to_dict(self) -> dict:
         return {
@@ -299,6 +375,8 @@ class TTSConfig:
             "openai_api_key": self.openai_api_key,
             "openai_base_url": self.openai_base_url,
             "openai_model": self.openai_model,
+            "voice_custom": self.voice_custom,
+            "custom_servers": self.custom_servers,
         }
 
 
@@ -324,6 +402,8 @@ class TTSEngine:
                     base_url=self.config.openai_base_url,
                     model=self.config.openai_model,
                 )
+            elif cls is CustomHTTPProvider:
+                self._instances[name] = cls(servers=self.config.custom_servers)
             else:
                 self._instances[name] = cls()
         return self._instances[name]
@@ -354,7 +434,7 @@ class TTSEngine:
             try:
                 p = self._provider(name)
                 if not p.available():
-                    errors.append(f"{name}: 不可用(未安装或缺模型)")
+                    errors.append(f"{name}: 不可用(未配置或依赖缺失)")
                     continue
                 voice = getattr(cfg, f"voice_{name}", "") or ""
                 return await p.synthesize(text, voice=voice, speed=cfg.speed)

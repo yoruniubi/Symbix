@@ -225,6 +225,11 @@ async def generate_title(req: GenerateTitleRequest):
         if len(title) > 15:
             title = title[:15] + "…"
 
+        # 上游报错(坏 key / 坏 base / 不存在模型)时 content 为空、error 有值,
+        # 如实标记失败,避免前端把「空标题」当成功
+        if not title:
+            return {"status": "skipped", "reason": result.get("error") or "模型未返回内容"}
+
         sid = req.session_id or "default"
         if sid and title:
             index = _load_index()

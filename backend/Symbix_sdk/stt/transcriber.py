@@ -357,24 +357,7 @@ class SenseVoiceProvider(STTProvider):
         self._process = None
 
 
-# ---------------- 云端 Preset(占位,后续按官方文档补) ----------------
-
-class FunASRCloudProvider(STTProvider):
-    """阿里 FunASR 自建/云服务(WebSocket)。TODO: 等官方说明接入。"""
-
-    name = "funasr"
-    cloud = True
-
-    def __init__(self, ws_url: str = "", token: str = "") -> None:
-        self.ws_url = ws_url
-        self.token = token
-
-    def available(self) -> bool:
-        return bool(self.ws_url)
-
-    async def start_stream(self, on_result: OnResult) -> None:
-        raise STTProviderError("FunASR 云端尚未接入(待提供官方说明)")
-
+# ---------------- 云端(OpenAI 兼容文件式接口) ----------------
 
 class OpenAIWhisperStreamProvider(STTProvider):
     """OpenAI 兼容 /v1/audio/transcriptions 文件式接口(云端/自建网关)。
@@ -433,31 +416,11 @@ class OpenAIWhisperStreamProvider(STTProvider):
         raise STTProviderError("OpenAI 兼容引擎为文件式接口,请用前端录音上传(已自动处理)")
 
 
-class XfyunProvider(STTProvider):
-    """科大讯飞语音听写 WebSocket API。TODO: 待 appId/apiKey 接入。"""
-
-    name = "xfyun"
-    cloud = True
-
-    def __init__(self, app_id: str = "", api_key: str = "", api_secret: str = "") -> None:
-        self.app_id = app_id
-        self.api_key = api_key
-        self.api_secret = api_secret
-
-    def available(self) -> bool:
-        return bool(self.app_id and self.api_key)
-
-    async def start_stream(self, on_result: OnResult) -> None:
-        raise STTProviderError("讯飞云端尚未接入(待 appId/apiKey)")
-
-
 # ---------------- 注册表 + 引擎 ----------------
 
 PROVIDER_CLASSES: dict[str, type[STTProvider]] = {
     SenseVoiceProvider.name: SenseVoiceProvider,
-    FunASRCloudProvider.name: FunASRCloudProvider,
     OpenAIWhisperStreamProvider.name: OpenAIWhisperStreamProvider,
-    XfyunProvider.name: XfyunProvider,
 }
 
 
@@ -482,11 +445,6 @@ class STTConfig:
     openai_api_key: str = ""
     openai_base_url: str = ""        # 空 = 官方 https://api.openai.com/v1
     openai_model: str = "whisper-1"
-    # 兼容占位(保留但不再用于流式)
-    funasr_ws_url: str = ""
-    xfyun_app_id: str = ""
-    xfyun_api_key: str = ""
-    xfyun_api_secret: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -506,11 +464,6 @@ class STTConfig:
             "openai_api_key": self.openai_api_key,
             "openai_base_url": self.openai_base_url,
             "openai_model": self.openai_model,
-            "funasr_ws_url": self.funasr_ws_url,
-            "openai_api_key": self.openai_api_key,
-            "xfyun_app_id": self.xfyun_app_id,
-            "xfyun_api_key": self.xfyun_api_key,
-            "xfyun_api_secret": self.xfyun_api_secret,
         }
 
 
@@ -537,16 +490,12 @@ class STTEngine:
                 no_gpu=cfg.no_gpu,
                 flash_attn=cfg.flash_attn,
             )
-        if name == FunASRCloudProvider.name:
-            return FunASRCloudProvider(ws_url=cfg.funasr_ws_url)
         if name == OpenAIWhisperStreamProvider.name:
             return OpenAIWhisperStreamProvider(
                 api_key=cfg.openai_api_key,
                 base_url=cfg.openai_base_url,
                 model=cfg.openai_model,
             )
-        if name == XfyunProvider.name:
-            return XfyunProvider(app_id=cfg.xfyun_app_id, api_key=cfg.xfyun_api_key, api_secret=cfg.xfyun_api_secret)
         raise STTProviderError(f"未知 STT 引擎: {name}")
 
     def status(self) -> dict:

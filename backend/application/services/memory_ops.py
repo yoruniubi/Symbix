@@ -33,21 +33,27 @@ PET_ACTION_HINT = (
 )
 
 
-def build_system_prompt(
+def build_system_prompt_parts(
     base: str = "",
     use_memory: bool = True,
     user_query: str = "",
     session_id: str = "",
-) -> str:
-    """把用户长期记忆（RAG 检索自 memories 表）拼进 system_prompt，并附带桌宠动作提示。
+) -> tuple[str, str]:
+    """同 build_system_prompt,但把结果拆成 (稳定部分, 当轮变化部分)。
 
-    优先走 MemoryStore BM25 检索；若结果为空则回退到旧 user_profile 管线。
+    上游 prompt cache 按前缀 token 匹配:只要 system 里混进「每轮不同」的内容
+    (如按用户提问做 BM25 检索回来的长期记忆),整个前缀缓存就失效。
+    因此调用方应把 stable 放 system、dynamic 拼到当轮用户消息前面。
+
+    Returns:
+        (stable, dynamic) —— dynamic 可能为空字符串
     """
-    parts: list[str] = []
+    stable_parts: list[str] = []
     if base and base.strip():
-        parts.append(base.strip())
-    parts.append(PET_ACTION_HINT)
+        stable_parts.append(base.strip())
+    stable_parts.append(PET_ACTION_HINT)
 
+    dynamic = ""
     if use_memory:
         memory_text = ""
         # ── 新管线：BM25 检索 ──
@@ -62,9 +68,26 @@ def build_system_prompt(
             memory_text = memory.get_profile_prompt()
 
         if memory_text:
-            parts.append(memory_text)
+            dynamic = memory_text.strip()
 
-    return "\n\n".join(parts)
+    return "\n\n".join(stable_parts), dynamic
+
+
+def build_system_prompt(
+    base: str = "",
+    use_memory: bool = True,
+    user_query: str = "",
+    session_id: str = "",
+) -> str:
+    """把用户长期记忆（RAG 检索自 memories 表）拼进 system_prompt，并附带桌宠动作提示。
+
+    优先走 MemoryStore BM25 检索；若结果为空则回退到旧 user_profile 管线。
+    需要前缀稳定(流式聊天链路)时改用 build_system_prompt_parts。
+    """
+    stable, dynamic = build_system_prompt_parts(
+        base=base, use_memory=use_memory, user_query=user_query, session_id=session_id,
+    )
+    return f"{stable}\n\n{dynamic}" if dynamic else stable
 
 
 
@@ -164,6 +187,9 @@ async def maybe_compress_session(
             covered_until = old_msgs[-1]["id"]
             memory.set_summary(session_id, summary, covered_until)
             print(f"[Memory] Compressed session {session_id[:8]}… until id={covered_until}")
+        elif result.get("error"):
+            # 上游失败时不要静默:明确记录,下次触发会重试
+            print(f"[Memory] Compress skipped (上游报错): {result['error']}")
     except Exception as e:
         print(f"[Memory] Compress failed: {e}")
 

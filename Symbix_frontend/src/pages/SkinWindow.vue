@@ -11,6 +11,18 @@
         </div>
         <div class="header-meta">
           <span class="count-badge">{{ t('skinWindow.count', { count: availablePets.length }) }}</span>
+          <button
+            type="button"
+            class="refresh-btn"
+            :title="t('skinWindow.refresh')"
+            @click="loadDiskSkins(true)"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -70,8 +82,8 @@
             v-for="pet in availablePets"
             :key="pet.id"
             class="skin-item"
-            :class="{ active: currentPetId === pet.id }"
-            @click="switchPet(pet)"
+            :class="{ active: currentPetId === pet.id, pending: pet.ready === false }"
+            @click="handlePetClick(pet)"
           >
             <div class="skin-preview-wrap">
               <img :src="pet.preview" :alt="pet.displayName" />
@@ -80,6 +92,7 @@
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               </div>
+              <div v-if="pet.ready === false" class="pending-tag">{{ t('skinWindow.notBaked') }}</div>
               <button
                 v-if="pet.id.startsWith('custom_')"
                 type="button"
@@ -191,6 +204,10 @@ interface PetSkin {
   displayName: string
   preview: string
   source?: string
+  /** false = 只有 rig 源文件,还没烘焙出 spritesheet(只能看,不能切) */
+  ready?: boolean
+  origin?: 'codex' | 'pixiv'
+  folder?: string
 }
 
 /** 打开或激活已有窗口 */
@@ -438,7 +455,7 @@ function isTauri(): boolean {
 }
 
 function pushImportedPet(pet: PetSkin) {
-  availablePets.value.push(pet)
+  availablePets.value.push({ ...pet, ready: true, origin: pet.origin || 'codex' })
   const savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
   savedPets.push(pet)
   localStorage.setItem('customPets', JSON.stringify(savedPets))
@@ -614,6 +631,107 @@ async function pickFolder() {
 }
 
 
+// ── 磁盘皮肤扫描 / 烘焙 / 切换 ──────────────────────────────────
+/**
+ * 皮肤列表以前只存在 localStorage(只记「导入过什么」),pet-forge 直接往
+ * public/pixiv_pet/ 写产物时前端根本不知道。这里改从后端扫描磁盘拿全量列表:
+ * 内置 frieren + localStorage 导入记录 + 后端扫到的 codex_pet/pixiv_pet。
+ * ready=false 的 pixiv 主题只有 rig 源文件,点一下先烘焙再切换。
+ */
+async function loadDiskSkins(manual = false) {
+  const base: PetSkin[] = [
+    { id: 'frieren', displayName: 'Frieren', preview: '/codex_pet/frieren/spritesheet.webp', source: 'builtin', ready: true, origin: 'codex', folder: 'frieren' },
+  ]
+  let saved: PetSkin[] = []
+  try {
+    saved = migrateOldPetData(JSON.parse(localStorage.getItem('customPets') || '[]'))
+  } catch {
+    saved = []
+  }
+
+  const merged: PetSkin[] = [...base]
+  const seen = new Set(merged.map((p) => p.preview))
+  for (const p of saved) {
+    if (!p?.preview || seen.has(p.preview)) continue
+    seen.add(p.preview)
+    merged.push({ ...p, ready: p.ready !== false })
+  }
+
+  let scanned: any[] = []
+  try {
+    const res = await fetch(`${BACKEND_URL}/pet/skins`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    scanned = data?.skins || []
+  } catch (e) {
+    if (manual) message.warning(t('skinWindow.backendOffline'))
+  }
+  for (const s of scanned) {
+    if (!s?.preview || seen.has(s.preview)) continue
+    seen.add(s.preview)
+    merged.push({
+      id: s.id || `disk_${s.folder}`,
+      displayName: s.displayName || s.folder,
+      preview: s.preview,
+      source: s.builtin ? 'builtin' : 'imported',
+      ready: s.ready !== false,
+      origin: s.origin,
+      folder: s.folder,
+    })
+  }
+
+  availablePets.value = merged
+  if (manual) message.success(t('skinWindow.refreshed', { count: merged.length }))
+}
+
+/** 记住已切换的皮肤,否则 Home 窗口重启后按 currentPetId 找不到它 */
+function rememberPet(pet: PetSkin) {
+  try {
+    const saved: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
+    const kept = saved.filter((p) => p.id !== pet.id && p.preview !== pet.preview)
+    kept.push(pet)
+    localStorage.setItem('customPets', JSON.stringify(kept))
+  } catch { /* ignore */ }
+}
+
+async function handlePetClick(pet: PetSkin) {
+  if (pet.ready === false) {
+    await bakeTheme(pet)
+    return
+  }
+  await switchPet(pet)
+}
+
+/** 让后端把 rig(base.svg + states.json)烘焙成可播放的 spritesheet.webp */
+async function bakeTheme(pet: PetSkin) {
+  const name = pet.folder || pet.preview.replace(/^\/(?:pet|codex_pet|pixiv_pet)\//, '').replace(/\/.*$/, '')
+  if (!name) {
+    message.error(t('skinWindow.bakeFail', { msg: 'unknown folder' }))
+    return
+  }
+  const loading = message.loading(t('skinWindow.baking', { name: pet.displayName }), { duration: 0 })
+  try {
+    const res = await fetch(`${BACKEND_URL}/pet/bake`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
+    loading.destroy()
+    await loadDiskSkins()
+    const baked = availablePets.value.find((p) => p.folder === name && p.ready !== false)
+    if (baked) {
+      await switchPet(baked)
+    } else {
+      message.success(t('skinWindow.bakeSuccess', { name: pet.displayName }))
+    }
+  } catch (e: any) {
+    loading.destroy()
+    message.error(t('skinWindow.bakeFail', { msg: e.message || e }))
+  }
+}
+
 // ── 切换 / 删除 ─────────────────────────────────────────────
 async function switchPet(pet: PetSkin) {
   try {
@@ -622,11 +740,12 @@ async function switchPet(pet: PetSkin) {
 
     currentPetId.value = pet.id
     localStorage.setItem('currentPetId', pet.id)
+    rememberPet(pet)
 
-    // 从 preview 路径提取文件夹名(兼容 /pet/ 旧前缀、/codex_pet/、/pixiv_pet/)
-    const folderName = pet.preview.replace(/^\/(?:pet|codex_pet|pixiv_pet)\//, '').replace(/\/.*$/, '')
-    // 内置皮肤（非 custom_）直接用 id 作为文件夹名；自定义皮肤从 preview 路径提取
-    const petFolder = pet.id.startsWith('custom_') ? folderName : pet.id
+    // 文件夹名以 preview 路径为准(兼容 /pet/ 旧前缀、/codex_pet/、/pixiv_pet/),
+    // 取不到时退回后端给的 folder / 去掉 id 前缀
+    const matched = pet.preview.match(/^\/(?:pet|codex_pet|pixiv_pet)\/([^/]+)\//)
+    const petFolder = pet.folder || matched?.[1] || pet.id.replace(/^(?:codex|pixiv|custom)_/, '')
 
     await notifyPetSwitched({
       petId: pet.id,
@@ -682,6 +801,9 @@ onMounted(() => {
   // 重新读取（可能已被迁移逻辑更新）
   const finalPetId = localStorage.getItem('currentPetId')
   if (finalPetId) currentPetId.value = finalPetId
+
+  // 从后端扫描磁盘皮肤(pet-forge 产物不会进 localStorage,只能靠扫)
+  void loadDiskSkins()
 })
 </script>
 
@@ -746,6 +868,31 @@ onMounted(() => {
   background: var(--accent-soft);
   border: 1px solid var(--accent-border, transparent);
   white-space: nowrap;
+}
+
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated, var(--surface-hover));
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.refresh-btn:hover {
+  color: var(--accent-300, #F7A85B);
+  background: var(--surface-active, var(--accent-soft));
 }
 
 /* ---- Sections ---- */
@@ -893,6 +1040,31 @@ onMounted(() => {
 .skin-item.active {
   border-color: var(--accent-500, #EF6B6E);
   background: var(--accent-soft);
+}
+
+/* 只有 rig 源文件、还没烘焙:可以看,不能切 */
+.skin-item.pending {
+  border-style: dashed;
+  border-color: var(--border);
+}
+
+.skin-item.pending img {
+  object-fit: contain;
+  padding: 6px;
+}
+
+.pending-tag {
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--accent-300, #F7A85B);
+  background: var(--bg-elevated, #2B2523);
+  border: 1px solid var(--accent-border, rgba(239, 107, 110, 0.35));
 }
 
 .skin-preview-wrap {

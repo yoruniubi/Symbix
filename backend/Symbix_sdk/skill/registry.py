@@ -42,19 +42,29 @@ class SkillRegistry:
                     break
         return matched
 
-    def inject_into_prompt(self, skill_name: str) -> str:
-        """返回可直接注入 system prompt 的 skill 内容"""
+    def inject_into_prompt(self, skill_name: str, max_bytes: int | None = None) -> str:
+        """返回可注入模型的 skill 内容。
+
+        max_bytes 给定时，指南超过该体积就不再整篇注入（如 skill-creator 33.6KB），
+        改为明说「请用 `skill__<name>` 工具加载」，避免每轮白烧 token。
+        """
         skill = self.get(skill_name)
         if not skill:
             return ""
-        return f"\n\n<skill name='{skill.display_name}'>\n{skill.skill_md_content}\n</skill>"
+        body = skill.skill_md_content or ""
+        if max_bytes and len(body.encode("utf-8")) > max_bytes:
+            return (
+                f"\n- 技能 `{skill.name}`（指南较大，未直接注入）:"
+                f"请先调用 `skill__{skill.name}` 加载完整指南，再按指南执行。\n"
+            )
+        return f"\n<skill name='{skill.display_name or skill.name}'>\n{body}\n</skill>"
 
-    def inject_relevant(self, user_input: str) -> str:
+    def inject_relevant(self, user_input: str, max_bytes: int | None = None) -> str:
         """根据输入自动匹配并注入相关 skill"""
         matched = self.find_by_trigger(user_input)
         if not matched:
             return ""
-        return "".join(self.inject_into_prompt(s.name) for s in matched)
+        return "".join(self.inject_into_prompt(s.name, max_bytes=max_bytes) for s in matched)
 
     def inject_skill_overview(self) -> str:
         """
@@ -76,5 +86,12 @@ class SkillRegistry:
         overview += "\n当用户的请求与上述技能的描述或触发关键词匹配时,"
         overview += "请**主动调用对应的 `skill__<skill-name>` 工具**加载完整技能指南,"
         overview += "并严格遵循指南中的步骤与指令完成任务;不要只凭上方列表的简短描述猜测做法。\n"
+        overview += (
+            "技能指南返回时会附带该技能的文件清单;需要更多细节时,优先用 "
+            "`skill__<skill-name>(search=\"关键词\")` 定位,再用 `section=\"标题\"` / "
+            "`paths=[\"references/a.md#标题\"]` / `paths=[\"a.md:100-180\"]` 精读,"
+            "或用 `paths=[\"references/a.md\", \"config/b.json\"]` **一次读多个文件**;"
+            "不要逐个文件读,也不要用 read_file 猜技能目录里的路径。\n"
+        )
         
         return overview

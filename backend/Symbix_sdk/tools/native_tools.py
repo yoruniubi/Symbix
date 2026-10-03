@@ -5,6 +5,8 @@ import json
 import inspect
 import os
 
+from . import skill_files
+
 class NativeToolkit:
     """本地原生工具包 - 注册、管理和执行本地 Python 函数工具"""
 
@@ -21,7 +23,10 @@ class NativeToolkit:
 
     def register_skill_tools(self):
         """把所有已加载的 skill 注册为 native 工具
-        每个工具名为 'skill__<skill_name>'，调用后返回该 skill 的完整 SKILL.md 内容
+
+        工具名为 'skill__<skill_name>':
+          - 无参数 → 返回 SKILL.md 全文 + 技能目录文件清单(清单/摘要由 skill_files 生成)
+          - paths=[...] → 批量读取技能内文件(避免模型逐个 read_file 猜路径)
         """
         if not self._skill_registry:
             return
@@ -34,9 +39,18 @@ class NativeToolkit:
                 continue
             description = (skill.description or skill.display_name or skill.name)[:200]
             full_desc = (
-                f"加载并返回名为 '{skill.display_name or skill.name}' 的技能指南(SKILL.md 全文)。"
-                f"当用户的请求可能与该技能相关时,**主动调用此工具**获取完整指南,"
-                f"并严格按指南中的步骤与指令执行,不要只凭本简介推测做法。"
+                f"加载名为 '{skill.display_name or skill.name}' 的技能指南(SKILL.md 全文)与技能目录文件清单。"
+                "当用户的请求可能与该技能相关时,**主动调用此工具**获取完整指南,"
+                "并严格按指南中的步骤与指令执行,不要只凭本简介推测做法。"
+                "\n四种用法(按需选):"
+                "① 不带参数 → SKILL.md 全文 + 文件清单(大小/一行摘要,SKILL.md 提到过的路径带 `*`);"
+                "② search=\"关键词A 关键词B\" → 在技能内检索(多个关键词任一命中即算),"
+                "返回 `文件:行号 [所属标题]` + 命中行与上下文,**先检索定位再精读,最省 token**;"
+                "③ section=\"标题\"(可配 paths,默认 SKILL.md)→ 只读这一节;"
+                "④ paths=[\"references/a.md\", \"config/b.json#配色\", \"c.md:100-180\"] → 一次读多个文件,"
+                "路径可带 `#标题`(只读该节)或 `:起-止行` 定位后缀。"
+                "单文件太大被截断时用 offset=<原文件行号> 续读。"
+                "\n注意:不要用 read_file 去猜技能目录里的路径;文件多时先用 ② 定位,再用 ③/④ 精读。"
                 f"简介: {description}"
             )
             self.tools[tool_name] = self._make_skill_executor(skill.name)
@@ -44,22 +58,126 @@ class NativeToolkit:
                 "description": full_desc,
                 "parameters": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "要读取的文件或目录(相对 skill 根目录的路径)。可一次传多个;"
+                                "路径可带定位后缀:`a.md#标题` 只读该节、`a.md:100-180` 只读行范围;"
+                                "传目录名则列出该目录下的文件。search 时作为检索范围。"
+                            ),
+                        },
+                        "search": {
+                            "type": "string",
+                            "description": (
+                                "在技能内检索的关键词。多个关键词用空格分隔(任一命中即算);"
+                                "返回 文件名:行号 + 所属标题 + 命中行及上下文"
+                            ),
+                        },
+                        "section": {
+                            "type": "string",
+                            "description": (
+                                "只读取某一个标题下的内容(支持标题部分匹配)。"
+                                "默认作用于 SKILL.md,可配合 paths 指定文件;找不到标题时返回该文件标题大纲"
+                            ),
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "续读起点:从原文件第几行开始(1 起;默认从头读)",
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "单个文件最多返回的字节数(默认 24000,上限 200000)",
+                        },
+                        "context": {
+                            "type": "integer",
+                            "description": "search 时每个命中行附带的上下行数(默认 1,最大 5)",
+                        },
+                    },
                     "required": [],
                 },
             }
 
     def _make_skill_executor(self, skill_name: str) -> Callable:
         """生成一个执行函数：返回指定 skill 的完整 SKILL.md 内容"""
-        def _execute(**kwargs):
+        def _execute(paths=None, offset=None, max_bytes=None, search=None,
+                     section=None, context=None, **kwargs):
             if not self._skill_registry:
                 return "[Error] SkillRegistry not attached"
             skill = self._skill_registry.get(skill_name)
             if not skill:
                 return f"[Error] Skill '{skill_name}' not found"
-            return skill.skill_md_content
+            return self._render_skill(skill, paths=paths, offset=offset, max_bytes=max_bytes,
+                                      search=search, section=section, context=context,
+                                      extra=kwargs)
         _execute.__name__ = f"skill__{skill_name}"
         return _execute
+
+    def _render_skill(self, skill, paths=None, offset=None, max_bytes=None,
+                      search=None, section=None, context=None,
+                      extra: dict | None = None) -> str:
+        """渲染 skill 工具返回。四种用法(优先级 search > section > paths > 默认):
+
+        1. 无参 → SKILL.md 全文 + 文件清单
+        2. search="关键词A 关键词B" → 技能内检索(多词 OR),带所属标题与上下文;
+           可配 paths 限定文件范围
+        3. section="标题"(可配 paths,默认 SKILL.md)→ 只读这一节
+        4. paths=["a.md#标题", "b.md:100-180", "c.py"] → 批量读(可带定位后缀)
+
+        多个模式同时传时不静默:在返回开头写明本次忽略/采用了什么。
+        """
+        root = (skill.path or "").replace("\\", "/")
+        notes: list[str] = []
+        keywords = skill_files.normalize_keywords(search)
+        sec = (section or "").strip() if isinstance(section, str) else ""
+        if not sec and isinstance(section, (list, tuple)) and section:
+            sec = str(section[0]).strip()
+        wanted = skill_files.normalize_paths(paths)
+
+        if keywords and sec:
+            notes.append("[提示] 同时给了 search 与 section,本次只执行 search(结果里的 `[所属标题]` 可直接用于 paths=[\"文件#标题\"])")
+            sec = ""
+        if keywords and not wanted:
+            pass  # 全库检索
+
+        if not root:
+            return "\n".join(notes + [skill.skill_md_content])
+
+        header = (
+            f"[Skill root] {root}\n"
+            "(SKILL.md 里的 `scripts/...`、`references/...`、`assets/...` 等相对路径都相对该目录;"
+            "执行命令行时请拼成绝对路径。)\n"
+        )
+        prefix = ("\n".join(notes) + "\n") if notes else ""
+
+        if keywords:
+            body = skill_files.search_files(
+                root, keywords,
+                context=context if context is not None else skill_files.SEARCH_CONTEXT_DEFAULT,
+                only=wanted or None,
+            )
+            return header + prefix + body
+
+        if sec:
+            body = skill_files.read_many(
+                root, wanted or ["SKILL.md"], offset=offset or 0,
+                max_bytes=max_bytes or skill_files.READ_MAX_BYTES_DEFAULT, section=sec,
+            )
+            return header + prefix + body
+
+        if wanted:
+            body = skill_files.read_many(
+                root,
+                wanted,
+                offset=offset or 0,
+                max_bytes=max_bytes or skill_files.READ_MAX_BYTES_DEFAULT,
+            )
+            return header + prefix + body
+
+        return header + prefix + skill.skill_md_content + "\n\n" + skill_files.build_index(
+            root, skill.skill_md_content
+        )
 
     # ---- 工具注册 ----
 

@@ -1073,6 +1073,8 @@ function handleSSEEvent(
         question: evt.question || '',
         suggestions: Array.isArray(evt.suggestions) ? evt.suggestions : [],
         context: evt.context || '',
+        // kind==='plan' → 渲染成待办清单确认卡(propose_plan 工具)
+        kind: evt.kind || '',
       }
       msg.risk_level = undefined
       msg.risk_reason = undefined
@@ -1084,7 +1086,7 @@ function handleSSEEvent(
         if (pendingStep) pendingStep.status = 'awaiting_approval'
       }
       notifyTaskComplete({
-        title: t('chat.askNotifyTitle'),
+        title: evt.kind === 'plan' ? t('chat.planConfirm') : t('chat.askNotifyTitle'),
         body: evt.question || t('chat.unknownTool'),
         forceDesktop: true,
       })

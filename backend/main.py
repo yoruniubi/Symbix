@@ -80,15 +80,16 @@ async def lifespan(_app: FastAPI):
 
     async def _companion_loop():
         import datetime as _dt
-        from application.services.danmaku_service import emit_idle_danmaku_if_quiet, emit_danmaku, _hour_greeting
+        from application.services.danmaku_service import emit_idle_danmaku_if_quiet, emit_danmaku, greeting_kind
         greeted_hour = -1  # 每个小时档只问候一次
         while True:
             try:
                 now = _dt.datetime.now()
                 hour = now.hour
-                # 时段问候:整点进入新档时提示一次
-                if hour != greeted_hour and _hour_greeting(hour):
-                    emit_danmaku("morning" if hour < 9 else "afternoon" if hour < 16 else "evening" if hour < 23 else "night")
+                # 时段问候:整点进入新档时提示一次(greeting_kind 是纯判断,不消耗文案池)
+                kind = greeting_kind(hour)
+                if hour != greeted_hour and kind:
+                    emit_danmaku(kind)
                     greeted_hour = hour
                 # 空闲提醒:间隔取配置(danmaku_config.json idle_interval_s)
                 from application.services.danmaku_service import danmaku_cfg as _dm_cfg

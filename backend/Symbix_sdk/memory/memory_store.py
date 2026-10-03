@@ -377,6 +377,10 @@ class MemoryStore:
                 system_prompt=system_prompt,
             )
             raw = result.get("content", "").strip()
+            # 上游报错(坏 key / 坏 base / 超时)时 content 为空,明确记日志再返回空结果
+            if not raw and result.get("error"):
+                print(f"[MemoryStore] extract_facts 上游报错: {result['error']}")
+                return []
         except Exception as e:
             print(f"[MemoryStore] extract_facts LLM error: {e}")
             return []
@@ -485,6 +489,10 @@ class MemoryStore:
                 system_prompt=prompt,
             )
             raw = result.get("content", "").strip()
+            # 上游报错时别把失败当成「返回值不是 JSON」:如实写入 reason
+            if not raw and result.get("error"):
+                print(f"[MemoryStore] decide_action 上游报错: {result['error']}")
+                return {"action": "ADD", "target_id": None, "reason": f"LLM调用失败: {result['error']}"}
         except Exception as e:
             print(f"[MemoryStore] decide_action LLM error: {e}")
             return {"action": "ADD", "target_id": None, "reason": f"LLM调用失败: {e}"}

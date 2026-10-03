@@ -104,7 +104,12 @@ class JobScheduler:
             self._scheduler.remove_all_jobs()
             log.info("JobScheduler jobstore purged")
         except Exception as e:
-            log.warning("JobScheduler purge failed: %s", e)
+            # 全新安装: apscheduler_jobs 表由 SQLAlchemyJobStore 在 start() 时才创建,
+            # 首启动时本来就没有残留可清,降为 debug 避免吓人的 warning
+            if "no such table" in str(e):
+                log.debug("JobScheduler jobstore 尚未创建(全新安装),跳过 purge")
+            else:
+                log.warning("JobScheduler purge failed: %s", e)
 
     def add_job(self, job: dict) -> None:
         trigger = build_trigger(job["trigger_type"], job["trigger_config"])

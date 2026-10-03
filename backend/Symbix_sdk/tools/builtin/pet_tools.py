@@ -2,7 +2,9 @@ from __future__ import annotations
 import json
 
 
-# 与 spritesheet / 前端 Home.vue 对齐；语义别名会在总线侧归一化
+# 与 spritesheet / 前端 Home.vue 对齐;语义别名会在总线侧归一化
+# running / runningRight / runningLeft 是「拖拽奔跑」专用的常驻循环,
+# 由前端本地拖拽驱动,不开放给 Agent 触发(否则会把 thinking 等状态挤掉)。
 PET_ACTION_ENUM = [
     "idle",
     "waving",
@@ -10,9 +12,6 @@ PET_ACTION_ENUM = [
     "failed",
     "waiting",
     "review",
-    "running",
-    "runningRight",
-    "runningLeft",
     "happy",      # → jumping
     "thinking",   # → review
     "sad",        # → failed
@@ -52,7 +51,7 @@ def check_agent_status(status: str) -> dict:
 
     result = status_map.get(status, {"status": "unknown", "message": f"未知状态: {status}", "action": "idle"})
     # 确保 action 是有效值
-    if result["action"] not in ["idle", "waving", "jumping", "failed", "waiting", "review", "running", "runningRight", "runningLeft"]:
+    if result["action"] not in ["idle", "waving", "jumping", "failed", "waiting", "review"]:
         result["action"] = "idle"
     return result
 
@@ -92,6 +91,13 @@ def emit_pet_action(action: str, bubble: str = "") -> str:
     if not action:
         return json.dumps(
             {"status": "error", "message": "action 不能为空"},
+            ensure_ascii=False,
+        )
+
+    # 拖拽奔跑是前端本地驱动的常驻循环,Agent 触发会把 thinking 等状态顶掉
+    if action.replace("-", "").replace("_", "").lower() in ("running", "runningright", "runningleft"):
+        return json.dumps(
+            {"status": "error", "message": "running 系动作由前端拖拽驱动,不能通过工具触发"},
             ensure_ascii=False,
         )
 
@@ -142,8 +148,9 @@ PET_TOOLS_SCHEMAS = {
         "description": (
             "触发桌宠动画/表情并推送到主窗口。"
             "在对话中表达情绪、完成任务庆祝、失败遗憾、思考中、打招呼时调用。"
-            "可用动作: idle/waving/jumping/failed/waiting/review/running，"
+            "可用动作: idle/waving/jumping/failed/waiting/review，"
             "以及别名 happy→jumping、thinking→review、sad/error→failed、celebrate→jumping。"
+            "running 系动作专供拖拽奔跑(前端本地驱动),不要用本工具触发。"
             "可选 bubble 显示短气泡文案。"
         ),
         "parameters": {

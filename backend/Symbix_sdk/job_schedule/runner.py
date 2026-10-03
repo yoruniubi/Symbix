@@ -9,6 +9,18 @@ import json as _json
 import time
 from datetime import datetime
 
+
+def _raise_if_upstream_failed(response: dict) -> None:
+    """上游报错且零输出时抛错,让 job 走 except 分支被标记为 error。
+
+    非流式链路把上游错误只放进 error 字段、content 留空;
+    不检查就会把网关故障(坏 key/坏 base/超时)记成「任务成功」。
+    模型正常调工具时 content 为空但 tool_calls 有值,不算失败。
+    """
+    if response.get("error") and not (response.get("content") or "").strip() and not response.get("tool_calls"):
+        raise RuntimeError(f"模型调用失败: {response['error']}")
+
+
 class JobRunner:
     """持有 storage + storage 元 + 各业务单例的引用，执行一次 job。"""
 
@@ -60,7 +72,9 @@ class JobRunner:
             enriched = original_system_prompt or (
                 "你是一个可靠的个人助理。用户通过定时任务派发给你一条指令,请完成它。"
             )
-            self.symbix_client.system_prompt = enriched + (
+            # 定时任务模式的 system prompt 改为显式传参(不再写全局单例),
+            # 否则任务备跑期间会与其他会话的 system prompt 互相覆盖。
+            job_system_prompt = enriched + (
                 "\n\n[定时任务模式]\n"
                 "这次请求由定时任务触发,无人值守。如需要执行工具,只做安全的只读/无副作用操作;"
                 "写入、删除、执行命令等需要人工确认的操作不要做,直接在回复里说明需要人工处理。"
@@ -82,8 +96,10 @@ class JobRunner:
                 override_api_key=api_key,
                 override_api_base=api_base,
                 override_model=model,
+                system_prompt=job_system_prompt,
             )
             last_reasoning = response.get("reasoning")
+            _raise_if_upstream_failed(response)
 
             max_tool_rounds = 25
             round_count = 0
@@ -123,7 +139,8 @@ class JobRunner:
                     risk_level, risk_reason = _risk.level, _risk.reason
 
                     # 后台无人值守:不派发子 Agent(耗 token 且无进度出口,失败无感知)
-                    if fn["name"] == "delegate_task":
+                    # 注意 delegate_task 和批量版 delegate_tasks 都要拦
+                    if fn["name"] in ("delegate_task", "delegate_tasks"):
                         skip_msg = "[系统] 定时任务中不派发子 Agent,请直接使用只读工具完成任务。"
                         tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],
                                              "content": skip_msg, "arguments": fn.get("arguments")})
@@ -165,8 +182,10 @@ class JobRunner:
                     override_api_key=api_key,
                     override_api_base=api_base,
                     override_model=model,
+                    system_prompt=job_system_prompt,
                 )
                 last_reasoning = response.get("reasoning")
+                _raise_if_upstream_failed(response)
                 final_text = response.get("content") or final_text
 
             output_snippet = (final_text or "")[:200]
@@ -189,9 +208,6 @@ class JobRunner:
             self.storage.update_status(job_id, "error", str(e), run_time)
             self.storage.add_history(job_id, run_time, "error", output_full or output_snippet or "", str(e) or "")
             self._notify(job, str(e), "error")
-        finally:
-            if 'original_system_prompt' in locals():
-                self.symbix_client.system_prompt = original_system_prompt
 
     def _notify(self, job: dict, snippet: str, status: str) -> None:
         """通过 pet_action 发一条事件(桌宠表情/通知)。失败不阻断。"""

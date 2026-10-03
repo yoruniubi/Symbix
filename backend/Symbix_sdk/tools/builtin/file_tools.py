@@ -22,7 +22,6 @@ _RG_CANDIDATES = [
     r"C:\ProgramData\chocolatey\bin\rg.exe",
     # pi 自带的 rg
     os.path.expandvars(r"%USERPROFILE%\.pi\agent\bin\rg.exe"),
-    r"C:\Users\Frank\.pi\agent\bin\rg.exe",
     # Unix
     "/usr/bin/rg",
     "/usr/local/bin/rg",

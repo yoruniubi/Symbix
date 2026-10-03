@@ -23,7 +23,7 @@ from application.services.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
     format_sse,
-    build_system_prompt,
+    build_system_prompt_parts,
 )
 from Symbix_sdk.checkpoint import (
     set_current as _ctx_set_current,
@@ -44,10 +44,50 @@ from application.routers.chat.helpers import (
     _prepare_user_message,
     _filter_image_parts,
     _stream_tool_events,
+    _is_read_only_parallel_tool,
+    run_tools_parallel,
     MAX_CUM_TOOL_TOKENS,
 )
 
 router = APIRouter(tags=["chat"])
+
+
+def _tool_call_signature(name: str, arguments) -> tuple:
+    """工具调用签名(用于本轮去重)。参数解析失败时退化为原字符串。"""
+    try:
+        parsed = _json.loads(arguments) if isinstance(arguments, str) else arguments
+        return (name, _json.dumps(parsed, ensure_ascii=False, sort_keys=True))
+    except (TypeError, _json.JSONDecodeError):
+        return (name, str(arguments))
+
+
+def _collect_read_batch(tool_calls_raw: list[dict], start_idx: int,
+                        attempted_tool_calls: set, mcp_tools, session_id: str) -> list[tuple]:
+    """从 start_idx 起收集**连续**可并行的只读调用。
+
+    返回 [(索引, tc, 签名, 风险等级)]。碰到以下任一情况立刻停止收集,
+    把剩下的交给原有的串行路径处理:
+      - 非只读工具 / 异步工具(delegate_* 自身已并行) / 交互型工具
+      - 本轮已用相同参数调过(要发合成拦截结果)
+      - 判定为需审批
+    """
+    batch: list[tuple] = []
+    for j in range(start_idx, len(tool_calls_raw)):
+        tc = tool_calls_raw[j]
+        name = tc.get("name", "")
+        if not _is_read_only_parallel_tool(name) or tool_registry.is_async_tool(name):
+            break
+        args = tc.get("arguments", "{}")
+        sig = _tool_call_signature(name, args)
+        # 注意:调用方在进入本函数前已把**当前**这条加进 attempted_tool_calls,
+        # 所以 j == start_idx 不查重,否则第一个就 break、批量永远为空。
+        if j != start_idx and sig in attempted_tool_calls:
+            break
+        _risk, _needs, _ = classify_for_chat(name, args, mcp_tools, session_id)
+        if _needs:
+            break
+        batch.append((j, tc, sig, _risk.level))
+    return batch
 
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request):
@@ -91,28 +131,36 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             act_mode = act_decision.judgment.mode.value
             act_plan = act_decision.plan
 
-            # 注入 RAG 记忆到 system prompt
+            # 注入 RAG 记忆到 system prompt —— 但 RAG 是「按当轮提问检索」出来的,
+            # 放进 system 会让前缀每轮都变(上游 prompt cache 失效)。
+            # 因此拆成:稳定部分 → system;当轮变化部分 → 拼在用户消息前面。
             use_mem = getattr(request, "use_memory", True)
-            enriched_prompt = build_system_prompt(
+            stable_prompt, dyn_mem = build_system_prompt_parts(
                 base=request.system_prompt,
                 use_memory=use_mem,
                 user_query=mem_msg,
                 session_id=request.session_id,
             )
+            dyn_parts: list[str] = []
+            if dyn_mem:
+                dyn_parts.append(dyn_mem)
             if act_mode == "reactive":
-                enriched_prompt += (
-                    "\n\n[Act Mode: reactive]\n"
+                dyn_parts.append(
+                    "[Act Mode: reactive]\n"
                     "直接回应当前请求,保持简洁;如果需要工具,先判断必要性再行动。"
                 )
             else:
                 plan_text = "\n".join(f"{i}. {step}" for i, step in enumerate(act_plan, 1))
-                enriched_prompt += (
-                    "\n\n[Act Mode: plan_solve]\n"
-                    "请遵循以下行为计划,并在工具结果后继续检查和调整:\n"
-                    f"{plan_text}\n"
-                    "完成后进行简短反思,确认是否满足用户原始目标。"
+                dyn_parts.append(
+                    "[Act Mode: plan_solve]\n"
+                    "这是一个多步任务:先调用 `propose_plan` 工具把待办清单提交给用户确认,"
+                    "用户认可后再逐步执行(不要跳过确认直接动手改文件)。\n"
+                    f"参考计划:\n{plan_text}"
                 )
-            symbix_client.system_prompt = enriched_prompt
+            # 注意:「本轮动态内容」拼在用户消息里,而不是写全局 symbix_client.system_prompt
+            # —— 后者是单例上的可变字段,并发会话会互相把 system prompt 读串。
+            if dyn_parts:
+                user_for_llm = "\n\n".join(dyn_parts) + "\n\n" + user_for_llm
 
             # native 工具始终可用；use_mcp 仅附带外部 MCP
             if request.use_mcp:
@@ -158,6 +206,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 override_model=model or None,
                 image_parts=image_parts or None,
                 supports_vision=supports_vision,
+                system_prompt=stable_prompt,
             ):
                 if event["type"] == "stream_reset":
                     # 上游连接中断，前端已渲染的这部分内容作废，通知其清空重新开始
@@ -209,6 +258,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 tools=mcp_tools,
                 image_parts=image_parts or None,
                 supports_vision=supports_vision,
+                system_prompt=stable_prompt,
             )
             cum_tool_tokens = 0
             # 子 Agent 委派所需的请求级模型参数(不同模型/网关时与主 Agent 保持一致)
@@ -243,7 +293,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 })
                 yield format_sse({"type": "steps", "steps": steps})
 
+                parallel_claimed: set[int] = set()
                 for idx_tc, tc in enumerate(tool_calls_raw):
+                    if idx_tc in parallel_claimed:
+                        continue
                     tc_id = tc["id"]
                     tc_name = tc["name"]
                     tc_args = tc.get("arguments", "{}")
@@ -259,7 +312,6 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         )
                     except (TypeError, _json.JSONDecodeError):
                         call_signature = (tc_name, str(tc_args))
-
                     if call_signature in attempted_tool_calls:
                         # 同一工具+相同参数在本轮内已被调用过:不再真实执行,
                         # 而是向模型注入一条合成结果,让它基于已有结果继续或调整参数。
@@ -346,6 +398,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "session_id": request.session_id,
                                 "user_input": user_for_llm,
                                 "history": history[:-1],
+                                "system_prompt": stable_prompt,
                                 "tool_chain_msgs": tool_chain_msgs,
                                 "attempted_tool_calls": attempted_tool_calls,
                                 "tool_name_counts": tool_name_counts,
@@ -381,6 +434,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "question": qdata.get("question", ""),
                                 "suggestions": qdata.get("suggestions", []),
                                 "context": qdata.get("context", ""),
+                                # kind="plan" 时前端渲染成「执行计划确认」卡;
+                                # plan 用于用户确认后把待办清单回注给模型
+                                "kind": qdata.get("kind", ""),
+                                "plan": qdata.get("plan", []),
                             }
                             # — checkpoint: 提问挂起 → 记 skipped + round 未完待续
                             ckpt_tool_count += 1
@@ -393,6 +450,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "question": qdata.get("question", ""),
                                 "suggestions": qdata.get("suggestions", []),
                                 "context": qdata.get("context", ""),
+                                "kind": qdata.get("kind", ""),
                                 "tool": {"id": tc_id, "name": tc_name},
                             })
                             yield format_sse({"type": "done", "content": full_text})
@@ -411,6 +469,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             "session_id": request.session_id,
                             "user_input": user_for_llm,
                             "history": history[:-1],
+                            # 续跑时重建 messages 要用同一份 system prompt(不读全局单例)
+                            "system_prompt": stable_prompt,
                             "tool_chain_msgs": tool_chain_msgs,
                             "attempted_tool_calls": attempted_tool_calls,
                             "tool_name_counts": tool_name_counts,
@@ -468,6 +528,67 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         return
 
                     _ctx_set_current(request.session_id, ckpt_round_id)
+                    # ── 并行批量:连续的只读工具(读文件/搜索/抓网页)一起跑 ──
+                    # 这些工具内部是阻塞 I/O,串行 await 会一个一个等;
+                    # 写入/终端/UI/审批/提问/delegate 仍走下面的串行路径。
+                    if _is_read_only_parallel_tool(tc_name):
+                        _batch = _collect_read_batch(
+                            tool_calls_raw, idx_tc, attempted_tool_calls,
+                            mcp_tools, request.session_id,
+                        )
+                    else:
+                        _batch = []
+                    if len(_batch) > 1:
+                        for _j, _btc, _bsig, _ in _batch:
+                            attempted_tool_calls.add(_bsig)
+                            if _j != idx_tc:
+                                parallel_claimed.add(_j)
+                        _btc_by_idx = {j: btc for j, btc, _s, _r in _batch}
+                        _lvl_by_idx = {j: lvl for j, _b, _s, lvl in _batch}
+                        _outs: dict[int, str] = {}
+                        async for _j, _out in run_tools_parallel(
+                            [(j, btc.get("name", ""), btc.get("arguments", "{}"))
+                             for j, btc, _s, _r in _batch]
+                        ):
+                            _outs[_j] = _out
+                            _btc = _btc_by_idx[_j]
+                            _bname = _btc.get("name", "")
+                            # 完成即发:前端按 tool_call_id 就地回填卡片,不受到达顺序影响
+                            yield format_sse({
+                                "type": "tool_result",
+                                "id": _btc.get("id", ""),
+                                "name": _bname,
+                                "content": _out,
+                            })
+                            ckpt_tool_count += 1
+                            if _out.startswith("[Error"):
+                                ckpt_failed += 1
+                                _emit_tool(request.session_id, ckpt_round_id, _bname,
+                                           _btc.get("arguments", "{}"), _lvl_by_idx[_j],
+                                           True, _out, status="error", error=_out[:200])
+                            else:
+                                _emit_tool(request.session_id, ckpt_round_id, _bname,
+                                           _btc.get("arguments", "{}"), _lvl_by_idx[_j],
+                                           True, _out)
+                        # steps / round_results 按**原始顺序**补齐,
+                        # 保持与 assistant 的 tool_calls 顺序一致(供后续轮拼接与审批快照)。
+                        for _j, _btc, _bsig, _ in _batch:
+                            _out = _outs.get(_j, "[Error] 工具未返回结果")
+                            steps.append({
+                                "type": "tool_result",
+                                "tool_call_id": _btc.get("id", ""),
+                                "name": _btc.get("name", ""),
+                                "content": _out,
+                            })
+                            round_results.append({
+                                "tool_call_id": _btc.get("id", ""),
+                                "role": "tool",
+                                "name": _btc.get("name", ""),
+                                "content": _out,
+                                "arguments": _btc.get("arguments", "{}"),
+                            })
+                        continue
+
                     tool_output = ""
                     async for _kind, _payload in _stream_tool_events(tc_name, tc_args, _delegate_ctx):
                         if _kind == "progress":

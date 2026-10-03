@@ -341,12 +341,18 @@
               clearable
             />
           </n-form-item>
-          <n-form-item :label="t('setting.ttsVoice')">
+          <n-form-item v-if="ttsForm.priority0 !== 'custom'" :label="t('setting.ttsVoice')">
             <n-select
               v-model:value="ttsForm.voice"
               :options="ttsVoiceOptions"
               :placeholder="t('setting.ttsVoicePlaceholder')"
               filterable
+            />
+          </n-form-item>
+          <n-form-item v-else :label="t('setting.ttsCustomSpeaker')">
+            <n-input
+              v-model:value="ttsForm.voice"
+              :placeholder="t('setting.ttsCustomSpeakerPlaceholder')"
             />
           </n-form-item>
           <n-form-item :label="t('setting.ttsSpeed')">
@@ -368,6 +374,19 @@
               </n-form-item>
               <n-form-item :label="t('setting.cloudModel')">
                 <n-input v-model:value="ttsForm.openai_model" :placeholder="t('setting.cloudModelPlaceholderTts')" />
+              </n-form-item>
+            </n-collapse-item>
+            <n-collapse-item :title="t('setting.ttsCustom')" name="tts-custom">
+              <n-form-item :label="t('setting.ttsCustomServers')">
+                <n-space vertical style="width: 100%">
+                  <n-input
+                    v-model:value="ttsForm.custom_servers"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="t('setting.ttsCustomServersPlaceholder')"
+                  />
+                  <span class="hint-text">{{ t('setting.ttsCustomServersHint') }}</span>
+                </n-space>
               </n-form-item>
             </n-collapse-item>
           </n-collapse>
@@ -489,6 +508,7 @@ interface TtsSettings {
   openai_base_url: string
   openai_api_key: string
   openai_model: string
+  custom_servers: string
 }
 
 // 后端 /voice/config 返回的引擎可用状态
@@ -518,13 +538,12 @@ async function loadSttDevices() {
 
 const STT_ENGINE_LABELS: Record<string, string> = {
   sensevoice: 'SenseVoice (本地)',
-  funasr: 'FunASR (云)',
   openai: 'OpenAI 兼容 (云)',
-  xfyun: '讯飞听写 (云)',
 }
 const TTS_ENGINE_LABELS: Record<string, string> = {
   edge: 'Edge-TTS (云)',
   openai: 'OpenAI 兼容 (云)',
+  custom: '自定义 HTTP (本地/自建)',
 }
 
 function defaultStt(): SttSettings {
@@ -549,7 +568,7 @@ function defaultStt(): SttSettings {
   }
 }
 function defaultTts(): TtsSettings {
-  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1' }
+  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1', custom_servers: '' }
 }
 
 const sttForm = ref<SttSettings>(defaultStt())
@@ -609,8 +628,9 @@ const ttsVoiceOptions = computed(() => {
   return (s?.voices || []).filter(v => !!v.value)
 })
 
-// 主/备引擎改变后,音色不再匹配则清空
+// 主/备引擎改变后,音色不再匹配则清空(custom 的 speaker 是自由文本,不动)
 function fixTtsVoice() {
+  if (ttsForm.value.priority0 === 'custom') return
   const cur = ttsForm.value.voice
   if (cur && !ttsVoiceOptions.value.some(o => o.value === cur)) {
     ttsForm.value.voice = ttsVoiceOptions.value[0]?.value || ''
@@ -643,15 +663,18 @@ async function loadVoiceConfig() {
       openai_model: stt.openai_model || 'whisper-1',
     }
     const tts = cfg.tts || {}
+    const ttsPriority0 = tts.priority?.[0] || 'edge'
     ttsForm.value = {
       enabled: (tts as any).enabled ?? true,
-      priority0: tts.priority?.[0] || 'edge',
+      priority0: ttsPriority0,
       priority1: tts.priority?.[1] || null,
-      voice: (tts as any).voice_edge || (tts as any).voice_openai || '',
+      // 音色按主引擎取对应字段(voice_edge / voice_openai / voice_custom)
+      voice: (tts as any)[`voice_${ttsPriority0}`] || '',
       speed: tts.speed ?? 1.0,
       openai_base_url: (tts as any).openai_base_url || '',
       openai_api_key: (tts as any).openai_api_key || '',
       openai_model: (tts as any).openai_model || 'tts-1',
+      custom_servers: (tts as any).custom_servers || '',
     }
     fixTtsVoice()
   } catch {
@@ -760,6 +783,7 @@ function buildTtsPatch() {
   patch.openai_base_url = f.openai_base_url
   patch.openai_api_key = f.openai_api_key
   patch.openai_model = f.openai_model
+  patch.custom_servers = f.custom_servers
   return patch
 }
 

@@ -33,7 +33,7 @@ Symbix 把 **AI Agent** 装进一只 **桌面宠物** 里:它不止是你桌面�
 - **手账窗口**:每天的记忆 + AI 小巧思,像一本自动写的日记
 
 ### 🧠 一个会干活的 AI 大脑
-- 支持 **OpenAI / Claude / Gemini / DeepSeek 等 13+ 家模型**,随便切换
+- 内置 **9 家主流厂商预设**(OpenAI / Anthropic / Google / DeepSeek / Kimi / Grok / Qwen / GLM / Mistral),可自定义中转 base_url 接入任意 OpenAI 兼容网关
 - **一边聊天一边干活**:你说需求,它自己学会调用工具把事办完,不用你手动操作
 - **会分工的子 Agent**:复杂任务先派「子 Agent」分头查代码 / 分析 / 设计 / 审查(只读探索,可多路并行),再自己汇总并落地改动
 - 长对话**不失忆**:自动压缩上下文 + 记忆持久化 + RAG 检索,聊再久也记得你
@@ -101,6 +101,11 @@ npm run tauri dev    # Tauri 桌面应用
 在聊天界面左侧 Model Setting 面板选择 Provider(OpenAI / Anthropic / DeepSeek …),
 填入 API Key 即可开始对话;支持自定义中转 base_url,可走任意 OpenAI 兼容网关。
 
+关于STT模型，本项目支持OpenAI兼容的STT云端api调用，
+如果想要免费的STT渠道：https://groq.com/
+关于TTS模型，本项目支持Edge TTS直接调用，同时也支持OpenAI兼容的TTS云端api调用，以及自建TTS的api调用
+（自建方式二选一：OpenAI 兼容的 `/audio/speech`，或「自定义 TTS」——GET `?text=&speaker=&speed=` 直接返回音频字节，
+适配 GPT-SoVITS 等本地一键包，设置页可填多个地址轮询使用）
 
 ---
 

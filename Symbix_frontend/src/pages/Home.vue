@@ -204,6 +204,21 @@ let lastRandomAction: PetState | '' = ''
 let agentThinking = false
 
 /**
+ * Agent 侧触发的循环动作(running / waiting 等)必须有上限。
+ * 这类动作语义上是「拖拽奔跑 / 被抱起」的常驻循环,本应由本地 dragSession 驱动;
+ * 一旦被远程事件打开又无人收尾,就会永远循环,把 thinking / idle 等状态机动作挤掉。
+ */
+const REMOTE_LOOP_MAX_MS = 3000
+let remoteLoopTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearRemoteLoopTimer() {
+  if (remoteLoopTimer != null) {
+    clearTimeout(remoteLoopTimer)
+    remoteLoopTimer = null
+  }
+}
+
+/**
  * 拖拽奔跑(Windows / Tauri 要点):
  * 1. startDragging() 的 Promise 会立刻 resolve,不能当"拖拽结束"
  * 2. 进入原生拖拽后 webview 常立刻收到 pointerup,也不能靠它结束
@@ -484,6 +499,8 @@ function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
 function playState(state: PetState, returnToIdle = true) {
   if (!sprite || !baseSource) return
   const token = ++actionToken
+  // 任何新的状态切换都作废上一个远程循环动作的到期回调,避免它稍后抢状态。
+  clearRemoteLoopTimer()
   if (actionStartTimer) {
     clearTimeout(actionStartTimer)
     actionStartTimer = null
@@ -655,9 +672,18 @@ function applyRemotePetAction(payload: {
     else console.warn('[pet] unknown action:', payload.action)
     return
   }
-  // 远程循环动作(waiting/running)不要强制回 idle;一次性动作播完回 idle
+  // 远程循环动作(waiting / running 系)要限时收尾:放完就回 idle,
+  // 思考中则回到 review,保证状态机最终有主;一次性的表情动作播完自然回 idle。
+  // idle 本身就是休息态,不加限时。
   const returnToIdle = !isLoopState(state)
   playState(state, returnToIdle)
+  if (isLoopState(state) && state !== 'idle') {
+    remoteLoopTimer = setTimeout(() => {
+      remoteLoopTimer = null
+      if (currentState !== state) return
+      playState(agentThinking ? 'review' : 'idle', false)
+    }, REMOTE_LOOP_MAX_MS)
+  }
   if (payload.bubble) showBubble(payload.bubble, 3200)
 }
 

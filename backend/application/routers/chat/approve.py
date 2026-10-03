@@ -52,8 +52,6 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
         print(f"[APPROVE] approval_id {req.approval_id} is already processing")
         raise HTTPException(status_code=409, detail="approval is already being processed")
     ctx = _pending_approvals.pop(req.approval_id, None)
-    if req.system_prompt:
-        symbix_client.system_prompt = req.system_prompt
     if not ctx:
         print(f"[APPROVE] approval_id {req.approval_id} not found in pending")
         raise HTTPException(status_code=404, detail="approval not found")
@@ -97,6 +95,21 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             # 用户可能点了建议按钮(默认 approve=true)或取消;取消则以“用户取消”作为回答。
             answer = (req.answer or "").strip() or (qinfo.get("suggestions") or [""])[0] if req.approve else "用户取消提问"
             out = f"[用户回答] {answer}"
+            # 计划确认卡:用户认可后把待办清单回注,否则模型看不到自己刚提交过的步骤
+            # (工具调用的 arguments 不在续跑上下文里重建)。
+            plan_steps = qinfo.get("plan") or []
+            if qinfo.get("kind") == "plan" and plan_steps:
+                if req.approve:
+                    plan_text = "\n".join(
+                        f"{i}. {s}" for i, s in enumerate(plan_steps, 1)
+                    )
+                    out += (
+                        "\n[计划已确认,按此待办逐步执行]\n"
+                        f"{plan_text}\n"
+                        "每完成一步再进入下一步;中途如需变更,用 `propose_plan` 重新确认。"
+                    )
+                else:
+                    out += "\n[用户未认可该计划,请先不要动手,等用户补充要求或改用 `propose_plan` 重新提交]"
             steps.append({
                 "type": "tool_result",
                 "tool_call_id": pending_tc["id"],
@@ -106,9 +119,10 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 "question_answer": True,
             })
             ckpt_tool_count += 1
+            # 这条工具调用是「提问占位」,其结果是用户回答(不再真正执行工具)
             _emit_tool(ctx["session_id"], ckpt_round_id, pending_tc["name"], pending_tc.get("arguments"),
                        ctx.get("risk_level", "medium"), True, out,
-                       status="ok", flag="user_input")
+                       status="ok")
             # 直接跳到工具结果累积;不再走下面的 execute
         elif req.approve:
             _ctx_set_current(ctx["session_id"], ckpt_round_id)
@@ -256,6 +270,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     registry=skill_registry,
                     tools=mcp_tools,
                     image_parts=None,
+                    # 显式传本轮 system prompt(优先用挂起时快照的,否则用前端上送),
+                    # 不碰全局 symbix_client.system_prompt → 并发会话不会互串。
+                    system_prompt=ctx.get("system_prompt") or req.system_prompt or None,
                 )
                 tool_chain_msgs = ctx.get("tool_chain_msgs") or []
                 if tool_chain_msgs:
@@ -446,6 +463,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     "session_id": session_id,
                                     "user_input": user_input,
                                     "history": history,
+                                    # 嵌套提问也要带回本轮 system prompt 快照(续跑显式传参)
+                                    "system_prompt": ctx.get("system_prompt") or req.system_prompt or "",
                                     "tool_chain_msgs": _steps_to_tool_messages(steps),
                                     "attempted_tool_calls": attempted,
                                     "tool_name_counts": name_counts_local,
@@ -471,6 +490,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     "question": qdata.get("question", ""),
                                     "suggestions": qdata.get("suggestions", []),
                                     "context": qdata.get("context", ""),
+                                    "kind": qdata.get("kind", ""),
+                                    "plan": qdata.get("plan", []),
                                 }
                                 ckpt_tool_count += 1
                                 _emit_tool(session_id, ckpt_round_id, tc_name, tc_args,
@@ -482,6 +503,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     "question": qdata.get("question", ""),
                                     "suggestions": qdata.get("suggestions", []),
                                     "context": qdata.get("context", ""),
+                                    "kind": qdata.get("kind", ""),
                                     "tool": {"id": tc_id, "name": tc_name},
                                 })
                                 yield format_sse({"type": "done", "content": full_text})
@@ -493,6 +515,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 "session_id": session_id,
                                 "user_input": user_input,
                                 "history": history,
+                                "system_prompt": ctx.get("system_prompt") or req.system_prompt or "",
                                 # 嵌套审批也要带上前置已执行工具链 + 去重集合,
                                 # 否则二次审批续跑又会对前面的工具"失忆"。
                                 "tool_chain_msgs": _steps_to_tool_messages(steps),

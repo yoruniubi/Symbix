@@ -13,7 +13,73 @@ from application.state import checkpoint_recorder
 
 # 交互型工具:执行后返回 pending_user_input,需挂起等待用户回答。
 # 命中后强制走"提问审批"路径:不发普通 tool_result,发 await_input 事件挂起。
-_INTERACTION_TOOLS = {"ask_clarifying_question"}
+_INTERACTION_TOOLS = {"ask_clarifying_question", "propose_plan"}
+
+
+# ═══════════════ 只读工具并行批量执行 ═══════════════
+# 模型一轮里常一次性发起多个互不依赖的只读调用(读 5 个文件 / 搜 2 个关键词 /
+# 抓 2 个网页)。这些工具内部是阻塞式 I/O(磁盘、HTTP),串行 await 只能一个
+# 一个等;这里把**连续的**只读调用丢给线程池并发跑。
+#
+# 只并行「纯只读、无副作用、无需审批」的工具:
+#   写入类(edit_file/md_to_*)、终端(open_terminal)、UI 副作用(emit_pet_action)、
+#   交互型(ask_clarifying_question)、delegate_*(自身已并行)都不进来,
+#   以免打乱审批/提问挂起顺序或让写入与读取互相偷跑。
+READ_ONLY_PARALLEL_TOOLS = {
+    "read_file",
+    "list_files",
+    "search_files",
+    "search_file_with_name",
+    "parse_file",
+    "doc_to_markdown",
+    "search_online",
+    "fetch_webpage",
+    "check_agent_status",
+}
+READ_ONLY_PARALLEL_PREFIXES = ("skill__",)
+PARALLEL_TOOL_CONCURRENCY = 6
+
+
+def _is_read_only_parallel_tool(name: str) -> bool:
+    """该工具能不能进并行批量(仅看名字,审批/重复判定由调用方补上)。"""
+    if not name or name in _INTERACTION_TOOLS:
+        return False
+    if name in READ_ONLY_PARALLEL_TOOLS:
+        return True
+    return name.startswith(READ_ONLY_PARALLEL_PREFIXES)
+
+
+async def run_tools_parallel(items, concurrency: int = PARALLEL_TOOL_CONCURRENCY):
+    """并发执行只读工具,按**完成顺序** yield (index, output_str)。
+
+    Args:
+        items: [(index, name, arguments)] —— arguments 可为 dict 或 JSON 字符串
+        concurrency: 同时最多几个(避免一次几十个网络请求把上游打爆)
+    """
+    from application.state import tool_registry
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(index, name, arguments):
+        async with sem:
+            try:
+                # asyncio.to_thread 会带上当前 contextvars(含 checkpoint 的 ctx),
+                # 所以工具内部的 _ctx_* 读取与串行路径一致。
+                out = await asyncio.to_thread(tool_registry.execute, name, arguments)
+            except Exception as e:  # 单个失败不影响同批其它工具
+                out = f"[Error] 工具 {name} 执行失败: {e}"
+        if not isinstance(out, str):
+            out = _json.dumps(out, ensure_ascii=False)
+        return index, out
+
+    tasks = [asyncio.create_task(_one(i, n, a)) for i, n, a in items]
+    try:
+        for fut in asyncio.as_completed(tasks):
+            yield await fut
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
 
 def _is_interaction_tool(name: str) -> bool:

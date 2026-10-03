@@ -7,6 +7,8 @@ export interface VoiceConfigResp {
     priority: string[]
     voice_edge: string
     voice_openai: string
+    voice_custom: string
+    custom_servers: string
     speed: number
     openai_base_url: string
     openai_api_key: string
@@ -29,10 +31,6 @@ export interface VoiceConfigResp {
     openai_base_url: string
     openai_api_key: string
     openai_model: string
-    funasr_ws_url: string
-    xfyun_app_id: string
-    xfyun_api_key: string
-    xfyun_api_secret: string
   }
   status: {
     tts: Record<string, { available: boolean; voices: { value: string; label: string }[] }>

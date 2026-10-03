@@ -86,9 +86,11 @@
           </div>
         </div>
 
-        <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续 -->
-        <div v-if="msg.pending_question" class="question-block">
-          <div class="question-hint">{{ t('chat.agentQuestion') }}</div>
+        <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续。kind=plan 时为待办清单确认卡 -->
+        <div v-if="msg.pending_question" class="question-block" :class="{ 'plan-block': msg.pending_question.kind === 'plan' }">
+          <div class="question-hint">
+            {{ msg.pending_question.kind === 'plan' ? t('chat.planConfirm') : t('chat.agentQuestion') }}
+          </div>
           <div class="question-text">{{ msg.pending_question.question }}</div>
           <div v-if="msg.pending_question.context" class="question-context">
             {{ msg.pending_question.context }}
@@ -109,7 +111,7 @@
           <div class="question-custom">
             <n-input
               v-model:value="answerText"
-              :placeholder="t('chat.answerPlaceholder')"
+              :placeholder="msg.pending_question.kind === 'plan' ? t('chat.planAnswerPlaceholder') : t('chat.answerPlaceholder')"
               size="small"
               :disabled="msg.approval_pending === true"
               @keydown.enter.prevent="submitAnswer"
@@ -129,7 +131,7 @@
               :disabled="msg.approval_pending === true"
               @click="emit('approve', false)"
             >
-              {{ t('chat.rejectQuestion') }}
+              {{ msg.pending_question.kind === 'plan' ? t('chat.planReject') : t('chat.rejectQuestion') }}
             </n-button>
           </div>
         </div>
@@ -1091,6 +1093,24 @@ onMounted(() => {
   line-height: 1.4;
   margin-bottom: 8px;
   opacity: 0.9;
+  white-space: pre-wrap;
+}
+
+/* 待办清单确认卡:换成待办色,清单本身用等宽缩进先得清楚 */
+.plan-block {
+  border-color: rgba(246, 173, 85, 0.45);
+  background: rgba(246, 173, 85, 0.08);
+}
+
+.plan-block .question-hint {
+  color: var(--warning-500, #F6AD55);
+}
+
+.plan-block .question-context {
+  font-size: 13px;
+  font-family: ui-monospace, Consolas, monospace;
+  line-height: 1.7;
+  opacity: 1;
 }
 
 .question-suggestions {
