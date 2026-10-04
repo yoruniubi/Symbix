@@ -4,6 +4,13 @@ import httpx
 from typing import AsyncGenerator, Optional
 from .providers import ProviderRegistry, ProviderConfig, resolve_capabilities
 from .color_extract import extract_palette_b64, palette_to_hint
+from .retry_policy import (
+    DEFAULT_MAX_RETRIES,
+    RETRYABLE_EXCEPTIONS,
+    is_retryable_status,
+    reset_reason,
+    retry_delay,
+)
 
 # 自动匹配到的技能指南:超过该体积就不整篇塞进「当轮用户消息」,
 # 改为提示模型用 `skill__<name>` 工具按需加载(如 skill-creator 的 33.6KB SKILL.md)。
@@ -188,7 +195,15 @@ class SymbixClient:
             "把待办清单提交给用户确认，等用户点头后再动手；不要一上来就改文件。\n"
             "- 用户确认后会收到「计划已确认」+ 清单，按顺序执行并在每步完成后简要说明进展；"
             "用户提出修改时，按新要求重新 `propose_plan` 确认。\n"
+            "- 如果你心里已经有几种不同做法想让用户挑（例如「先只改文档」「换个不依赖外部 API 的方案」），"
+            "可以用 `propose_plan` 的 `options` 参数把这些想法作为选项卡一并给出（每条带上简短描述），"
+            "用户点一下就能选；不确定就别传，默认三选一足够。\n"
             "- 简单问答、单步操作、纯读取/解释类请求不要报计划，直接做。\n\n"
+            "## 长期记忆（「记住了」必须真的落库）\n"
+            "- 用户说「记住…」「以后都用…」，或你了解到值得长期保留的身份/偏好/习惯/目标/约束时，"
+            "**必须调用 `save_memory` 真正写入长期记忆库**；只在回复里说「记住了」等于没记住。\n"
+            "- 用户问「你还记得我什么」「我之前说过…吗」时，先 `search_memories` 查库再回答，"
+            "不要凭本次对话上下文充当长期记忆。\n\n"
             "## Skill 使用规则(必须先查看,再执行)\n"
             "- 用户请求可能对应某个已安装技能时,**先主动调用对应的 `skill__<skill-name>` 工具**加载完整指南,再按指南执行;不要只靠列表里的一行简介猜做法。\n"
             "- 不确定用户需求对应哪个技能时,可从上方[可用技能列表]按描述与触发关键词判断,必要时调用多个相关技能。\n"
@@ -336,14 +351,10 @@ class SymbixClient:
         """
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
 
-        if provider_type == "anthropic":
-            gen = self._stream_anthropic(url, headers, model_name, messages, tools)
-        elif provider_type == "gemini":
-            gen = self._stream_gemini(url, headers, messages, tools)
-        else:
-            gen = self._stream_openai_compat(url, headers, model_name, messages, tools, caps=caps)
-
-        async for evt in gen:
+        async for evt in self._open_stream(
+            url, provider_type, headers, model_name, messages, tools,
+            caps=caps, caps_model_override=raw_model,
+        ):
             if evt.get("type") == "done":
                 return {
                     "content": evt.get("content", ""),
@@ -352,8 +363,9 @@ class SymbixClient:
                     "model": model_name,
                     "error": evt.get("error"),
                 }
-        # 流意外结束（无 done 事件）时兜底
-        return {"content": "", "reasoning": None, "tool_calls": None, "model": model_name}
+        # 流意外结束（无 done 事件）时兜底:标记 error,避免被当成「成功且内容为空」
+        return {"content": "", "reasoning": None, "tool_calls": None, "model": model_name,
+                "error": "流意外结束(未收到结束事件)"}
 
     async def chat(
         self,
@@ -439,22 +451,112 @@ class SymbixClient:
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
         print(f"[stream] {provider_type} → {url}, model={model_name}")
 
+        async for event in self._open_stream(
+            url, provider_type, headers, model_name, messages, tools,
+            caps_model_override=raw_model,
+        ):
+            yield event
+
+    # ── 统一重试外壳 ──────────────────────────────────────────
+    async def _open_stream(
+        self, url: str, provider_type: str, headers: dict, model_name: str, messages: list,
+        tools: Optional[list] = None,
+        caps: Optional[dict] = None,
+        caps_model_override: Optional[str] = None,
+    ) -> AsyncGenerator[dict, None]:
+        """按 provider 类型挑管道,并统一套上重试外壳(流式对话与子 Agent 共用)。"""
         if provider_type == "anthropic":
-            async for event in self._stream_anthropic(url, headers, model_name, messages, tools):
-                yield event
+            factory = lambda: self._stream_anthropic(url, headers, model_name, messages, tools)  # noqa: E731
         elif provider_type == "gemini":
-            async for event in self._stream_gemini(url, headers, messages, tools):
-                yield event
+            factory = lambda: self._stream_gemini(url, headers, messages, tools)  # noqa: E731
         else:
-            # openai_compat / custom_openai
-            async for event in self._stream_openai_compat(url, headers, model_name, messages, tools):
-                yield event
+            factory = lambda: self._stream_openai_compat(  # noqa: E731
+                url, headers, model_name, messages, tools, caps=caps,
+                caps_model_override=caps_model_override,
+            )
+        label = {"anthropic": "Anthropic", "gemini": "Gemini"}.get(provider_type, "OpenAI")
+        async for evt in self._stream_with_retry(factory, label):
+            yield evt
+
+    async def _stream_with_retry(
+        self,
+        factory,
+        label: str = "上游",
+        max_retries: int = DEFAULT_MAX_RETRIES,
+    ) -> AsyncGenerator[dict, None]:
+        """统一重试外壳:限流 / 网关过载 / 瞬时 5xx / 连接中断都按退避重试。
+
+        `factory` 必须每次返回**新的** async generator(生成器不能重跑),
+        这样每轮尝试的累积状态(delta / tool_calls)天然重置。
+        重试前会补发 `stream_reset`,让前端把上一次已渲染的部分清空重来。
+        """
+        total = max_retries + 1
+        for attempt in range(total):
+            produced = False
+            acc_text = ""
+            acc_reasoning = ""
+            http_status: int | None = None
+            http_body = ""
+            retry_after: str | None = None
+            try:
+                async for evt in factory():
+                    etype = evt.get("type")
+                    if etype == "http_error":
+                        http_status = evt.get("status")
+                        http_body = evt.get("error") or ""
+                        retry_after = evt.get("retry_after")
+                        break
+                    if etype == "delta":
+                        produced = True
+                        acc_text += evt.get("content") or ""
+                    elif etype == "reasoning":
+                        produced = True
+                        acc_reasoning += evt.get("content") or ""
+                    elif etype == "tool_call":
+                        produced = True
+                    if etype == "done":
+                        yield evt
+                        return
+                    yield evt
+            except RETRYABLE_EXCEPTIONS as e:
+                print(f"[{label}] 流式连接第 {attempt + 1}/{total} 次中断: {e}")
+                if attempt < max_retries:
+                    if produced:
+                        yield {"type": "stream_reset", "reason": reset_reason(exc=e),
+                               "attempt": attempt + 1, "total": total}
+                    delay = retry_delay(attempt)
+                    print(f"[{label}] {delay}s 后第 {attempt + 2}/{total} 次尝试")
+                    await asyncio.sleep(delay)
+                    continue
+                yield {"type": "done", "content": acc_text, "reasoning": acc_reasoning or None,
+                       "tool_calls": None, "error": f"连接多次中断（{e}），内容可能不完整"}
+                return
+
+            if http_status is not None:
+                print(f"[{label}] HTTP {http_status}: {http_body[:400]}")
+                if is_retryable_status(http_status) and attempt < max_retries:
+                    if produced:
+                        yield {"type": "stream_reset", "reason": reset_reason(status=http_status),
+                               "attempt": attempt + 1, "total": total}
+                    delay = retry_delay(attempt, retry_after)
+                    print(f"[{label}] HTTP {http_status} 可重试,{delay}s 后第 {attempt + 2}/{total} 次尝试")
+                    await asyncio.sleep(delay)
+                    continue
+                yield {"type": "delta", "content": f"[错误] HTTP {http_status}"}
+                yield {"type": "done", "content": "", "tool_calls": None,
+                       "error": f"HTTP {http_status}: {http_body[:300]}"}
+                return
+
+            # 管道既没给 done 也没报错就结束了:当失败处理,别让调用方拿到空内容当成功
+            yield {"type": "done", "content": acc_text, "reasoning": acc_reasoning or None,
+                   "tool_calls": None, "error": "流意外结束(未收到结束事件)"}
+            return
 
     # ── Anthropic SSE 解析 ────────────────────────────────────
     async def _stream_anthropic(
         self, url: str, headers: dict, model: str, messages: list, tools: Optional[list] = None
     ) -> AsyncGenerator[dict, None]:
-        """Anthropic Messages API 原生 SSE 流"""
+        """Anthropic Messages API 原生 SSE 流(单次尝试,重试由 `_stream_with_retry` 统一负责)"""
         body = {
             "model": model,
             "messages": [m for m in messages if m["role"] != "system"],
@@ -489,9 +591,10 @@ class SymbixClient:
                 if resp.status_code != 200:
                     error_text = await resp.aread()
                     print(f"[Anthropic] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
-                    yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                    # done 带上 error:非流式聚合链路(_chat_raw)只有 done 事件,不带就会被当成「成功且内容为空」
-                    yield {"type": "done", "content": "", "error": f"HTTP {resp.status_code}: {error_text.decode(errors='replace')[:300]}"}
+                    # 把状态码交给重试外壳决定「退避重发」还是「判失败」
+                    yield {"type": "http_error", "status": resp.status_code,
+                           "error": error_text.decode(errors="replace")[:300],
+                           "retry_after": resp.headers.get("retry-after")}
                     return
 
                 async for line in resp.aiter_lines():
@@ -557,11 +660,11 @@ class SymbixClient:
     # ── OpenAI 兼容 SSE 解析 ──────────────────────────────────
     async def _stream_openai_compat(
         self, url: str, headers: dict, model: str, messages: list,
-        tools: Optional[list] = None, max_retries: int = 2,
+        tools: Optional[list] = None,
         caps: Optional[dict] = None,
         caps_model_override: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
-        """OpenAI /v1/chat/completions 及兼容接口 SSE 流（带断线重试）。
+        """OpenAI /v1/chat/completions 及兼容接口 SSE 流(单次尝试,重试由 `_stream_with_retry` 统一负责)。
 
         caps 来自 provider capability 解析，优先级：显式 caps > caps_model_override 推断 > active provider。
         chat_stream 调用时务必传 caps_model_override=raw_model（带前缀）,
@@ -605,107 +708,87 @@ class SymbixClient:
         # 分开设置各阶段超时，而不是一个数字打天下
         timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
-        for attempt in range(max_retries + 1):
-            full_text = ""
-            full_reasoning = ""
-            tool_calls_acc: dict[int, dict] = {}   # index → {id, name, arguments}
+        full_text = ""
+        full_reasoning = ""
+        tool_calls_acc: dict[int, dict] = {}   # index → {id, name, arguments}
 
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    async with client.stream("POST", url, headers=headers, json=body) as resp:
-                        if resp.status_code != 200:
-                            error_text = await resp.aread()
-                            print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
-                            yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                            # done 带上 error:非流式聚合链路(_chat_raw)只有 done 事件
-                            yield {"type": "done", "content": "", "error": f"HTTP {resp.status_code}: {error_text.decode(errors='replace')[:300]}"}
-                            return
-
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                continue
-                            if not line.startswith("data: "):
-                                continue
-                            data_str = line[6:]
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                evt = json.loads(data_str)
-                            except json.JSONDecodeError:
-                                continue
-
-                            choices = evt.get("choices", [])
-                            if not choices:
-                                continue
-                            choice = choices[0]
-                            delta = choice.get("delta", {})
-
-                            # 文本增量
-                            content = delta.get("content")
-                            if content:
-                                full_text += content
-                                yield {"type": "delta", "content": content}
-
-                            # 推理增量（DeepSeek / Groq thinking）
-                            reasoning_chunk = delta.get("reasoning_content")
-                            if reasoning_chunk:
-                                full_reasoning += reasoning_chunk
-                                yield {"type": "reasoning", "content": reasoning_chunk}
-
-                            # 工具调用增量
-                            tc_deltas = delta.get("tool_calls")
-                            if tc_deltas:
-                                for tc in tc_deltas:
-                                    idx = tc.get("index", 0)
-                                    if idx not in tool_calls_acc:
-                                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                                    entry = tool_calls_acc[idx]
-                                    if tc.get("id"):
-                                        entry["id"] = tc["id"]
-                                    func = tc.get("function", {})
-                                    if func.get("name"):
-                                        entry["name"] = func["name"]
-                                    if func.get("arguments"):
-                                        entry["arguments"] += func["arguments"]
-                                        yield {"type": "tool_call", "id": entry["id"], "name": entry["name"], "arguments": func["arguments"]}
-
-                # 正常读完整个流，直接 done 并退出（不再继续重试循环）
-                tool_calls = [
-                    {"id": e["id"], "name": e["name"], "arguments": e["arguments"]}
-                    for e in tool_calls_acc.values() if e["id"]
-                ]
-                yield {
-                    "type": "done",
-                    "content": full_text,
-                    "reasoning": full_reasoning if full_reasoning else None,
-                    "tool_calls": tool_calls if tool_calls else None,
-                }
-                return
-
-            except (httpx.RemoteProtocolError, httpx.ReadError,
-                    httpx.ReadTimeout, httpx.ConnectError) as e:
-                print(f"[OpenAI] 流式连接第 {attempt + 1} 次中断: {e}")
-                if attempt < max_retries:
-                    # 已吐给前端的这部分内容作废，通知前端清空后重新开始
-                    yield {"type": "stream_reset", "reason": str(e), "attempt": attempt + 1}
-                    await asyncio.sleep(1.5 * (attempt + 1))
-                    continue
-                else:
-                    # 重试次数用尽，把已生成内容也带出去，标记为不完整
-                    yield {
-                        "type": "done",
-                        "content": full_text or "",
-                        "reasoning": full_reasoning or None,
-                        "tool_calls": None,
-                        "error": f"连接多次中断（{e}），内容可能不完整",
-                    }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code != 200:
+                    error_text = await resp.aread()
+                    print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
+                    # 把状态码交给重试外壳决定「退避重发」还是「判失败」
+                    yield {"type": "http_error", "status": resp.status_code,
+                           "error": error_text.decode(errors="replace")[:300],
+                           "retry_after": resp.headers.get("retry-after")}
                     return
 
-    # ── Gemini SSE 解析 ───────────────────────────────────────
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        evt = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choices = evt.get("choices", [])
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta", {})
+
+                    # 文本增量
+                    content = delta.get("content")
+                    if content:
+                        full_text += content
+                        yield {"type": "delta", "content": content}
+
+                    # 推理增量（DeepSeek / Groq thinking）
+                    reasoning_chunk = delta.get("reasoning_content")
+                    if reasoning_chunk:
+                        full_reasoning += reasoning_chunk
+                        yield {"type": "reasoning", "content": reasoning_chunk}
+
+                    # 工具调用增量
+                    tc_deltas = delta.get("tool_calls")
+                    if tc_deltas:
+                        for tc in tc_deltas:
+                            idx = tc.get("index", 0)
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                            entry = tool_calls_acc[idx]
+                            if tc.get("id"):
+                                entry["id"] = tc["id"]
+                            func = tc.get("function", {})
+                            if func.get("name"):
+                                entry["name"] = func["name"]
+                            if func.get("arguments"):
+                                entry["arguments"] += func["arguments"]
+                                yield {"type": "tool_call", "id": entry["id"], "name": entry["name"], "arguments": func["arguments"]}
+
+        # 正常读完整个流，直接 done 并退出（不再继续重试循环）
+        tool_calls = [
+            {"id": e["id"], "name": e["name"], "arguments": e["arguments"]}
+            for e in tool_calls_acc.values() if e["id"]
+        ]
+        yield {
+            "type": "done",
+            "content": full_text,
+            "reasoning": full_reasoning if full_reasoning else None,
+            "tool_calls": tool_calls if tool_calls else None,
+        }
+        return
+
+    # ── Gemini SSE 解析 ────────────────────────────────────────
     async def _stream_gemini(
         self, url: str, headers: dict, messages: list, tools: Optional[list] = None
     ) -> AsyncGenerator[dict, None]:
-        """Gemini API SSE 流"""
+        """Gemini API SSE 流(单次尝试,重试由 `_stream_with_retry` 统一负责)"""
         # 转换 messages 格式
         contents = []
         sys_prompt = ""
@@ -746,9 +829,9 @@ class SymbixClient:
                 if resp.status_code != 200:
                     error_text = await resp.aread()
                     print(f"[Gemini] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
-                    yield {"type": "delta", "content": f"[错误] HTTP {resp.status_code}"}
-                    # done 带上 error:非流式聚合链路(_chat_raw)只有 done 事件
-                    yield {"type": "done", "content": "", "error": f"HTTP {resp.status_code}: {error_text.decode(errors='replace')[:300]}"}
+                    yield {"type": "http_error", "status": resp.status_code,
+                           "error": error_text.decode(errors="replace")[:300],
+                           "retry_after": resp.headers.get("retry-after")}
                     return
 
                 async for line in resp.aiter_lines():

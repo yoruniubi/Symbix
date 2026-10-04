@@ -38,7 +38,6 @@ memory = ConversationMemory(
 memory_store = MemoryStore(
     db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
     llm_client=symbix_client,    # 指向下方已初始化的 symbix_client
-    extraction_model="gpt-4o-mini",
 )
 
 # Checkpoint recorder：同 memory.db 同库，跨表 join 方便。
@@ -240,6 +239,11 @@ def cancel_session_tasks(sid: str) -> int:
 
 kill_session_activity = cancel_session_tasks  # 语义别名:删除会话时一键终止
 
-# ============ 上下文压缩阈值 ============
+# ============ 上下文压缩/记忆提取阈值 ============
+# 压缩：消息多于 16 条时把旧消息摘要掉，只留最近 12 条
 COMPRESS_THRESHOLD = 16
 RECENT_KEEP = 12
+# 记忆提取：门槛比压缩低（短对话也可能有值得记的事），
+# 且按游标增量提取，只有新增消息够多才再跑一次，避免重复调用模型
+EXTRACT_THRESHOLD = 6
+EXTRACT_MIN_NEW = 2

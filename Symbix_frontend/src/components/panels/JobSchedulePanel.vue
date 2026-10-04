@@ -28,13 +28,106 @@
         <div v-if="editing" class="job-form">
           <div class="job-field"><span>{{ $t('jobPanel.name') }}</span><n-input v-model:value="form.name" size="small" /></div>
           <div class="job-field"><span>{{ $t('jobPanel.prompt') }}</span><n-input v-model:value="form.prompt" type="textarea" :rows="4" size="small" /></div>
-          <div class="job-field"><span>{{ $t('jobPanel.triggerType') }}</span><n-select v-model:value="form.trigger_type" size="small" :options="triggerOptions" /></div>
-          <div v-if="form.trigger_type === 'interval'" class="job-field">
-            <span>{{ $t('jobPanel.triggerInterval') }}</span>
-            <n-select v-model:value="intervalPreset" size="small" :options="intervalOptions" @update:value="setInterval" />
+
+          <!-- 一句话填时间:交给后端 humanize 解析,省得用户自己拼 cron -->
+          <div class="job-field">
+            <span>{{ $t('jobPanel.naturalInput') }}</span>
+            <div class="job-natural">
+              <n-input v-model:value="naturalText" size="small" :placeholder="$t('jobPanel.naturalPlaceholder')" @keyup.enter="applyNatural" />
+              <n-button size="small" :loading="naturalLoading" @click="applyNatural">{{ $t('jobPanel.naturalApply') }}</n-button>
+            </div>
           </div>
-          <div v-if="form.trigger_type === 'cron'" class="job-field"><span>{{ $t('jobPanel.cronExpression') }}</span><n-input v-model:value="cronText" size="small" placeholder="0 9 * * 1-5" /></div>
-          <div v-if="form.trigger_type === 'date'" class="job-field"><span>{{ $t('jobPanel.runDate') }}</span><n-input v-model:value="dateText" size="small" placeholder="2026-01-01T09:00:00" /></div>
+
+          <div class="job-field"><span>{{ $t('jobPanel.freq') }}</span><n-select v-model:value="mode" size="small" :options="modeOptions" /></div>
+
+          <!-- 每隔 N 分钟/小时/天/周 -->
+          <div v-if="mode === 'interval'" class="job-field">
+            <span>{{ $t('jobPanel.freqInterval') }}</span>
+            <div class="job-inline">
+              <n-input-number v-model:value="intervalCount" size="small" :min="1" :max="999" style="width:84px" />
+              <n-select v-model:value="intervalUnit" size="small" :options="intervalUnitOptions" style="flex:1" />
+            </div>
+          </div>
+
+          <!-- 每天 HH:mm -->
+          <div v-if="mode === 'daily'" class="job-field">
+            <span>{{ $t('jobPanel.atTime') }}</span>
+            <n-time-picker v-model:formatted-value="dailyTime" size="small" format="HH:mm" value-format="HH:mm" style="width:100%" />
+          </div>
+
+          <!-- 每周 + 时间 -->
+          <template v-if="mode === 'weekly'">
+            <div class="job-field">
+              <div class="job-label-row">
+                <span>{{ $t('jobPanel.weekdays') }}</span>
+                <div class="job-quick">
+                  <button type="button" class="link-btn" @click="weeklyDays = [0, 1, 2, 3, 4]">{{ $t('jobPanel.weekdayWorkdays') }}</button>
+                  <button type="button" class="link-btn" @click="weeklyDays = [5, 6]">{{ $t('jobPanel.weekdayWeekend') }}</button>
+                </div>
+              </div>
+              <n-checkbox-group v-model:value="weeklyDays" size="small">
+                <div class="job-weekdays">
+                  <n-checkbox v-for="d in 7" :key="d" :value="d - 1" :label="weekdayShort(d - 1)" />
+                </div>
+              </n-checkbox-group>
+            </div>
+            <div class="job-field">
+              <span>{{ $t('jobPanel.atTime') }}</span>
+              <n-time-picker v-model:formatted-value="weeklyTime" size="small" format="HH:mm" value-format="HH:mm" style="width:100%" />
+            </div>
+          </template>
+
+          <!-- 每月 X 号 / 最后一天 + 时间 -->
+          <template v-if="mode === 'monthly'">
+            <div class="job-field">
+              <div class="job-label-row">
+                <span>{{ $t('jobPanel.monthlyDay') }}</span>
+                <div class="job-quick">
+                  <n-switch v-model:value="monthlyLast" size="small" />
+                  <span class="quick-text">{{ $t('jobPanel.monthlyLastDay') }}</span>
+                </div>
+              </div>
+              <n-input-number v-if="!monthlyLast" v-model:value="monthlyDay" size="small" :min="1" :max="31" style="width:100%" />
+            </div>
+            <div class="job-field">
+              <span>{{ $t('jobPanel.atTime') }}</span>
+              <n-time-picker v-model:formatted-value="monthlyTime" size="small" format="HH:mm" value-format="HH:mm" style="width:100%" />
+            </div>
+          </template>
+
+          <!-- 只运行一次 -->
+          <div v-if="mode === 'once'" class="job-field">
+            <span>{{ $t('jobPanel.onceAt') }}</span>
+            <n-date-picker
+              v-model:formatted-value="onceAt"
+              type="datetime"
+              size="small"
+              clearable
+              format="yyyy-MM-dd HH:mm"
+              value-format="yyyy-MM-dd'T'HH:mm:ss"
+              style="width:100%"
+            />
+          </div>
+
+          <!-- 高级:Cron -->
+          <div v-if="mode === 'cron'" class="job-field">
+            <span>{{ $t('jobPanel.cronExpression') }}</span>
+            <n-input v-model:value="cronText" size="small" placeholder="0 9 * * 1-5" />
+            <div class="job-hint">{{ $t('jobPanel.cronHint') }}</div>
+          </div>
+
+          <!-- 实时预览:人话回显 + 接下来 3 次运行时间 -->
+          <div class="job-preview" :class="{ 'is-error': !!previewError }">
+            <span class="job-preview-key">{{ $t('jobPanel.preview') }}</span>
+            <span v-if="previewError" class="job-preview-error">{{ $t('jobPanel.previewInvalid', { msg: previewError }) }}</span>
+            <span v-else-if="previewLoading" class="job-preview-muted">{{ $t('jobPanel.previewLoading') }}</span>
+            <template v-else-if="previewLabel">
+              <span class="job-preview-label">{{ previewLabel }}</span>
+              <span v-if="previewRuns.length" class="job-preview-runs">{{ $t('jobPanel.previewNext') }} {{ previewRuns.map(shortTime).join(' · ') }}</span>
+              <span v-else class="job-preview-muted">{{ $t('jobPanel.previewNone') }}</span>
+            </template>
+          </div>
+
           <div class="job-switch"><span>{{ $t('jobPanel.enabled') }}</span><n-switch v-model:value="form.enabled" size="small" /></div>
           <div class="job-switch"><span>{{ $t('jobPanel.autoSafe') }}</span><n-switch v-model:value="form.auto_safe" size="small" /></div>
           <div class="job-form-actions">
@@ -119,13 +212,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 type Panel = 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs'
 type TriggerType = 'cron' | 'interval' | 'date'
-type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string }
+/** 表单里的「重复方式」:比 raw trigger_type 更贴近日常说法 */
+type Mode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once' | 'cron'
+type IntervalUnit = 'minutes' | 'hours' | 'days' | 'weeks'
+type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string; trigger_label?: string }
 type History = { job_id: string; run_time: string; status: 'ok' | 'error' | 'skipped'; output_snippet: string; error: string }
 
 const props = defineProps<{ activePanel: Panel | null }>()
@@ -140,21 +236,45 @@ const saving = ref(false)
 const editing = ref(false)
 const historyVisible = ref(false)
 const editingId = ref<string | null>(null)
-const intervalPreset = ref('hour')
+
+// ── 表单状态 ──
+const form = ref({ name: '', prompt: '', enabled: true, auto_safe: true })
+const mode = ref<Mode>('daily')
+const naturalText = ref('')
+const naturalLoading = ref(false)
+const intervalCount = ref(1)
+const intervalUnit = ref<IntervalUnit>('hours')
+const dailyTime = ref('09:00')
+const weeklyDays = ref<number[]>([0])
+const weeklyTime = ref('09:00')
+const monthlyLast = ref(false)
+const monthlyDay = ref(1)
+const monthlyTime = ref('09:00')
+const onceAt = ref<string | null>(null)
 const cronText = ref('0 9 * * *')
-const dateText = ref('')
-const form = ref({ name: '', prompt: '', trigger_type: 'interval' as TriggerType, trigger_config: { hours: 1 } as Record<string, any>, enabled: true, auto_safe: true })
-const triggerOptions = [
-  { label: t('jobPanel.triggerInterval'), value: 'interval' },
-  { label: t('jobPanel.triggerCron'), value: 'cron' },
-  { label: t('jobPanel.triggerDate'), value: 'date' },
-]
-const intervalOptions = [
-  { label: t('jobPanel.everyMinute'), value: 'minute' },
-  { label: t('jobPanel.everyHour'), value: 'hour' },
-  { label: t('jobPanel.everyDay'), value: 'day' },
-  { label: t('jobPanel.everyWeek'), value: 'week' },
-]
+
+// ── 预览状态 ──
+const previewLoading = ref(false)
+const previewLabel = ref('')
+const previewRuns = ref<string[]>([])
+const previewError = ref('')
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+
+const modeOptions = computed(() => [
+  { label: t('jobPanel.freqInterval'), value: 'interval' },
+  { label: t('jobPanel.freqDaily'), value: 'daily' },
+  { label: t('jobPanel.freqWeekly'), value: 'weekly' },
+  { label: t('jobPanel.freqMonthly'), value: 'monthly' },
+  { label: t('jobPanel.freqOnce'), value: 'once' },
+  { label: t('jobPanel.freqAdvanced'), value: 'cron' },
+])
+const intervalUnitOptions = computed(() => [
+  { label: t('jobPanel.intervalUnitMinute'), value: 'minutes' },
+  { label: t('jobPanel.intervalUnitHour'), value: 'hours' },
+  { label: t('jobPanel.intervalUnitDay'), value: 'days' },
+  { label: t('jobPanel.intervalUnitWeek'), value: 'weeks' },
+])
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
 
 async function request(path: string, options?: RequestInit): Promise<any> {
   const res = await fetch(`${BACKEND_URL}${path}`, options)
@@ -174,54 +294,223 @@ async function loadJobs() {
   }
 }
 
+// ── 时间 → trigger 组装 / 反填 ──
+
+function padClock(value: any): string {
+  const n = Number(value)
+  return Number.isFinite(n) ? String(n).padStart(2, '0') : '00'
+}
+
+function timeToClock(time: string): { hour: string; minute: string } {
+  const [h = '9', m = '0'] = (time || '09:00').split(':')
+  return { hour: String(Number(h)), minute: String(Number(m)) }
+}
+
+function cronConfig(minute: string, hour: string, day = '*', month = '*', dayOfWeek = '*'): Record<string, string> {
+  return { minute, hour, day, month, day_of_week: dayOfWeek }
+}
+
+/** 表单 → { trigger_type, trigger_config };字段不完整时抛错(错误文案直接给用户看) */
+function buildTrigger(): { trigger_type: TriggerType; trigger_config: Record<string, any> } {
+  if (mode.value === 'interval') {
+    const count = Math.max(1, Math.floor(Number(intervalCount.value) || 1))
+    return { trigger_type: 'interval', trigger_config: { [intervalUnit.value]: count } }
+  }
+  if (mode.value === 'daily') {
+    const { hour, minute } = timeToClock(dailyTime.value)
+    return { trigger_type: 'cron', trigger_config: cronConfig(minute, hour) }
+  }
+  if (mode.value === 'weekly') {
+    if (!weeklyDays.value.length) throw new Error(t('jobPanel.weekdaysRequired'))
+    const { hour, minute } = timeToClock(weeklyTime.value)
+    const dow = [...weeklyDays.value].sort((a, b) => a - b).join(',')
+    return { trigger_type: 'cron', trigger_config: cronConfig(minute, hour, '*', '*', dow) }
+  }
+  if (mode.value === 'monthly') {
+    const { hour, minute } = timeToClock(monthlyTime.value)
+    const day = monthlyLast.value ? 'last' : String(Math.min(31, Math.max(1, Math.floor(Number(monthlyDay.value) || 1))))
+    return { trigger_type: 'cron', trigger_config: cronConfig(minute, hour, day) }
+  }
+  if (mode.value === 'once') {
+    if (!onceAt.value) throw new Error(t('jobPanel.onceRequired'))
+    return { trigger_type: 'date', trigger_config: { run_date: onceAt.value } }
+  }
+  const parts = cronText.value.trim().split(/\s+/)
+  if (parts.length !== 5) throw new Error(t('jobPanel.cronHint'))
+  const [minute = '*', hour = '*', day = '*', month = '*', day_of_week = '*'] = parts
+  return { trigger_type: 'cron', trigger_config: cronConfig(minute, hour, day, month, day_of_week) }
+}
+
+/** trigger → 表单反填(编辑已有任务、或「一句话」识别成功后调用) */
+function applyTrigger(triggerType: TriggerType, config: Record<string, any>) {
+  const cfg = config || {}
+  if (triggerType === 'interval') {
+    const key = (Object.keys(cfg)[0] || 'hours') as IntervalUnit
+    mode.value = 'interval'
+    intervalUnit.value = (['minutes', 'hours', 'days', 'weeks'] as string[]).includes(key) ? key : 'hours'
+    intervalCount.value = Math.max(1, Number(cfg[intervalUnit.value]) || 1)
+    return
+  }
+  if (triggerType === 'date') {
+    mode.value = 'once'
+    onceAt.value = cfg.run_date ? String(cfg.run_date).slice(0, 19) : null
+    return
+  }
+  const dow = String(cfg.day_of_week ?? '*')
+  const day = String(cfg.day ?? '*')
+  const month = String(cfg.month ?? '*')
+  const clockOk = /^\d+$/.test(String(cfg.hour ?? '')) && /^\d+$/.test(String(cfg.minute ?? ''))
+  const time = `${padClock(cfg.hour)}:${padClock(cfg.minute)}`
+  if (clockOk && dow !== '*' && day === '*' && month === '*') {
+    mode.value = 'weekly'
+    weeklyDays.value = expandDayOfWeek(dow)
+    weeklyTime.value = time
+    return
+  }
+  if (clockOk && dow === '*' && day !== '*' && month === '*') {
+    mode.value = 'monthly'
+    monthlyLast.value = day === 'last'
+    monthlyDay.value = monthlyLast.value ? 1 : Math.min(31, Math.max(1, Number(day) || 1))
+    monthlyTime.value = time
+    return
+  }
+  if (clockOk && dow === '*' && day === '*' && month === '*' && cfg.hour !== '*' && cfg.minute !== '*') {
+    mode.value = 'daily'
+    dailyTime.value = time
+    return
+  }
+  // 表达不了的(按月 + 星期、带 month 限制等)→ 落到高级模式,原样展示
+  mode.value = 'cron'
+  cronText.value = [String(cfg.minute ?? '*'), String(cfg.hour ?? '*'), day, month, dow].join(' ')
+}
+
+/** '1-5' / '0,2,4' → [1,2,3,4,5] / [0,2,4] */
+function expandDayOfWeek(value: string): number[] {
+  const out = new Set<number>()
+  for (const part of value.split(',')) {
+    const range = part.trim().split('-')
+    if (range.length === 2) {
+      const start = Number(range[0])
+      const end = Number(range[1].trim())
+      if (Number.isFinite(start) && Number.isFinite(end)) {
+        for (let i = Math.min(start, end); i <= Math.max(start, end); i++) if (i >= 0 && i <= 6) out.add(i)
+      }
+    } else if (Number.isFinite(Number(range[0]))) {
+      const n = Number(range[0])
+      if (n >= 0 && n <= 6) out.add(n)
+    }
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+// ── 预览 ──
+
+async function runPreview() {
+  let built: { trigger_type: TriggerType; trigger_config: Record<string, any> }
+  try {
+    built = buildTrigger()
+  } catch (e: any) {
+    previewError.value = e.message
+    previewLabel.value = ''
+    previewRuns.value = []
+    return
+  }
+  previewLoading.value = true
+  try {
+    const data = await request('/jobs/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger_type: built.trigger_type, trigger_config: built.trigger_config, count: 3 }),
+    })
+    previewLabel.value = data.label || ''
+    previewRuns.value = data.next_runs || []
+    previewError.value = ''
+  } catch (e: any) {
+    previewError.value = e.message
+    previewLabel.value = ''
+    previewRuns.value = []
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function schedulePreview(delay = 250) {
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = setTimeout(runPreview, delay)
+}
+
+async function applyNatural() {
+  const text = naturalText.value.trim()
+  if (!text) return
+  naturalLoading.value = true
+  try {
+    const data = await request('/jobs/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule: text, count: 3 }),
+    })
+    applyTrigger(data.trigger_type, data.trigger_config || {})
+    previewLabel.value = data.label || ''
+    previewRuns.value = data.next_runs || []
+    previewError.value = ''
+  } catch (e: any) {
+    previewError.value = e.message
+    previewLabel.value = ''
+    previewRuns.value = []
+  } finally {
+    naturalLoading.value = false
+  }
+}
+
+// ── 新建 / 编辑 / 保存 ──
+
 function startCreate() {
   editingId.value = null
-  intervalPreset.value = 'hour'
+  form.value = { name: '', prompt: '', enabled: true, auto_safe: true }
+  naturalText.value = ''
+  mode.value = 'daily'
+  intervalCount.value = 1
+  intervalUnit.value = 'hours'
+  dailyTime.value = '09:00'
+  weeklyDays.value = [0]
+  weeklyTime.value = '09:00'
+  monthlyLast.value = false
+  monthlyDay.value = 1
+  monthlyTime.value = '09:00'
+  onceAt.value = null
   cronText.value = '0 9 * * *'
-  dateText.value = ''
-  form.value = { name: '', prompt: '', trigger_type: 'interval', trigger_config: { hours: 1 }, enabled: true, auto_safe: true }
+  previewLabel.value = ''
+  previewRuns.value = []
+  previewError.value = ''
   editing.value = true
+  schedulePreview(0)
 }
 
 function startEdit(job: Job) {
   editingId.value = job.id
-  form.value = { name: job.name, prompt: job.prompt, trigger_type: job.trigger_type, trigger_config: { ...job.trigger_config }, enabled: job.enabled, auto_safe: job.auto_safe }
-  if (job.trigger_type === 'cron') {
-    cronText.value = [job.trigger_config.minute ?? '*', job.trigger_config.hour ?? '*', job.trigger_config.day ?? '*', job.trigger_config.month ?? '*', job.trigger_config.day_of_week ?? '*'].join(' ')
-  }
-  if (job.trigger_type === 'date') dateText.value = job.trigger_config.run_date ?? ''
-  if (job.trigger_type === 'interval') intervalPreset.value = Object.keys(job.trigger_config)[0]?.replace(/s$/, '') || 'hour'
+  form.value = { name: job.name, prompt: job.prompt, enabled: job.enabled, auto_safe: job.auto_safe }
+  naturalText.value = ''
+  applyTrigger(job.trigger_type, job.trigger_config || {})
+  previewLabel.value = ''
+  previewRuns.value = []
+  previewError.value = ''
   editing.value = true
-}
-
-function setInterval(value: string) {
-  const cfg: Record<string, number> = { minute: 1, hour: 1, day: 1, week: 1 }
-  const keys: Record<string, string> = { minute: 'minutes', hour: 'hours', day: 'days', week: 'weeks' }
-  form.value.trigger_config = { [keys[value]]: cfg[value] }
-}
-
-function preparePayload() {
-  const payload: any = { ...form.value }
-  if (payload.trigger_type === 'cron') {
-    const [minute = '*', hour = '*', day = '*', month = '*', day_of_week = '*'] = cronText.value.trim().split(/\s+/)
-    payload.trigger_config = { minute, hour, day, month, day_of_week }
-  }
-  if (payload.trigger_type === 'date') payload.trigger_config = { run_date: dateText.value }
-  return payload
+  schedulePreview(0)
 }
 
 async function saveJob() {
   saving.value = true
   try {
-    const payload = preparePayload()
-    if (!payload.name.trim() || !payload.prompt.trim()) throw new Error('name and prompt are required')
-    const data = editingId.value
-      ? await request(`/jobs/${editingId.value}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      : await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    const built = buildTrigger()
+    const payload: any = { ...form.value, ...built }
+    if (!payload.name.trim() || !payload.prompt.trim()) throw new Error(t('jobPanel.required'))
+    await (editingId.value
+      ? request(`/jobs/${editingId.value}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      : request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }))
+    const wasEdit = !!editingId.value
     editing.value = false
     await loadJobs()
-    ;(window as any).$message?.success?.(editingId.value ? t('jobPanel.updateSuccess') : t('jobPanel.createSuccess'))
-    return data
+    ;(window as any).$message?.success?.(wasEdit ? t('jobPanel.updateSuccess') : t('jobPanel.createSuccess'))
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('jobPanel.saveFail', { msg: e.message }))
   } finally {
@@ -274,10 +563,25 @@ async function openHistory(id: string) {
   }
 }
 
+// ── 展示 ──
+
 function triggerLabel(job: Job) {
+  if (job.trigger_label) return job.trigger_label
   if (job.trigger_type === 'interval') return `${t('jobPanel.triggerInterval')}: ${Object.entries(job.trigger_config).map(([k, v]) => `${v} ${k}`).join(', ')}`
   if (job.trigger_type === 'date') return `${t('jobPanel.triggerDate')}: ${job.trigger_config.run_date}`
   return `Cron: ${[job.trigger_config.minute, job.trigger_config.hour, job.trigger_config.day, job.trigger_config.month, job.trigger_config.day_of_week].join(' ')}`
+}
+
+function weekdayShort(index: number) {
+  return WEEKDAY_LABELS[index] ?? String(index)
+}
+
+/** 2026-10-05T08:30:00+08:00 → 10-05 08:30 */
+function shortTime(value: string) {
+  const d = new Date(value)
+  if (Number.isNaN(d.valueOf())) return value
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 function statusLabel(status: string) {
@@ -289,6 +593,11 @@ function formatDate(value: string) {
   return Number.isNaN(d.valueOf()) ? value : d.toLocaleString()
 }
 
+watch(
+  [mode, intervalCount, intervalUnit, dailyTime, weeklyDays, weeklyTime, monthlyLast, monthlyDay, monthlyTime, onceAt, cronText],
+  () => { if (editing.value) schedulePreview() },
+  { deep: true },
+)
 watch(() => props.activePanel, (panel) => { if (panel === 'jobs') loadJobs() }, { immediate: true })
 defineExpose({ refresh: loadJobs })
 </script>
@@ -399,6 +708,89 @@ defineExpose({ refresh: loadJobs })
   font-size:11px;
   font-weight:600;
   color:var(--text-secondary);
+}
+.job-label-row {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  margin-bottom:5px;
+}
+.job-label-row > span {
+  font-size:11px;
+  font-weight:600;
+  color:var(--text-secondary);
+}
+.job-quick {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+}
+.quick-text {
+  font-size:10px;
+  color:var(--text-muted);
+}
+.link-btn {
+  padding:0;
+  border:none;
+  background:none;
+  font-size:10px;
+  color:var(--accent-500,#EF6B6E);
+  cursor:pointer;
+}
+.link-btn:hover {
+  text-decoration:underline;
+}
+.job-inline, .job-natural {
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.job-weekdays {
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 10px;
+}
+.job-hint {
+  margin-top:4px;
+  font-size:10px;
+  line-height:1.4;
+  color:var(--text-muted);
+}
+.job-preview {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:4px 8px;
+  margin:2px 0 10px;
+  padding:7px 9px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm,6px);
+  background:var(--surface-raised);
+  font-size:11px;
+  line-height:1.4;
+}
+.job-preview.is-error {
+  border-color:color-mix(in srgb,var(--error,#f87171) 40%,transparent);
+}
+.job-preview-key {
+  font-size:10px;
+  font-weight:600;
+  color:var(--text-muted);
+  text-transform:uppercase;
+}
+.job-preview-label {
+  font-weight:600;
+  color:var(--text-primary);
+}
+.job-preview-runs {
+  color:var(--text-secondary);
+}
+.job-preview-muted {
+  color:var(--text-muted);
+}
+.job-preview-error {
+  color:var(--error,#f87171);
 }
 .job-switch {
   display:flex;

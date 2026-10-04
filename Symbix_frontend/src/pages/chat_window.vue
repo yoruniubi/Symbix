@@ -937,6 +937,8 @@ function handleSSEEvent(
   switch (type) {
     case 'delta':
       msg.content += evt.content || ''
+      // 重试已出内容:撤掉「正在重新生成」提示
+      msg.retryHint = ''
       // 句子级朗读:首段 delta 时开启本轮回合,之后逐句喂入 TTS 队列
       if (voiceEnabled.value && evt.content) {
         if (!ttsStreaming) {
@@ -1072,6 +1074,8 @@ function handleSSEEvent(
       msg.pending_question = {
         question: evt.question || '',
         suggestions: Array.isArray(evt.suggestions) ? evt.suggestions : [],
+        // options 带描述/点击行为(approve/reject/fill),卡片优先用它渲染选项列表
+        options: Array.isArray(evt.options) ? evt.options : [],
         context: evt.context || '',
         // kind==='plan' → 渲染成待办清单确认卡(propose_plan 工具)
         kind: evt.kind || '',
@@ -1100,6 +1104,7 @@ function handleSSEEvent(
     case 'done':
       if (evt.content && evt.content !== msg.content) msg.content = evt.content
       if (evt.reasoning) msg.reasoning = evt.reasoning
+      msg.retryHint = ''
       break
 
     case 'content_reset':
@@ -1108,6 +1113,8 @@ function handleSSEEvent(
       ttsStreaming = false
       msg.content = ''
       msg.reasoning = ''
+      // 留一行提示,解释内容为什么突然没了
+      msg.retryHint = evt.reason || 'unknown'
       nextTick(() => scrollToBottom())
       break
 

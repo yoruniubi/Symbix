@@ -1,11 +1,19 @@
-"""定时任务 Job Schedule 路由：CRUD / pause / resume / run / history。"""
+"""定时任务 Job Schedule 路由：CRUD / pause / resume / run / history / preview。"""
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from Symbix_sdk.job_schedule.schema import JobCreate, JobUpdate
-
+from Symbix_sdk.job_schedule.schema import JobCreate, JobUpdate, validate_trigger
+from Symbix_sdk.job_schedule.humanize import describe_trigger, next_run_times, parse_schedule
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+class SchedulePreviewRequest(BaseModel):
+    """预览请求:二选一——自然语言 schedule,或已规范化的 trigger_type + trigger_config。"""
+    schedule: Optional[str] = None
+    trigger_type: Optional[str] = None
+    trigger_config: Optional[dict] = None
+    count: int = 3
 
 # 由 main.py 在 startup 时注入
 job_manager = None
@@ -20,6 +28,30 @@ def _get_manager():
     if job_manager is None:
         raise HTTPException(status_code=503, detail="job manager not initialized")
     return job_manager
+
+
+@router.post("/preview")
+async def preview_schedule(body: SchedulePreviewRequest):
+    """把「人话时间」或 trigger 翻译成规范 config,并给出接下来几次运行时间(面板实时预览用)。"""
+    try:
+        if (body.schedule or "").strip():
+            parsed = parse_schedule(body.schedule or "")
+            trigger_type, trigger_config = parsed["trigger_type"], parsed["trigger_config"]
+        else:
+            if not body.trigger_type:
+                raise ValueError("需要 schedule(人话时间) 或 trigger_type + trigger_config")
+            trigger_type = body.trigger_type
+            trigger_config = body.trigger_config or {}
+            validate_trigger(trigger_type, trigger_config)
+        return {
+            "status": "ok",
+            "trigger_type": trigger_type,
+            "trigger_config": trigger_config,
+            "label": describe_trigger(trigger_type, trigger_config),
+            "next_runs": next_run_times(trigger_type, trigger_config, body.count),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("")

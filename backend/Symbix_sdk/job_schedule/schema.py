@@ -41,6 +41,8 @@ class JobOut(JobBase):
     last_run_time: Optional[datetime] = None
     last_status: Optional[Literal["ok", "error", "skipped"]] = None
     last_error: Optional[str] = None
+    # 人话频率回显（「每天 09:00」），由 humanize.describe_trigger 生成
+    trigger_label: Optional[str] = None
 
 
 class JobHistoryItem(BaseModel):

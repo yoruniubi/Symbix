@@ -124,7 +124,8 @@ class MemoryStore:
     ):
         self.db_path = db_path
         self.llm_client = llm_client
-        self.model = extraction_model
+        # 仅作最后兜底：正常情况下 _resolve_model 会跟随用户当前选的模型
+        self.model = extraction_model or ""
         self.default_user_id = default_user_id
 
         self._stop_words = _STOP_WORDS.copy()
@@ -133,6 +134,22 @@ class MemoryStore:
 
         # BM25 索引缓存：{user_id: (corpus_tokens, bm25, ids, contents, categories)}
         self._bm25_cache: dict[str, tuple] = {}
+
+    def _resolve_model(self, override: Optional[str] = None) -> str:
+        """决定后台记忆链路用哪个模型。
+
+        回退顺序：显式 override → 当前 active provider 的模型 → 构造时的兜底值。
+        之前直接退回硬编码的 gpt-4o-mini，在自定义中转网关上会 503 model_not_found，
+        而失败只写进控制台日志 → 记忆永远是空的。
+        """
+        if override:
+            return override
+        registry = getattr(self.llm_client, "registry", None)
+        try:
+            active = registry.get_active() if registry is not None else None
+        except Exception:
+            active = None
+        return (getattr(active, "model", "") or self.model or "")
 
     # ═══════════════════════════════════════════════════════════════
     # 分词 / 文本预处理
@@ -243,8 +260,50 @@ class MemoryStore:
                     self._conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_mem_user_status ON memories(user_id, status)"
                     )
+                    # 提取游标：记录每个会话「已提取到哪条消息」。
+                    # 没有它的话，超过阈值的会话每轮都会把最近的消息重复提取一遍。
+                    self._conn.execute("""
+                        CREATE TABLE IF NOT EXISTS memory_cursors (
+                            session_id TEXT PRIMARY KEY,
+                            last_message_id INTEGER NOT NULL DEFAULT 0,
+                            updated_at TEXT NOT NULL
+                        )
+                    """)
                     self._conn.commit()
         return self._conn
+
+    # ══════════════════════════════════════════════════════════════
+    # 提取游标（增量提取）
+    # ══════════════════════════════════════════════════════════════
+
+    def get_extraction_cursor(self, session_id: str) -> int:
+        """返回该会话已提取到的消息 id（无记录则为 0）。"""
+        try:
+            conn = self._ensure_conn()
+            row = conn.execute(
+                "SELECT last_message_id FROM memory_cursors WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+        except Exception as e:
+            print(f"[MemoryStore] 读提取游标失败: {e}")
+            return 0
+
+    def set_extraction_cursor(self, session_id: str, last_message_id: int) -> None:
+        """记录该会话已提取到的消息 id（提取成功后调用）。"""
+        try:
+            conn = self._ensure_conn()
+            conn.execute(
+                """INSERT INTO memory_cursors (session_id, last_message_id, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(session_id) DO UPDATE SET
+                     last_message_id=excluded.last_message_id,
+                     updated_at=excluded.updated_at""",
+                (session_id, int(last_message_id), datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        except Exception as e:
+            print(f"[MemoryStore] 写提取游标失败: {e}")
 
     # ═══════════════════════════════════════════════════════════════
     # BM25 索引构建 & 检索
@@ -364,7 +423,7 @@ class MemoryStore:
         if not dialogue_chunk.strip():
             return []
 
-        model = override_model or self.model
+        model = self._resolve_model(override_model)
         system_prompt = EXTRACTION_PROMPT.replace("{chunk}", dialogue_chunk)
 
         try:
@@ -477,7 +536,7 @@ class MemoryStore:
             .replace("{similar_formatted}", formatted)
         )
 
-        model = override_model or self.model
+        model = self._resolve_model(override_model)
 
         try:
             result = await self.llm_client.chat(
@@ -672,7 +731,47 @@ class MemoryStore:
                     "reason": action.get("reason"),
                 })
         return applied
-    
+
+    async def remember(
+        self,
+        content: str,
+        category: str = "other",
+        source_session_id: str = "",
+        user_id: Optional[str] = None,
+        override_model: Optional[str] = None,
+        override_api_key: Optional[str] = None,
+        override_api_base: Optional[str] = None,
+    ) -> dict:
+        """显式保存一条记忆（工具调用路径）。
+
+        走 decide_action/apply_decision，因此天然具备去重/更新语义：
+        已有等价记忆时不重复写入，模型改口时会把旧条目标为 superseded。
+
+        返回 {action, new_id, target_id, reason, content, category, already_known}。
+        """
+        uid = user_id or self.default_user_id
+        text = (content or "").strip()
+        fact = {
+            "content": text,
+            "category": category if category in _VALID_CATEGORIES else "other",
+            "tokens": " ".join(self.tokenize(text)),
+        }
+        action = await self.decide_action(
+            fact, user_id=uid,
+            override_model=override_model,
+            override_api_key=override_api_key,
+            override_api_base=override_api_base,
+        )
+        new_id = self.apply_decision(action, fact, source_session_id=source_session_id, user_id=uid)
+        return {
+            "action": action.get("action"),
+            "new_id": new_id,
+            "target_id": action.get("target_id"),
+            "reason": action.get("reason"),
+            "content": text,
+            "category": fact["category"],
+            "already_known": action.get("action") == "NONE",
+        }
 
     # ═══════════════════════════════════════════════════════════════
     # 辅助 CRUD

@@ -95,21 +95,24 @@
           <div v-if="msg.pending_question.context" class="question-context">
             {{ msg.pending_question.context }}
           </div>
-          <div v-if="msg.pending_question.suggestions && msg.pending_question.suggestions.length" class="question-suggestions">
-            <n-button
-              v-for="(s, si) in msg.pending_question.suggestions"
-              :key="si"
-              size="small"
-              tertiary
-              :disabled="msg.approval_pending === true"
-              class="suggestion-btn"
-              @click="emit('answer', s)"
+          <div v-if="questionOptions.length" class="question-options">
+            <div
+              v-for="(opt, oi) in questionOptions"
+              :key="oi"
+              class="q-option"
+              :class="{ 'q-option-picked': pickedOption === oi, 'q-option-disabled': msg.approval_pending === true }"
+              @click="pickOption(opt, oi)"
             >
-              {{ s }}
-            </n-button>
+              <span class="q-option-idx">{{ oi + 1 }}.</span>
+              <div class="q-option-body">
+                <div class="q-option-label">{{ opt.label }}</div>
+                <div v-if="opt.description" class="q-option-desc">{{ opt.description }}</div>
+              </div>
+            </div>
           </div>
           <div class="question-custom">
             <n-input
+              ref="answerInputRef"
               v-model:value="answerText"
               :placeholder="msg.pending_question.kind === 'plan' ? t('chat.planAnswerPlaceholder') : t('chat.answerPlaceholder')"
               size="small"
@@ -133,6 +136,9 @@
             >
               {{ msg.pending_question.kind === 'plan' ? t('chat.planReject') : t('chat.rejectQuestion') }}
             </n-button>
+          </div>
+          <div v-if="questionOptions.length" class="question-foot">
+            {{ msg.pending_question.kind === 'plan' ? t('chat.planPickHint') : t('chat.questionPickHint') }}
           </div>
         </div>
 
@@ -183,6 +189,15 @@
           <div v-else class="msg-text">{{ plainContent }}</div>
         </div>
 
+        <!-- 上游中断重试提示:后端发 content_reset 时带上原因;重试吐出内容后由 delta/done 清掉 -->
+        <div v-if="msg.retryHint" class="retry-hint">
+          <svg class="retry-hint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          <span>{{ t('chat.retrying') }}</span>
+          <span class="retry-hint-reason">{{ msg.retryHint }}</span>
+        </div>
 
       </template>
 
@@ -261,6 +276,9 @@ const showReasoning = ref(false)
 const expandedSteps = ref<Record<number, boolean>>({})
 const bubbleRef = ref<HTMLElement | null>(null)
 const answerText = ref('')
+const answerInputRef = ref<any>(null)
+/** 被选中的选项下标(仅 action=fill 时高亮,提示用户接着改/发) */
+const pickedOption = ref(-1)
 
 const { t } = useI18n()
 
@@ -313,11 +331,48 @@ function toggleReasoning() {
   showReasoning.value = !showReasoning.value
 }
 
+/** 提问卡换了一条待回答消息时清掉上一条的输入与选中态 */
+watch(
+  () => props.msg?.pending_question?.question,
+  () => {
+    answerText.value = ''
+    pickedOption.value = -1
+  },
+)
+
 /** 提交自定义回答(提问卡)。 */
 function submitAnswer() {
   const a = answerText.value.trim()
   if (!a) return
   emit('answer', a)
+}
+
+/** 提问卡选项:优先用后端给的 options(带描述/动作),旧消息回退到 suggestions 纯文本。 */
+const questionOptions = computed(() => {
+  const q = props.msg?.pending_question
+  if (!q) return []
+  const opts = Array.isArray(q.options) ? q.options : []
+  const list = opts.length
+    ? opts
+    : (Array.isArray(q.suggestions) ? q.suggestions : []).map((s: string) => ({ label: s, description: '', action: '' }))
+  return list.filter((o: any) => o && o.label)
+})
+
+/** 点选项分流:reject=直接拒绝 / fill=填进输入框待改写 / 其余=直接提交答案。 */
+function pickOption(opt: { label: string; action?: string }, index: number) {
+  if (props.msg?.approval_pending === true) return
+  const action = opt.action || ''
+  if (action === 'reject') {
+    emit('approve', false)
+    return
+  }
+  if (action === 'fill') {
+    pickedOption.value = index
+    answerText.value = opt.label
+    answerInputRef.value?.focus?.()
+    return
+  }
+  emit('answer', opt.label)
 }
 
 function toggleStep(i: number) {
@@ -351,6 +406,23 @@ const TOOL_ICONS: Record<string, string> = {
   delegate_tasks: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   check_agent_status: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
   play_status_animation: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9z"/></svg>',
+  // 计划确认(待办清单提交给用户)
+  propose_plan: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4"/><path d="M8 11h4M8 16h7"/><path d="m14 11.5 1.6 1.6L19 9.6"/></svg>',
+  // 定时任务(新建/查看/取消)
+  create_schedule_job: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/><path d="M12 14v4M10 16h4"/></svg>',
+  list_schedule_jobs: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/><path d="M8 15h8M8 18h5"/></svg>',
+  cancel_schedule_job: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/><path d="m10 15 4 4M14 15l-4 4"/></svg>',
+  // 长期记忆(写入/检索 memories 表)
+  save_memory: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="m9 9 2 2 4-4"/></svg>',
+  search_memories: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v8a4 4 0 0 1-4 4H6"/><path d="M10 4.5A2.5 2.5 0 0 1 12.5 7v1h-1A2.5 2.5 0 0 1 9 5.5z"/><path d="M14 4.5A2.5 2.5 0 0 0 11.5 7v1h1A2.5 2.5 0 0 0 15 5.5z"/><path d="M16 8h2v6a4 4 0 0 1-4 4h-2"/></svg>',
+  // 文档/格式转换
+  doc_to_markdown: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h4"/><path d="m10 11 2 2-2 2"/></svg>',
+  doc_to_markdown_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13v5l2-2 2 2v-5"/></svg>',
+  md_to_docx: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m8 12 1.4 6 1.8-4 1.8 4 1.4-6"/></svg>',
+  md_to_xlsx: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><rect x="8" y="12" width="8" height="6" rx="1"/><path d="M8 15h8M12 12v6"/></svg>',
+  md_to_pptx: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><rect x="8" y="12" width="8" height="5" rx="1"/><path d="M12 17v2"/></svg>',
+  md_to_pdf: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 18v-6h2a1.5 1.5 0 0 1 0 3H9"/><path d="M14 12v6"/></svg>',
+  download_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
   // 技能
   create_skill: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>',
   // web
@@ -405,6 +477,19 @@ function formatToolName(name: string): string {
     ask_clarifying_question: t('chat.toolAskClarifyingQuestion'),
     delegate_task: t('chat.toolDelegateTask'),
     delegate_tasks: t('chat.toolDelegateTasks'),
+    propose_plan: t('chat.toolProposePlan'),
+    create_schedule_job: t('chat.toolCreateScheduleJob'),
+    list_schedule_jobs: t('chat.toolListScheduleJobs'),
+    cancel_schedule_job: t('chat.toolCancelScheduleJob'),
+    save_memory: t('chat.toolSaveMemory'),
+    search_memories: t('chat.toolSearchMemories'),
+    doc_to_markdown: t('chat.toolDocToMarkdown'),
+    doc_to_markdown_file: t('chat.toolDocToMarkdownFile'),
+    md_to_docx: t('chat.toolMdToDocx'),
+    md_to_xlsx: t('chat.toolMdToXlsx'),
+    md_to_pptx: t('chat.toolMdToPptx'),
+    md_to_pdf: t('chat.toolMdToPdf'),
+    download_file: t('chat.toolDownloadFile'),
   }
   if (map[name]) return map[name]
   if (name.startsWith('skill__')) return `${t('chat.toolSkill')}: ${name.replace(/^skill__/, '')}`
@@ -1113,15 +1198,76 @@ onMounted(() => {
   opacity: 1;
 }
 
-.question-suggestions {
+/* 选项清单(pi 风格):编号 + 标签 + 可选描述,点一下即回答 */
+.question-options {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 10px;
 }
 
-.suggestion-btn {
-  border-radius: 14px;
+.q-option {
+  display: flex;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.q-option:hover {
+  background: rgba(87, 155, 252, 0.12);
+  border-color: rgba(87, 155, 252, 0.35);
+}
+
+.plan-block .q-option:hover {
+  background: rgba(246, 173, 85, 0.14);
+  border-color: rgba(246, 173, 85, 0.4);
+}
+
+.q-option-picked {
+  background: rgba(87, 155, 252, 0.16);
+  border-color: rgba(87, 155, 252, 0.45);
+}
+
+.q-option-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.q-option-idx {
+  font-size: 12px;
+  line-height: 1.5;
+  min-width: 16px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.q-option-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.q-option-label {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.q-option-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  opacity: 0.85;
+  margin-top: 1px;
+}
+
+.question-foot {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.75;
 }
 
 .question-custom {
@@ -1167,6 +1313,32 @@ onMounted(() => {
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.4;
+}
+
+/* 上游中断重试中的行内提示(不抢眼,但能解释「内容怎么突然没了」) */
+.retry-hint {
+  max-width: min(72%, 760px);
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px dashed var(--accent-border);
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.retry-hint-icon {
+  color: var(--accent-500, #EF6B6E);
+  flex-shrink: 0;
+  animation: spin 1.2s linear infinite;
+}
+
+.retry-hint-reason {
+  opacity: 0.7;
+  font-size: 11px;
 }
 
 .approval-hint {

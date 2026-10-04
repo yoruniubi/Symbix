@@ -17,6 +17,7 @@ from .schema import (
     JobHistoryItem,
     validate_trigger,
 )
+from .humanize import describe_trigger, next_run_times, parse_schedule
 from .storage import JobStorage
 from .scheduler import JobScheduler, _set_manager_ref
 from .runner import JobRunner
@@ -180,6 +181,12 @@ class JobManager:
     def _to_out(self, job: dict) -> dict:
         out = dict(job)
         out["next_run_time"] = self.scheduler.get_next_run(job["id"])
+        # 人话频率回显,面板直接显示,不必自己拼 cron
+        try:
+            from .humanize import describe_trigger
+            out["trigger_label"] = describe_trigger(job.get("trigger_type"), job.get("trigger_config") or {})
+        except Exception:
+            out["trigger_label"] = None
         # datetime → iso(str) 便于 JSON 序列化
         for k in ("next_run_time", "last_run_time"):
             v = out.get(k)

@@ -8,6 +8,8 @@ from Symbix_sdk.tools.builtin.terminal_tools import TERMINAL_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.web_tools import  WEB_TOOLS_SCHEMAS 
 from Symbix_sdk.tools.builtin.interaction_tools import INTERACTION_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.agent_tools import AGENT_TOOLS_SCHEMAS
+from Symbix_sdk.tools.builtin.job_tools import JOB_TOOLS_SCHEMAS
+from Symbix_sdk.tools.builtin.memory_tools import MEMORY_TOOLS_SCHEMAS
 ALL_TOOL_SCHEMAS = {}
 ALL_TOOL_SCHEMAS.update(FILE_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(DOC_TOOLS_SCHEMAS)
@@ -17,6 +19,8 @@ ALL_TOOL_SCHEMAS.update(TERMINAL_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(WEB_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(INTERACTION_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(AGENT_TOOLS_SCHEMAS)
+ALL_TOOL_SCHEMAS.update(JOB_TOOLS_SCHEMAS)
+ALL_TOOL_SCHEMAS.update(MEMORY_TOOLS_SCHEMAS)
 
 
 def setup_builtin_tools(toolkit) -> None:

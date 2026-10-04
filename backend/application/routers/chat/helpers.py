@@ -35,6 +35,8 @@ READ_ONLY_PARALLEL_TOOLS = {
     "search_online",
     "fetch_webpage",
     "check_agent_status",
+    "list_schedule_jobs",
+    "search_memories",
 }
 READ_ONLY_PARALLEL_PREFIXES = ("skill__",)
 PARALLEL_TOOL_CONCURRENCY = 6

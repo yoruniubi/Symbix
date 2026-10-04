@@ -16,6 +16,8 @@ from application.state import (
     skill_registry,
     COMPRESS_THRESHOLD,
     RECENT_KEEP,
+    EXTRACT_THRESHOLD,
+    EXTRACT_MIN_NEW,
 )
 
 
@@ -101,17 +103,35 @@ async def maybe_extract_memories(
     api_base: str = "",
     model: str = "",
 ):
-    total = memory.count_messages(session_id)
-    if total < COMPRESS_THRESHOLD:
+    """把会话里值得长期记住的事实提取进 memories 表。
+
+    两个坑点（之前导致「模型说记住了、手账里却什么都没有」）：
+    1. 门槛高 + 无游标：会话消息数不到 16 就永不提取，到了又每轮重复提取最近一段。
+       现在改成 EXTRACT_THRESHOLD(6) 起步 + memory_cursors 增量提取。
+    2. 读历史不在 try 里：库有问题（如索引损坏）时直接抛给 create_task，
+       异常被默默吞掉，外面完全看不出来。现在读/写都包住并打日志。
+    """
+    try:
+        total = memory.count_messages(session_id)
+        if total < EXTRACT_THRESHOLD:
+            return
+        all_msgs = memory.get_history_with_ids(session_id, limit=total)
+    except Exception as e:
+        print(f"[Memory] 读取会话历史失败,跳过记忆提取 (session={session_id[:8]}…): {e}")
         return
 
-    all_msgs = memory.get_history_with_ids(session_id, limit=total)
-    if len(all_msgs) < COMPRESS_THRESHOLD:
+    if not all_msgs:
         return
 
-    recent = all_msgs[-COMPRESS_THRESHOLD:]
+    cursor = memory_store.get_extraction_cursor(session_id)
+    new_msgs = [m for m in all_msgs if m.get("id", 0) > cursor]
+    if len(new_msgs) < EXTRACT_MIN_NEW:
+        return
+
+    # 取最近的一批（新消息 + 少量上下文），避免一次丢太多进去
+    window = new_msgs[-EXTRACT_THRESHOLD:]
     chunk_lines: list[str] = []
-    for m in recent:
+    for m in window:
         role = m.get("role", "user")
         content = (m.get("content") or "")[:500]
         chunk_lines.append(f"{role}: {content}")
@@ -125,12 +145,17 @@ async def maybe_extract_memories(
             override_api_key=api_key or None,
             override_api_base=api_base or None,
         )
-        if applied:
-            print(f"[Memory] Extracted {len(applied)} new/updated facts from session {session_id[:8]}…")
-            for f in applied:
-                print(f"  - [{f.get('action')}] {f.get('content')}")
     except Exception as e:
-        print(f"[Memory] extract_memories failed: {e}")
+        # 不推进游标 —— 下一轮还会再试一次
+        print(f"[Memory] extract_memories failed (session={session_id[:8]}…): {e}")
+        return
+
+    # 提取成功（含「没什么值得记的」）→ 推进游标，不重复处理同一批消息
+    memory_store.set_extraction_cursor(session_id, window[-1]["id"])
+    if applied:
+        print(f"[Memory] Extracted {len(applied)} new/updated facts from session {session_id[:8]}…")
+        for f in applied:
+            print(f"  - [{f.get('action')}] {f.get('content')}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -144,14 +169,22 @@ async def maybe_compress_session(
     model: str = "",
 ):
     """若消息数超过阈值，对旧消息做阶段性摘要并写入 session_summaries"""
-    total = memory.count_messages(session_id)
+    try:
+        total = memory.count_messages(session_id)
+    except Exception as e:
+        print(f"[Memory] 统计消息数失败,跳过压缩 (session={session_id[:8]}…): {e}")
+        return
     if total < COMPRESS_THRESHOLD:
         return
 
     existing = memory.get_summary(session_id)
     covered = existing["covered_until_id"] if existing else 0
 
-    all_msgs = memory.get_history_with_ids(session_id, limit=total)
+    try:
+        all_msgs = memory.get_history_with_ids(session_id, limit=total)
+    except Exception as e:
+        print(f"[Memory] 读取会话历史失败,跳过压缩 (session={session_id[:8]}…): {e}")
+        return
     if len(all_msgs) <= RECENT_KEEP:
         return
 

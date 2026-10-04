@@ -433,6 +433,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             _pending_questions[approval_id] = {
                                 "question": qdata.get("question", ""),
                                 "suggestions": qdata.get("suggestions", []),
+                                # options 带描述/点击行为,前端渲染成选项列表
+                                "options": qdata.get("options", []),
                                 "context": qdata.get("context", ""),
                                 # kind="plan" 时前端渲染成「执行计划确认」卡;
                                 # plan 用于用户确认后把待办清单回注给模型
@@ -449,6 +451,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "input_id": approval_id,
                                 "question": qdata.get("question", ""),
                                 "suggestions": qdata.get("suggestions", []),
+                                "options": qdata.get("options", []),
                                 "context": qdata.get("context", ""),
                                 "kind": qdata.get("kind", ""),
                                 "tool": {"id": tc_id, "name": tc_name},
@@ -663,52 +666,26 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
                 tool_calls_raw = None
                 full_text_round = ""
-                if ptype == "anthropic":
-                    async for e in symbix_client._stream_anthropic(
-                        url, headers, model_name, msgs, mcp_tools
-                    ):
-                        if e["type"] == "stream_reset":
-                            full_text_round = ""
-                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                            continue
-                        yield format_sse(e)
-                        if e["type"] == "delta":
-                            full_text_round += e["content"]
-                        elif e["type"] == "done":
-                            tool_calls_raw = e.get("tool_calls")
-                elif ptype == "gemini":
-                    async for e in symbix_client._stream_gemini(
-                        url, headers, msgs, mcp_tools
-                    ):
-                        if e["type"] == "stream_reset":
-                            full_text_round = ""
-                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                            continue
-                        yield format_sse(e)
-                        if e["type"] == "delta":
-                            full_text_round += e["content"]
-                        elif e["type"] == "done":
-                            tool_calls_raw = e.get("tool_calls")
-                else:
-                    async for e in symbix_client._stream_openai_compat(
-                        url, headers, model_name, msgs, mcp_tools,
-                        caps_model_override=raw_model
-                    ):
-                        if e["type"] == "stream_reset":
-                            full_text_round = ""
-                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                            continue
-                        yield format_sse(e)
-                        if e["type"] == "delta":
-                            full_text_round += e["content"]
-                        elif e["type"] == "reasoning":
-                            last_reasoning = e.get("content")
-                        elif e["type"] == "done":
-                            tool_calls_raw = e.get("tool_calls")
-                            if e.get("reasoning"):
-                                last_reasoning = e.get("reasoning")
-                            if e.get("error"):
-                                print(f"[chat_stream 轮次] 内容不完整: {e['error']}")
+                # 统一走 _open_stream:三条管道都带上「限流/5xx/断线重试」
+                async for e in symbix_client._open_stream(
+                    url, ptype, headers, model_name, msgs, mcp_tools,
+                    caps_model_override=raw_model,
+                ):
+                    if e["type"] == "stream_reset":
+                        full_text_round = ""
+                        yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                        continue
+                    yield format_sse(e)
+                    if e["type"] == "delta":
+                        full_text_round += e["content"]
+                    elif e["type"] == "reasoning":
+                        last_reasoning = e.get("content")
+                    elif e["type"] == "done":
+                        tool_calls_raw = e.get("tool_calls")
+                        if e.get("reasoning"):
+                            last_reasoning = e.get("reasoning")
+                        if e.get("error"):
+                            print(f"[chat_stream 轮次] 内容不完整: {e['error']}")
 
                 if full_text_round:
                     full_text = full_text_round

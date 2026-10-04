@@ -16,6 +16,8 @@ export interface Message {
   reasoning?: string
   steps?: ToolCallStep[]
   approval_id?: string
+  /** 上游中断重试中:非空时前端显示「正在重新生成」提示(内容已清空重来) */
+  retryHint?: string
 }
 
 export interface Session {

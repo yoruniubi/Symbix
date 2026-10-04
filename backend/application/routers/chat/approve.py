@@ -309,57 +309,28 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     raw_model, raw_base, api_key_val
                 )
 
-                # 第一轮流式输出（审批后继续生成）
-                if ptype == "anthropic":
-                    async for e in symbix_client._stream_anthropic(url, headers, model_name, msgs, mcp_tools):
-                        if e["type"] == "stream_reset":
-                            full_text = ""
-                            _batcher = _DeltaBatcher()
-                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                            continue
-                        for _sse in _batch_yield(e, _batcher):
-                            yield _sse
-                        if e["type"] == "delta":
-                            full_text += e["content"]
-                        elif e["type"] == "done":
-                            tool_calls_raw = e.get("tool_calls")
-                            if e.get("error"):
-                                print(f"[_stream_approve] 内容不完整: {e['error']}")
-                elif ptype == "gemini":
-                    async for e in symbix_client._stream_gemini(url, headers, msgs, mcp_tools):
-                        if e["type"] == "stream_reset":
-                            full_text = ""
-                            _batcher = _DeltaBatcher()
-                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                            continue
-                        for _sse in _batch_yield(e, _batcher):
-                            yield _sse
-                        if e["type"] == "delta":
-                            full_text += e["content"]
-                        elif e["type"] == "done":
-                            tool_calls_raw = e.get("tool_calls")
-                            if e.get("error"):
-                                print(f"[_stream_approve] 内容不完整: {e['error']}")
-                else:
-                    async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools,
-                        caps_model_override=raw_model):
-                        if e["type"] == "stream_reset":
-                            full_text = ""
-                            _batcher = _DeltaBatcher()
-                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                            continue
-                        for _sse in _batch_yield(e, _batcher):
-                            yield _sse
-                        if e["type"] == "delta":
-                            full_text += e["content"]
-                        elif e["type"] == "reasoning":
-                            last_reasoning = e.get("content")
-                        elif e["type"] == "done":
-                            tool_calls_raw = e.get("tool_calls")
-                            if e.get("reasoning"):
-                                last_reasoning = e.get("reasoning")
-                            if e.get("error"):
-                                print(f"[_stream_approve] 内容不完整: {e['error']}")
+                # 第一轮流式输出（审批后继续生成）;统一走 _open_stream 以享用重试外壳
+                async for e in symbix_client._open_stream(
+                    url, ptype, headers, model_name, msgs, mcp_tools,
+                    caps_model_override=raw_model,
+                ):
+                    if e["type"] == "stream_reset":
+                        full_text = ""
+                        _batcher = _DeltaBatcher()
+                        yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                        continue
+                    for _sse in _batch_yield(e, _batcher):
+                        yield _sse
+                    if e["type"] == "delta":
+                        full_text += e["content"]
+                    elif e["type"] == "reasoning":
+                        last_reasoning = e.get("content")
+                    elif e["type"] == "done":
+                        tool_calls_raw = e.get("tool_calls")
+                        if e.get("reasoning"):
+                            last_reasoning = e.get("reasoning")
+                        if e.get("error"):
+                            print(f"[_stream_approve] 内容不完整: {e['error']}")
 
                 flushed = _batcher.flush()
                 if flushed is not None:
@@ -489,6 +460,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 _pending_questions[approval_id] = {
                                     "question": qdata.get("question", ""),
                                     "suggestions": qdata.get("suggestions", []),
+                                    "options": qdata.get("options", []),
                                     "context": qdata.get("context", ""),
                                     "kind": qdata.get("kind", ""),
                                     "plan": qdata.get("plan", []),
@@ -502,6 +474,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     "input_id": approval_id,
                                     "question": qdata.get("question", ""),
                                     "suggestions": qdata.get("suggestions", []),
+                                    "options": qdata.get("options", []),
                                     "context": qdata.get("context", ""),
                                     "kind": qdata.get("kind", ""),
                                     "tool": {"id": tc_id, "name": tc_name},
@@ -606,56 +579,28 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     tool_calls_raw = None
                     full_text_round = ""
                     _batcher2 = _DeltaBatcher()
-                    if ptype == "anthropic":
-                        async for e in symbix_client._stream_anthropic(url, headers, model_name, msgs, mcp_tools):
-                            if e["type"] == "stream_reset":
-                                full_text_round = ""
-                                _batcher2 = _DeltaBatcher()
-                                yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                                continue
-                            for _sse in _batch_yield(e, _batcher2):
-                                yield _sse
-                            if e["type"] == "delta":
-                                full_text_round += e["content"]
-                            elif e["type"] == "done":
-                                tool_calls_raw = e.get("tool_calls")
-                                if e.get("error"):
-                                    print(f"[_stream_approve] 内容不完整: {e['error']}")
-                    elif ptype == "gemini":
-                        async for e in symbix_client._stream_gemini(url, headers, msgs, mcp_tools):
-                            if e["type"] == "stream_reset":
-                                full_text_round = ""
-                                _batcher2 = _DeltaBatcher()
-                                yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                                continue
-                            for _sse in _batch_yield(e, _batcher2):
-                                yield _sse
-                            if e["type"] == "delta":
-                                full_text_round += e["content"]
-                            elif e["type"] == "done":
-                                tool_calls_raw = e.get("tool_calls")
-                                if e.get("error"):
-                                    print(f"[_stream_approve] 内容不完整: {e['error']}")
-                    else:
-                        async for e in symbix_client._stream_openai_compat(url, headers, model_name, msgs, mcp_tools,
-                            caps_model_override=raw_model):
-                            if e["type"] == "stream_reset":
-                                full_text_round = ""
-                                _batcher2 = _DeltaBatcher()
-                                yield format_sse({"type": "content_reset", "reason": e.get("reason")})
-                                continue
-                            for _sse in _batch_yield(e, _batcher2):
-                                yield _sse
-                            if e["type"] == "delta":
-                                full_text_round += e["content"]
-                            elif e["type"] == "reasoning":
-                                last_reasoning = e.get("content")
-                            elif e["type"] == "done":
-                                tool_calls_raw = e.get("tool_calls")
-                                if e.get("reasoning"):
-                                    last_reasoning = e.get("reasoning")
-                                if e.get("error"):
-                                    print(f"[_stream_approve] 内容不完整: {e['error']}")
+                    # 后续轮同样走 _open_stream(重试外壳)
+                    async for e in symbix_client._open_stream(
+                        url, ptype, headers, model_name, msgs, mcp_tools,
+                        caps_model_override=raw_model,
+                    ):
+                        if e["type"] == "stream_reset":
+                            full_text_round = ""
+                            _batcher2 = _DeltaBatcher()
+                            yield format_sse({"type": "content_reset", "reason": e.get("reason")})
+                            continue
+                        for _sse in _batch_yield(e, _batcher2):
+                            yield _sse
+                        if e["type"] == "delta":
+                            full_text_round += e["content"]
+                        elif e["type"] == "reasoning":
+                            last_reasoning = e.get("content")
+                        elif e["type"] == "done":
+                            tool_calls_raw = e.get("tool_calls")
+                            if e.get("reasoning"):
+                                last_reasoning = e.get("reasoning")
+                            if e.get("error"):
+                                print(f"[_stream_approve] 内容不完整: {e['error']}")
                     flushed2 = _batcher2.flush()
                     if flushed2 is not None:
                         yield flushed2

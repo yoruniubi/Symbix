@@ -2,16 +2,30 @@ from __future__ import annotations
 import os.path as osp
 import random
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from application.state import memory_store
 
-# 消息/记忆同库(均为本地时间)
+# 消息：本地时间（memory.py 用 datetime.now().isoformat()）
+# 记忆：UTC 时间（memory_store.py 用 datetime.now(timezone.utc).isoformat()）
+# 两者口径不同，查 memories 时必须把「本地日期」换算成 UTC 区间，
+# 否则凌晨 0-8 点写入的记忆会被算到前一天（LIKE 前缀匹配）。
 _DB_PATH = osp.join(
     osp.dirname(osp.abspath(__file__)),
     "..", "..", "Symbix_sdk", "memory", "memory.db",
 )
 
 router = APIRouter(tags=["journal"])
+
+
+def _utc_range_for_local_date(date_str: str) -> tuple[str, str]:
+    """本地日期 → UTC 时间区间（左闭右开），用于查 memories.created_at。"""
+    local_start = datetime.strptime(date_str, "%Y-%m-%d")
+    local_end = local_start + timedelta(days=1)
+    return (
+        local_start.astimezone(timezone.utc).isoformat(),
+        local_end.astimezone(timezone.utc).isoformat(),
+    )
 
 # AI 小巧思:针对每条记忆配一句俏皮感想
 _THOUGHTS = [
@@ -60,14 +74,15 @@ async def journal_daily(
     # ── 当天新增记忆(memories 表)──────────────────────────
     mem_rows = []
     try:
+        start_utc, end_utc = _utc_range_for_local_date(date)
         conn = memory_store._ensure_conn()
         rows = conn.execute(
             """SELECT id, content, category, status, created_at
                FROM memories
-               WHERE created_at LIKE ? AND status='active'
+               WHERE created_at >= ? AND created_at < ? AND status='active'
                ORDER BY created_at DESC
                LIMIT 30""",
-            (date + "%",),
+            (start_utc, end_utc),
         ).fetchall()
         for r in rows:
             mem_rows.append({

@@ -14,6 +14,7 @@ from application.state import (
     symbix_client,
     provider_registry,
     checkpoint_recorder,
+    memory_store,
 )
 import sys
 import os
@@ -115,6 +116,18 @@ async def lifespan(_app: FastAPI):
         )
         job_manager.start()
         jobs._set_manager(job_manager)
+        # 让 Agent 的定时任务工具也用同一个 manager(create/list/cancel_schedule_job)
+        try:
+            from Symbix_sdk.tools.builtin import job_tools
+            job_tools.set_job_manager(job_manager)
+        except Exception as _e:
+            print(f"[job] 定时任务工具未能绑定 manager: {_e}")
+        # 长期记忆工具(save_memory / search_memories)绑定同一个 MemoryStore
+        try:
+            from Symbix_sdk.tools.builtin import memory_tools
+            memory_tools.set_memory_store(memory_store)
+        except Exception as _e:
+            print(f"[memory] 记忆工具未能绑定 store: {_e}")
         print("[job] JobScheduler started")
     except Exception as e:
         import traceback
