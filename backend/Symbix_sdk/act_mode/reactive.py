@@ -1,8 +1,4 @@
 class ReactiveAgent:
-    """Reactive 路径下生成第一笔简短响应。
-
-    直接复用 llm_client.chat(...)（已经是异步实现），避免调一个并不存在的独立 generate() 接口。
-    """
 
     def __init__(self, llm_client):
         self.llm = llm_client

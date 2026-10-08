@@ -1,14 +1,8 @@
-"""定时任务 Job Schedule 包。
-
-导出 JobScheduler / JobStorage / JobRunner 及 schema，并提供一个 JobManager 把三者串起来，
-供 FastAPI 路由与 lifespan 使用。
-"""
 from __future__ import annotations
 import os
 import uuid
 from datetime import datetime
 from typing import Optional
-
 from .schema import (
     JobBase,
     JobCreate,
@@ -54,7 +48,8 @@ class JobManager:
         # 以 job_meta 为准:清掉 apscheduler 残留 job,再重新装载启用项
         self.scheduler.purge()
         for job in jobs:
-            if job.get("enabled", True):
+            # 已跑过的一次性任务不重建(run_date 已过去,重建只会打一条 missed 日志)
+            if job.get("enabled", True) and not job.get("completed"):
                 try:
                     self.scheduler.add_job(job)
                 except Exception as e:
@@ -87,6 +82,8 @@ class JobManager:
             raise KeyError(job_id)
         patch = data.model_dump(exclude_unset=True)
         existing.update(patch)
+        # 用户改过 = 重新武装,否则改完时间也不会重新排期
+        existing["completed"] = False
         if "trigger_type" in patch or "trigger_config" in patch:
             validate_trigger(existing["trigger_type"], existing["trigger_config"])
         self.storage.upsert_meta(existing)
@@ -137,6 +134,7 @@ class JobManager:
         if not existing:
             raise KeyError(job_id)
         existing["enabled"] = True
+        existing["completed"] = False
         self.storage.upsert_meta(existing)
         if self.scheduler.running:
             try:
@@ -181,6 +179,7 @@ class JobManager:
     def _to_out(self, job: dict) -> dict:
         out = dict(job)
         out["next_run_time"] = self.scheduler.get_next_run(job["id"])
+        out.setdefault("completed", False)
         # 人话频率回显,面板直接显示,不必自己拼 cron
         try:
             from .humanize import describe_trigger

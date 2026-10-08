@@ -1,9 +1,3 @@
-"""弹幕文案服务。
-
-桌宠陪伴感增强:在「任务完成 / 出错 / 空闲 / 时段问候」等时刻,
-从本地模板库随机挑选一句俏皮话,通过 PetEventBus.publish 推送
-给全屏弹幕窗口(与桌宠动作同一条 SSE 总线)。
-"""
 from __future__ import annotations
 import os.path as osp
 import random

@@ -1,6 +1,4 @@
-"""Provider (AI 提供商) 管理路由。"""
 from fastapi import APIRouter, HTTPException
-
 from application.schemas import ProviderAddRequest
 from application.state import provider_registry
 from Symbix_sdk.model_capabilities import get_model_capabilities, check_vision, clear_vision_cache

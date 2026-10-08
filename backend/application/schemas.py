@@ -1,7 +1,5 @@
-"""所有 API 请求 / 响应 Pydantic 模型。"""
 from typing import List
 from pydantic import BaseModel
-
 
 class AttachmentMeta(BaseModel):
     """上传接口返回的附件元数据，发送聊天时回传 path。"""

@@ -1,15 +1,4 @@
-"""skill 目录访问辅助:文件清单 / 批量读取 / 路径安全。
-
-`skill__<name>` 工具用这些函数,让模型一次拿到「技能里有什么」并按需批量读取,
-不必靠猜路径逐个 read_file(猜错还会白烧一轮往返)。
-
-设计要点:
-- 路径安全:realpath 解析后必须仍在 skill 根目录内(挡 `..`、绝对路径、符号链接逃逸)
-- 截断按行做,绝不切碎 UTF-8 多字节字符;截断处给出 `offset` 续读提示
-- 找不到路径时给最相近的候选,让模型一次改对,而不是继续猜
-"""
 from __future__ import annotations
-
 import difflib
 import json
 import os

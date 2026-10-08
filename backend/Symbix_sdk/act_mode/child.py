@@ -1,6 +1,3 @@
-"""
-子 Agent(Sub-Agent)执行器:主 Agent 通过 `delegate_task` 工具委派子任务。
-"""
 from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, Optional

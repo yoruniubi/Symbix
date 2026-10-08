@@ -1,4 +1,3 @@
-# Symbix_sdk/mcp/installer.py
 import subprocess
 import shutil
 import json

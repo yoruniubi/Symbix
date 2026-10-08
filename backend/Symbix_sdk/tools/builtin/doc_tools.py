@@ -1,20 +1,4 @@
-"""办公文档读写工具(docx/xlsx/pptx/pdf):以 Markdown 为读写媒介。
-
-职责边界(与 file_tools 的 read_file/edit_file 区分):
-  - read_file / edit_file   : 只处理纯文本(md/txt/代码/配置)
-  - parse_file              : 各种格式 -> 文本给模型(内部已接 markitdown)
-  - 本模块(doc_tools)       : 二进制办公文档的“读成 Markdown / 由 Markdown 写成”
-
-写入策略(样式让位、内容优先):
-  - md -> docx : markdown-it-py 解析 + python-docx 构建(不依赖 pandoc)
-  - md -> xlsx : 解析 md 表格,openpyxl 写入
-  - md -> pptx : markdown-it-py 解析 + python-pptx 构建
-  - md -> pdf  : fpdf2 纯文本排版(标题放大/段落/代码块),不依赖 LaTeX
-
-依赖缺失时返回明确安装提示,不抛异常。
-"""
 from __future__ import annotations
-
 import os
 import re
 from typing import Any, Optional

@@ -1,4 +1,3 @@
-"""会话 Markdown 导出 / 重命名 / 标题生成 / 用户画像。"""
 import os
 import json as _json
 import shutil

@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from Symbix_sdk.tools.builtin.file_tools import FILE_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.doc_tools import DOC_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.pet_tools import PET_TOOLS_SCHEMAS
@@ -21,7 +20,6 @@ ALL_TOOL_SCHEMAS.update(INTERACTION_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(AGENT_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(JOB_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(MEMORY_TOOLS_SCHEMAS)
-
 
 def setup_builtin_tools(toolkit) -> None:
     """将定义在所有子模块中的工具注册到给定的 NativeToolkit 实例。

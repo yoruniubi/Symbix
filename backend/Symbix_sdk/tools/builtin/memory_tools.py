@@ -1,17 +1,5 @@
-"""长期记忆工具 —— 让 Agent 真能「写入 / 检索」长期记忆库(memories 表)。
-
-背景:之前系统里没有任何记忆工具,模型说「我记住了」其实只存在于本次会话上下文,
-memory.db 里一行都没有;用户在手账界面自然什么也看不到。这两个工具让「记住」可兑现:
-
-- save_memory     : 真落库(走 MemoryStore.remember → 去重/更新语义)
-- search_memories : 真查库(BM25 + 字符 n-gram;query 留空则返回最近的记忆)
-
-MemoryStore 由 main.py 启动时注入(SDK 不反向依赖 application 层),未注入时给可读错误。
-"""
 from __future__ import annotations
-
 import json
-
 from Symbix_sdk.checkpoint import get_current
 
 # main.py lifespan 里注入(application.state.memory_store)

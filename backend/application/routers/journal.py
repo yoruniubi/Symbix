@@ -6,10 +6,6 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from application.state import memory_store
 
-# 消息：本地时间（memory.py 用 datetime.now().isoformat()）
-# 记忆：UTC 时间（memory_store.py 用 datetime.now(timezone.utc).isoformat()）
-# 两者口径不同，查 memories 时必须把「本地日期」换算成 UTC 区间，
-# 否则凌晨 0-8 点写入的记忆会被算到前一天（LIKE 前缀匹配）。
 _DB_PATH = osp.join(
     osp.dirname(osp.abspath(__file__)),
     "..", "..", "Symbix_sdk", "memory", "memory.db",

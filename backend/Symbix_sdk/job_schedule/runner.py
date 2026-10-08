@@ -1,8 +1,3 @@
-"""Job runner：到点触发后，以非流式方式运行一轮 agent 对话。
-
-复用 chat 主循环的组件（memory / tool_registry / symbix_client / checkpoint / pet_action），
-但不落地 SSE，也不走前端审批——auto_safe=True 时只执行 SAFE 工具，MEDIUM/HIGH 跳过并记「需手动重跑」。
-"""
 from __future__ import annotations
 import asyncio
 import json as _json
@@ -13,6 +8,10 @@ from datetime import datetime
 # 比对话链路更宽松:无人值守时宁可多等 45s,也别把提醒弄丢。
 JOB_MODEL_ATTEMPTS = 3
 JOB_RETRY_BASE_DELAY = 15.0
+
+# 一次性任务失败后的整轮补偿重试:提醒晚到 1 分钟好过丢掉
+JOB_ONE_SHOT_RUN_ATTEMPTS = 2
+JOB_COMPENSATE_DELAY = 60.0
 
 
 def _raise_if_upstream_failed(response: dict) -> None:
@@ -45,8 +44,28 @@ class JobRunner:
     def get_meta(self, job_id: str):
         return self.storage.get_meta(job_id)
 
-    async def execute(self, job: dict) -> None:
-        """执行一次 job（由 scheduler._dispatch 调用）。"""
+    async def execute(self, job: dict) -> str:
+        """执行一次 job,返回 "ok" / "error"。一次性任务失败补偿一次,跑完标记 completed。"""
+        one_shot = job.get("trigger_type") == "date"
+        attempts = JOB_ONE_SHOT_RUN_ATTEMPTS if one_shot else 1
+        status = "error"
+        for i in range(1, attempts + 1):
+            last = i == attempts
+            # 首跑失败先不通知:补偿成功就不该给用户发失败提示
+            status = await self._execute_once(job, report=last)
+            if status == "ok" or last:
+                break
+            print(f"[job] 「{job.get('name', '')}」首跑失败,{JOB_COMPENSATE_DELAY:.0f}s 后补偿重试一次")
+            await asyncio.sleep(JOB_COMPENSATE_DELAY)
+        if one_shot:
+            try:
+                self.storage.set_completed(job["id"], True)
+            except Exception as e:
+                print(f"[job] 标记 completed 失败: {e}")
+        return status
+
+    async def _execute_once(self, job: dict, report: bool = True) -> str:
+        """真正跑一轮 job。report=False 表示后面还会补偿重试,先不发失败通知。"""
         from Symbix_sdk.checkpoint import set_current as _ctx_set_current
         from Symbix_sdk.checkpoint import get_recorder
         from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
@@ -210,6 +229,7 @@ class JobRunner:
             self.storage.update_status(job_id, "ok", None, run_time)
             self.storage.add_history(job_id, run_time, "ok", output_full or "")
             self._notify(job, final_text or "", "ok")
+            return "ok"
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -221,7 +241,9 @@ class JobRunner:
                                          output_full or output_snippet or "", str(e) or "")
             except Exception:
                 traceback.print_exc()
-            self._notify(job, str(e), "error")
+            if report:
+                self._notify(job, str(e), "error")
+            return "error"
 
     async def _call_model(self, factory, attempts: int = JOB_MODEL_ATTEMPTS) -> dict:
         """调模型并在上游抖动时重试**整次调用**。

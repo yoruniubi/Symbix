@@ -4,7 +4,6 @@ import json
 from datetime import datetime
 from threading import Lock
 
-
 class ConversationMemory:
     """基于 SQLite 的对话历史存储（线程安全）
 

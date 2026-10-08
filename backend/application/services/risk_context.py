@@ -1,26 +1,12 @@
-"""会话级风险上下文(工具风险分级 V2)。
-
-集中以下能力,让 chat.py / runner.py 的调用点保持简单:
-  1. classify_for_chat():统一分类入口 —— 查工具元数据(server_id/annotations/trust)
-     → risk_classifier.classify_tool_risk → 会话级 grants/auto-pilot 决策 → 返回。
-  2. MCP server 信任:持久化在 mcp_config 的 server 条目 `trusted` 字段。
-  3. 会话信任状态(SessionTrust):per-session auto-pilot 开关 + 通道级 grants,
-     持久化在 config/risk_trust.json —— 批准后永久记住(直到面板手动清除),
-     重启进程不丢失,无需每次重新授权。
-"""
 from __future__ import annotations
-
 import json
 import os
 import time
 import threading
 from typing import Optional, TYPE_CHECKING
-
 from Symbix_sdk.tools.risk_classifier import (
     classify_tool_risk,
-    ToolRiskLevel,
-    ClassifyResult,
-    CHANNEL_LEVEL,
+    ToolRiskLevel
 )
 
 # 仅用于类型注解/IDE 静态分析,避免循环 import

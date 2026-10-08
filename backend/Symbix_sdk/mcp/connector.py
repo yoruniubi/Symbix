@@ -9,13 +9,6 @@ from typing import Optional, Dict, List, Any
 
 import httpx
 
-
-# 可降级为 SDK 内置二进制的运行时分派表:
-#   names  : 配置里出现的命令名(含常见 Windows 变体)
-#   bin    : SDK 捆绑的可执行文件(Symbix_sdk 下相对路径)
-#   prefix : 降级后前置子命令(模拟原 CLI 的语义)
-#   strip  : 原 CLI 专属、降级模式不需要的标志
-#   check  : 系统已安装该 CLI 时不降级
 _RUNNER_FALLBACKS = [
     {
         "names": ("npx", "npx.cmd", "npx.exe"),

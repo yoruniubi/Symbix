@@ -1,4 +1,3 @@
-"""Job schedule 数据模型。"""
 from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
@@ -41,6 +40,8 @@ class JobOut(JobBase):
     last_run_time: Optional[datetime] = None
     last_status: Optional[Literal["ok", "error", "skipped"]] = None
     last_error: Optional[str] = None
+    # 一次性任务「已跑过」:不再重排
+    completed: bool = False
     # 人话频率回显（「每天 09:00」），由 humanize.describe_trigger 生成
     trigger_label: Optional[str] = None
 

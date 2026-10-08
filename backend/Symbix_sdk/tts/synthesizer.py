@@ -1,10 +1,7 @@
 from __future__ import annotations
-
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 # 朗读前需要剔除的 emoji/装饰符号区间(保留普通文本与 CJK 标点)。
 # 覆盖:emoji 主体、杂项符号、交通/几何/箭头扩展、旗标、变体选择符 VS16、

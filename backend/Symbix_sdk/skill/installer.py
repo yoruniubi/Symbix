@@ -1,6 +1,4 @@
-"""从仓库/包名安装 Skill(对标 Claude Code: npx skills add <repo> --skill <name>)"""
 from __future__ import annotations
-
 import json
 import os
 import re

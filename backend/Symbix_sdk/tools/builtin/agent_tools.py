@@ -1,18 +1,6 @@
-"""子 Agent 委派工具(A2A-lite):主 Agent 通过 delegate_task 把子任务下发给只读子 Agent。
-
-设计:
-  - 主 Agent(Coordinator)在工具循环里调用本工具,把一个可独立完成的子任务
-    (定位代码 / 分析问题 / 设计方案 / 设计测试 / 代码审查)交给子 Agent。
-  - 子 Agent 只读(读文件/搜代码/联网查),没有写权限 → 风险通道为 read(SAFE 自动放行)。
-  - 需要落盘的改动仍由主 Agent 在主链路执行(走审批),子 Agent 的产出是「分析/草案」。
-  - 子 Agent 的工具集排除 delegate_task,杜绝递归套娃。
-"""
 from __future__ import annotations
-
 import json
-
 from Symbix_sdk.act_mode.child import CHILD_ROLES, run_child_agent, run_child_agents
-
 
 async def delegate_task(
     task: str = "",

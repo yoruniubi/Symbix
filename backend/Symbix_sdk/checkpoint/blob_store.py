@@ -1,20 +1,10 @@
-"""BlobStore — 文件内容快照存储（Checkpoint 可回退的基础）。
-
-- 存内容不可变的文件快照，用 sha256 前 12 位作文件名做内容寻址去重。
-- 目录：与 memory.db 同级的 `checkpoint_blobs/`。
-- 只存文本内容（调用方负责判断是否为文本文件）；单文件上限 5MB，超限不存只记 hash。
-- 线程安全：目录操作 + 单文件写，靠内容寻址天然幂等（同内容同 hash，写多少次都一份）。
-"""
 from __future__ import annotations
-
 import hashlib
 import os
 from typing import Optional
 
-
 # 单文件内容上限：超过则不落盘 blob，只让上层记 hash（emit 时 blob_stored=False）。
 MAX_BLOB_BYTES = 5 * 1024 * 1024
-
 
 class BlobStore:
     def __init__(self, blob_dir: str):

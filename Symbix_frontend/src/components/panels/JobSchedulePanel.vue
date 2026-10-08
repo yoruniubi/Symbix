@@ -141,8 +141,12 @@
             <div class="job-item-head">
               <span class="job-name" :title="job.name">{{ job.name }}</span>
               <div class="job-badges">
-                <!-- 运行状态徽章(enabled/paused) -->
-                <span class="job-state" :class="job.enabled ? 'enabled' : 'paused'">
+                <!-- 运行状态徽章 -->
+                <span v-if="job.completed" class="job-state completed">
+                  <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
+                  {{ $t('jobPanel.completed') }}
+                </span>
+                <span v-else class="job-state" :class="job.enabled ? 'enabled' : 'paused'">
                   <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
                   {{ job.enabled ? $t('jobPanel.active') : $t('jobPanel.paused') }}
                 </span>
@@ -221,7 +225,7 @@ type TriggerType = 'cron' | 'interval' | 'date'
 /** 表单里的「重复方式」:比 raw trigger_type 更贴近日常说法 */
 type Mode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once' | 'cron'
 type IntervalUnit = 'minutes' | 'hours' | 'days' | 'weeks'
-type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string; trigger_label?: string }
+type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string; trigger_label?: string; completed?: boolean }
 type History = { job_id: string; run_time: string; status: 'ok' | 'error' | 'skipped'; output_snippet: string; error: string }
 
 const props = defineProps<{ activePanel: Panel | null }>()
@@ -853,6 +857,10 @@ defineExpose({ refresh: loadJobs })
 .paused {
   color:var(--text-muted);
   background:var(--surface-raised);
+}
+.completed {
+  color:var(--accent,#60a5fa);
+  background:color-mix(in srgb,var(--accent,#60a5fa) 14%,transparent);
 }
 .status-skipped {
   color:var(--warn,#facc15);

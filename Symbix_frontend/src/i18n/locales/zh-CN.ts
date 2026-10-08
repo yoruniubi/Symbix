@@ -336,6 +336,7 @@ export default {
     historyFail: '加载历史失败: {msg}',
     active: '运行中',
     paused: '已暂停',
+    completed: '已完成',
   },
 
   // ===== Checkpoint Panel =====

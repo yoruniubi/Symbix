@@ -1,12 +1,9 @@
-"""定时任务 Job Schedule 路由：CRUD / pause / resume / run / history / preview。"""
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-
 from Symbix_sdk.job_schedule.schema import JobCreate, JobUpdate, validate_trigger
 from Symbix_sdk.job_schedule.humanize import describe_trigger, next_run_times, parse_schedule
 router = APIRouter(prefix="/jobs", tags=["jobs"])
-
 
 class SchedulePreviewRequest(BaseModel):
     """预览请求:二选一——自然语言 schedule,或已规范化的 trigger_type + trigger_config。"""

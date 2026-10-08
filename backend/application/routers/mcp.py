@@ -1,6 +1,4 @@
-"""MCP 管理路由。"""
 from fastapi import APIRouter, HTTPException
-
 from application.schemas import InstallNpmRequest, AddMcpServerRequest, AddMcpServersRawRequest
 from application.state import (
     mcp_config,

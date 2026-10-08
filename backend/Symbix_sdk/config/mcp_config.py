@@ -1,7 +1,6 @@
 import json
 import os
 
-
 class McpConfig:
     def __init__(self, path: str = "mcp_config.json"):
         self.path = os.path.abspath(path)

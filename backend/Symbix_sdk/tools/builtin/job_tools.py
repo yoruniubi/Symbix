@@ -1,17 +1,5 @@
-"""定时任务工具 —— 让 Agent 直接用「人话时间」给用户建/查/删定时任务。
-
-设计:
-- 时间解析交给 `job_schedule.humanize.parse_schedule`,模型只要抄用户原话
-  (「每天 9 点」「每 2 小时」「每周一三五 8:30」),不必拼 cron。
-- 新建的任务自动绑定当前会话(session_id 由 checkpoint ContextVar 透传),
-  这样到点执行时的上下文与用户当时聊的是同一个会话。
-- 任务一律 auto_safe=True:无人值守只跑只读/无副作用工具,写入类操作会跳过并提示人工处理。
-- JobManager 由 main.py 启动时注入(SDK 不反向依赖 application 层),未注入时给可读错误。
-"""
 from __future__ import annotations
-
 import json
-
 from Symbix_sdk.checkpoint import get_current
 from Symbix_sdk.job_schedule.humanize import describe_trigger, next_run_times, parse_schedule
 

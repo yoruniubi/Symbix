@@ -3,7 +3,6 @@ import json
 import os
 import threading
 
-
 class DanmakuConfig:
     """弹幕功能配置(默认值)。"""
 

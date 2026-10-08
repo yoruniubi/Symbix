@@ -1,11 +1,3 @@
-"""Checkpoint 数据类 — 5 种事件类型。
-
-设计要点：
-- 所有 record 共享 5 个公共字段（id / ts / session_id / round_id / seq）方便 SQL 跨类查询。
-- 每种 record 额外携带该事件独有的字段（区分用 kind）。
-- 所有 JSON 兼容字段（dict / str 都 json.dumps 到 TEXT，pydantic model_dump(mode="json") 安全）。
-- before_hash / after_hash 用 sha256 前 12 位（够区分 + 不占空间）。
-"""
 from __future__ import annotations
 
 import enum

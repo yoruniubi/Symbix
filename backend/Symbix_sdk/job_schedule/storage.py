@@ -1,9 +1,3 @@
-"""Job 元数据 + 执行历史持久化（sqlite）。
-
-与 memory.db 同目录但独立文件 jobs.db，避免与 checkpoint/memory 表混用。
-APScheduler 自身的 jobstore 也用这个库的 jobs 表（SQLAlchemyJobStore），
-本模块管理的是「业务元数据」表 job_meta + 历史 job_history。
-"""
 from __future__ import annotations
 import os
 import sqlite3
@@ -24,7 +18,8 @@ CREATE TABLE IF NOT EXISTS job_meta (
     auto_safe INTEGER NOT NULL DEFAULT 1,
     last_run_time TEXT,
     last_status TEXT,
-    last_error TEXT
+    last_error TEXT,
+    completed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS job_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,25 +47,32 @@ class JobStorage:
     def _init_schema(self) -> None:
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            # 老库补列(建表语句对已存在的表不生效)
+            try:
+                c.execute("ALTER TABLE job_meta ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass      # 列已存在
 
     # ---- job_meta CRUD ----
     def upsert_meta(self, job: dict) -> None:
         with self._conn() as c:
             c.execute(
-                """INSERT INTO job_meta(id,name,trigger_type,trigger_config,prompt,session_id,enabled,auto_safe,last_run_time,last_status,last_error)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """INSERT INTO job_meta(id,name,trigger_type,trigger_config,prompt,session_id,enabled,auto_safe,last_run_time,last_status,last_error,completed)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      name=excluded.name, trigger_type=excluded.trigger_type,
                      trigger_config=excluded.trigger_config, prompt=excluded.prompt,
                      session_id=excluded.session_id, enabled=excluded.enabled,
                      auto_safe=excluded.auto_safe, last_run_time=excluded.last_run_time,
-                     last_status=excluded.last_status, last_error=excluded.last_error""",
+                     last_status=excluded.last_status, last_error=excluded.last_error,
+                     completed=excluded.completed""",
                 (
                     job["id"], job["name"], job["trigger_type"],
                     json.dumps(job["trigger_config"], ensure_ascii=False),
                     job["prompt"], job.get("session_id"),
                     int(job.get("enabled", True)), int(job.get("auto_safe", True)),
                     job.get("last_run_time"), job.get("last_status"), job.get("last_error"),
+                    int(job.get("completed", False)),
                 ),
             )
 
@@ -104,11 +106,21 @@ class JobStorage:
                 (run_time.isoformat(), status, error, job_id),
             )
 
+    def set_completed(self, job_id: str, completed: bool = True, disable: bool = True) -> None:
+        """标记一次性任务「已跑过」,同时置 enabled=0(已触发过就不必重排)。"""
+        with self._conn() as c:
+            if disable:
+                c.execute("UPDATE job_meta SET completed=?, enabled=0 WHERE id=?",
+                          (int(completed), job_id))
+            else:
+                c.execute("UPDATE job_meta SET completed=? WHERE id=?", (int(completed), job_id))
+
     def _row_to_meta(self, row: sqlite3.Row) -> dict:
         d = dict(row)
         d["trigger_config"] = json.loads(d["trigger_config"]) if d["trigger_config"] else {}
         d["enabled"] = bool(d["enabled"])
         d["auto_safe"] = bool(d["auto_safe"])
+        d["completed"] = bool(d.get("completed") or 0)
         return d
 
     # ---- history ----

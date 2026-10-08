@@ -1,14 +1,6 @@
-"""上下文压缩 & 记忆提取相关后台任务。
-
-记忆提取走新管线 (MemoryStore)：BM25 + LLM 提取/决策，原子事实落地 memories 表。
-画像规则匹配 (extract_profile_by_rules) 保留为兜底，但 build_system_prompt 已改走 RAG 检索。
-上下文压缩仍可选地调用模型做摘要。
-"""
 from __future__ import annotations
-
 import json as _json
 from typing import Optional
-
 from application.state import (
     memory,
     memory_store,
@@ -19,11 +11,6 @@ from application.state import (
     EXTRACT_THRESHOLD,
     EXTRACT_MIN_NEW,
 )
-
-
-# ═══════════════════════════════════════════════════════════════════
-# build_system_prompt  —— 注入 RAG 检索结果（新）
-# ═══════════════════════════════════════════════════════════════════
 
 # 桌宠动作引导：鼓励模型在合适时机调用 emit_pet_action
 PET_ACTION_HINT = (

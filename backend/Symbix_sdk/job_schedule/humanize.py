@@ -1,18 +1,4 @@
-"""定时任务的「人话」时间解析与回显。
-
-目标:让用户(和模型)用自然说法描述时间,不必手写 cron:
-    每天 9:00 / 每周一三五 8:30 / 每月 1 号 9 点 / 每 2 小时 / 30 分钟后 / 工作日 9:00
-
-对外三个函数:
-    parse_schedule(text)      → {"trigger_type", "trigger_config"}  (失败抛 ValueError,带可读提示)
-    describe_trigger(tt,cfg)  → "每天 09:00" 这样的中文回显(面板/工具返回值共用)
-    next_run_times(tt,cfg,n)  → 接下来 n 次触发时间(ISO 串),给面板做「下次运行」预览
-
-注意 weekday 编号:APScheduler 的 cron 里 0=周一 … 6=周日(与系统 crontab 的 0=周日不同),
-本模块统一按 APScheduler 口径,并额外接受 mon/tue/… 与 一/二/…/日 写法。
-"""
 from __future__ import annotations
-
 import re
 from datetime import datetime, timedelta
 from typing import Optional

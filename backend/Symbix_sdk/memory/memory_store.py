@@ -1,7 +1,3 @@
-"""
-MemoryStore — 原子记忆存储 + BM25 + 字符n-gram 检索
-v2：零外部 embedding API，纯本地计算。
-"""
 import sqlite3
 import re
 import json

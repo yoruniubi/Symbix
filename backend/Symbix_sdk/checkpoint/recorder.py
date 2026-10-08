@@ -1,20 +1,4 @@
-"""CheckpointRecorder — 单例 recorder，对外暴露 type-safe 的 emit_* 接口。
-
-接入原则：
-- 在 ToolRegistry.execute / file_pipeline / chat.py 三处埋点，不深度侵入业务代码。
-- recorder 是「fire-and-forget」语义 —— emit 失败不能阻断主流程；写库失败仅打日志。
-- 全局单例 `get_recorder()`，避免每个调用点自己 new。
-
-典型用法：
-    from Symbix_sdk.checkpoint import get_recorder
-    get_recorder().emit_tool_call(
-        session_id=sid, round_id=rid, tool_name="write_to_file",
-        arguments={"path": ".../foo.py", "content": "..."},
-        risk_level="high", approved=True, result_snippet="ok", result_truncated=False,
-    )
-"""
 from __future__ import annotations
-
 import os
 import uuid
 from typing import Optional
@@ -29,7 +13,7 @@ from .schema import (
     RoundRecord,
 )
 from .store import CheckpointStore
-from .blob_store import BlobStore, MAX_BLOB_BYTES
+from .blob_store import BlobStore
 
 
 class CheckpointRecorder:

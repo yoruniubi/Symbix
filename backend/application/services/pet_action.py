@@ -1,11 +1,4 @@
-"""桌宠动作事件总线。
-
-native 工具 emit_pet_action 把动作写入总线；
-Home 窗口通过 GET /pet/events (SSE) 订阅并播放动画。
-支持同步线程 emit + 异步 SSE 消费者。
-"""
 from __future__ import annotations
-
 import asyncio
 import threading
 import time

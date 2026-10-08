@@ -337,6 +337,7 @@ export default {
     historyFail: 'Failed to load history: {msg}',
     active: 'active',
     paused: 'paused',
+    completed: 'completed',
   },
 
   // ===== Checkpoint Panel =====

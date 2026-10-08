@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from application.services.memory_ops import format_sse
 from application.services.pet_action import LOOP_ACTIONS, SSE_SHUTDOWN, normalize_pet_action, pet_action
 
-
 # 前端静态资源目录(相对于 backend 运行目录)
 # codex_pet:Codex 桌宠导入(pet.json + spritesheet 位图动画)
 # pixiv_pet:pet-forge 生成(base.svg + states.json,烘焙出 spritesheet 后可切换)

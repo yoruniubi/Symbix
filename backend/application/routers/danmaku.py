@@ -1,8 +1,8 @@
-# 弹幕功能
 from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 from application.services.danmaku_service import danmaku_cfg
+
 router = APIRouter(tags=["danmaku"])
 
 @router.get("/danmaku/config")

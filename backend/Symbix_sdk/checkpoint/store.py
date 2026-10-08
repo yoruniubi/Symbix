@@ -1,10 +1,3 @@
-"""Checkpoint 持久化 + 单例 Recorder。
-
-存储设计：单表 `checkpoint_records`，所有 kind 共用 schema，按 (session_id, round_id, seq) 排序。
-- payload 用 json.dumps 存 TEXT；查询时不解析 payload（除非前端要，再解）。
-- 复用 backend `application/state.py` 里 `memory.db` 同库 —— 减少连接数、跨表查询方便。
-- 线程安全：单个 sqlite connection + threading.Lock，跟 MemoryStore 一致风格。
-"""
 from __future__ import annotations
 
 import os

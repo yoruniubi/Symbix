@@ -8,7 +8,6 @@ OPTION_ACTIONS = ("approve", "reject", "fill")
 # 单张卡片最多展示的选项数(多了会挤,也超出用户一次能扫完的量)
 MAX_OPTIONS = 6
 
-
 def _normalize_options(raw, max_items: int = MAX_OPTIONS) -> list[dict]:
     """把模型给的选项归一化成 ``[{"label", "description", "action"}]``。
 

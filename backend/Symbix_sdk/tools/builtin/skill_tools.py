@@ -3,7 +3,6 @@ import json
 import os
 import re
 
-
 SKILL_MD_TEMPLATE = """---
 name: {skill_name}
 description: {description}

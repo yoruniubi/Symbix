@@ -5,7 +5,6 @@ import sys
 
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed
 
-
 def open_terminal(
     command: str = "",
     shell: str = "powershell",

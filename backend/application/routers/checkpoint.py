@@ -1,17 +1,5 @@
-"""Agent 行为 Checkpoint 查询接口。
-
-提供给前端时间线视图（Checkpoints 侧栏面板）：
-- GET /sessions/{sid}/timeline         整 session 的事件流（按 seq 升序）
-- GET /sessions/{sid}/timeline/rounds  只取 round 总结（前端折叠头部用）
-- GET /sessions/{sid}/timeline/summary 头部 overview（统计计数）
-
-写 checkpoint 不在这里——写是 chat 路由在工具执行 / round 闭合时 fire-and-forget
-通过 application.state.checkpoint_recorder 的 emit_* 接口完成的，这里只负责读。
-"""
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
-
 from application.state import checkpoint_recorder
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed
 

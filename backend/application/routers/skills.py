@@ -1,12 +1,9 @@
-"""Skill / Native Tools 管理路由。"""
 import os
 from fastapi import APIRouter, HTTPException
-
 from application.schemas import CreateSkillRequest, InstallSkillCliRequest, InstallSkillGithubRequest
 from application.state import BASE_DIR, skill_registry, tool_registry
 
 router = APIRouter(tags=["skills"])
-
 
 @router.get("/native/tools")
 async def list_native_tools():

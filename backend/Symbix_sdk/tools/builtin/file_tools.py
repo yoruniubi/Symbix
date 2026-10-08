@@ -11,7 +11,6 @@ from Symbix_sdk.tools.file_pipeline import (
 )
 from Symbix_sdk.checkpoint import get_recorder, get_current
 
-
 _RG_CANDIDATES = [
     # Windows 下常见安装位置（C: 系统盘）
     r"C:\Program Files\ripgrep\rg.exe",

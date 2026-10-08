@@ -1,21 +1,12 @@
-"""APScheduler 单例封装。
-
-- AsyncIOScheduler：与 FastAPI event loop 同 loop，避免跨线程跑 async 工具调用。
-- SQLAlchemyJobStore：job 定义落盘，重启不丢，miss 任务跳过（misfire_grace_time）。
-- 关键：job 目标使用模块级函数 `_dispatch_job`（可 pickle），不能绑定 scheduler 实例方法，
-  否则 SQLAlchemyJobStore 需要 pickling 整个 scheduler 时报错。
-"""
 from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import Optional
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
-
 from .schema import validate_trigger
 
 log = logging.getLogger("job_schedule")

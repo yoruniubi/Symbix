@@ -1,10 +1,6 @@
 from __future__ import annotations
 import json
 
-
-# 与 spritesheet / 前端 Home.vue 对齐;语义别名会在总线侧归一化
-# running / runningRight / runningLeft 是「拖拽奔跑」专用的常驻循环,
-# 由前端本地拖拽驱动,不开放给 Agent 触发(否则会把 thinking 等状态挤掉)。
 PET_ACTION_ENUM = [
     "idle",
     "waving",

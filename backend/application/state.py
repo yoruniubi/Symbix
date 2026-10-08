@@ -1,9 +1,4 @@
-"""
-共享运行时状态：memory / registry / client / MCP 等单例。
-路由模块通过 from application.state import xxx 引用，避免循环依赖。
-"""
 import os
-
 from Symbix_sdk.client import SymbixClient
 from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
