@@ -675,7 +675,6 @@ export default {
     modelPlaceholder: 'Select preset model or type manually',
     subAgentModel: 'Sub-agent model',
     subAgentModelPlaceholder: 'Leave empty to use the main model',
-    subAgentModelHint: 'Model used when delegating to sub-agents (delegate_task / delegate_tasks), for explore-then-act tasks. Empty = same as the main model; shares the same API key and endpoint.',
     fetchModels: 'Fetch models',
     fetching: 'Fetching...',
     fetchSuccess: 'Fetched {count} models',

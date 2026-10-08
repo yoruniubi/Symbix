@@ -93,7 +93,6 @@
                       {{ fetchingModels ? t('modelSetting.fetching') : t('modelSetting.fetchModels') }}
                     </n-button>
                   </n-input-group>
-                  <div class="field-hint">{{ t('modelSetting.subAgentModelHint') }}</div>
                 </div>
               </n-form-item>
             </div>
@@ -645,14 +644,6 @@ function handleReset() {
   display: flex;
   flex-direction: column;
   width: 100%;
-}
-
-/* 表单项下方的说明文案 */
-.field-hint {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-tertiary, var(--text-secondary));
-  margin-top: 4px;
 }
 
 .scrollable-form :deep(.n-form-item-feedback-wrapper) {

@@ -30,9 +30,11 @@ RETRYABLE_EXCEPTIONS = (
 )
 
 # 默认重试次数(总尝试次数 = DEFAULT_MAX_RETRIES + 1)。
-DEFAULT_MAX_RETRIES = 2
+# 取 3 而不是 2:实测本项目常用的中转网关单次尝试失败率可达 30%~60%
+# (回 429 bad_response_status_code 或直接掐断连接),重试 2 次的整次失败率仍有 ~3%,重试 3 次降到 ~1%。
+DEFAULT_MAX_RETRIES = 3
 
-# 退避参数:第 1 次约 1.5s、第 2 次约 3s,加抖动避免并发请求同时回来再撞限流。
+# 退避参数:第 1 次约 1.5s、第 2 次约 3s、第 3 次约 4.5s,加抖动避免并发请求同时回来再撞限流。
 _BACKOFF_BASE = 1.5
 _BACKOFF_CAP = 10.0
 _BACKOFF_JITTER = 0.35

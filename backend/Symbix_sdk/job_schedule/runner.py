@@ -9,6 +9,11 @@ import json as _json
 import time
 from datetime import datetime
 
+# 定时任务「整次模型调用」的重试次数与退避基数(秒)。
+# 比对话链路更宽松:无人值守时宁可多等 45s,也别把提醒弄丢。
+JOB_MODEL_ATTEMPTS = 3
+JOB_RETRY_BASE_DELAY = 15.0
+
 
 def _raise_if_upstream_failed(response: dict) -> None:
     """上游报错且零输出时抛错,让 job 走 except 分支被标记为 error。
@@ -58,6 +63,7 @@ class JobRunner:
             self.storage.upsert_meta(job)
 
         output_snippet = ""
+        output_full = ""          # 错误分支也要用:早出错时它还没被赋值
         ckpt_round_id = ""
         try:
             self.memory.add(sid, "user", job["prompt"])
@@ -88,18 +94,19 @@ class JobRunner:
             steps = []
             last_reasoning = None
 
-            response = await self.symbix_client.chat(
-                user_input=job["prompt"],
-                history=history[:-1],
-                registry=self.skill_registry,
-                tools=mcp_tools,
-                override_api_key=api_key,
-                override_api_base=api_base,
-                override_model=model,
-                system_prompt=job_system_prompt,
+            response = await self._call_model(
+                lambda: self.symbix_client.chat(
+                    user_input=job["prompt"],
+                    history=history[:-1],
+                    registry=self.skill_registry,
+                    tools=mcp_tools,
+                    override_api_key=api_key,
+                    override_api_base=api_base,
+                    override_model=model,
+                    system_prompt=job_system_prompt,
+                )
             )
             last_reasoning = response.get("reasoning")
-            _raise_if_upstream_failed(response)
 
             max_tool_rounds = 25
             round_count = 0
@@ -173,19 +180,20 @@ class JobRunner:
                     steps.append({"type": "tool_result", "tool_call_id": fn["id"], "name": fn["name"],
                                   "content": out})
 
-                response = await self.symbix_client.chat_with_tool_results(
-                    user_input=job["prompt"],
-                    history=history[:-1],
-                    registry=self.skill_registry,
-                    tools=mcp_tools,
-                    tool_results=tool_results,
-                    override_api_key=api_key,
-                    override_api_base=api_base,
-                    override_model=model,
-                    system_prompt=job_system_prompt,
+                response = await self._call_model(
+                    lambda: self.symbix_client.chat_with_tool_results(
+                        user_input=job["prompt"],
+                        history=history[:-1],
+                        registry=self.skill_registry,
+                        tools=mcp_tools,
+                        tool_results=tool_results,
+                        override_api_key=api_key,
+                        override_api_base=api_base,
+                        override_model=model,
+                        system_prompt=job_system_prompt,
+                    )
                 )
                 last_reasoning = response.get("reasoning")
-                _raise_if_upstream_failed(response)
                 final_text = response.get("content") or final_text
 
             output_snippet = (final_text or "")[:200]
@@ -206,8 +214,35 @@ class JobRunner:
             import traceback
             traceback.print_exc()
             self.storage.update_status(job_id, "error", str(e), run_time)
-            self.storage.add_history(job_id, run_time, "error", output_full or output_snippet or "", str(e) or "")
+            # 失败也必须落历史 + 通知:以前 add_history 抛 UnboundLocalError,
+            # 结果历史表空、用户连一条「提醒失败了」的提示都收不到。
+            try:
+                self.storage.add_history(job_id, run_time, "error",
+                                         output_full or output_snippet or "", str(e) or "")
+            except Exception:
+                traceback.print_exc()
             self._notify(job, str(e), "error")
+
+    async def _call_model(self, factory, attempts: int = JOB_MODEL_ATTEMPTS) -> dict:
+        """调模型并在上游抖动时重试**整次调用**。
+
+        非流式管道内部的流式重试已经负责「单次调用的分段重试」,但网关抖动可能把
+        3 次尝试全部撞满(实测该网关约 1/5 的调用即使重试 3 次也失败)。定时任务无人
+        值守,失败就是用户丢提醒,所以这里再加一层「整次调用重试 + 更长退避」。
+        """
+        last: Exception | None = None
+        for i in range(1, attempts + 1):
+            response = await factory()
+            try:
+                _raise_if_upstream_failed(response)
+                return response
+            except RuntimeError as e:
+                last = e
+                if i < attempts:
+                    delay = JOB_RETRY_BASE_DELAY * i
+                    print(f"[job] 模型调用第 {i}/{attempts} 次失败,{delay:.0f}s 后重试: {e}")
+                    await asyncio.sleep(delay)
+        raise last if last else RuntimeError("模型调用失败")
 
     def _notify(self, job: dict, snippet: str, status: str) -> None:
         """通过 pet_action 发一条事件(桌宠表情/通知)。失败不阻断。"""

@@ -528,8 +528,11 @@ class SymbixClient:
                     print(f"[{label}] {delay}s 后第 {attempt + 2}/{total} 次尝试")
                     await asyncio.sleep(delay)
                     continue
+                # 空消息的异常(httpx.ReadError() 等)不能只留一对空括号,否则用户只看到「连接多次中断（）」
+                why = reset_reason(exc=e)
+                print(f"[{label}] 重试 {total} 次仍失败: {why}")
                 yield {"type": "done", "content": acc_text, "reasoning": acc_reasoning or None,
-                       "tool_calls": None, "error": f"连接多次中断（{e}），内容可能不完整"}
+                       "tool_calls": None, "error": f"连接多次中断（{why}），内容可能不完整"}
                 return
 
             if http_status is not None:

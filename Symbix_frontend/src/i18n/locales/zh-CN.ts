@@ -674,7 +674,6 @@ export default {
     modelPlaceholder: '选择预设模型或手动输入',
     subAgentModel: '子 Agent 模型',
     subAgentModelPlaceholder: '留空则使用主模型',
-    subAgentModelHint: '委派给子 Agent(delegate_task / delegate_tasks)时使用的模型,用于「先探索/分析再动手」的任务。留空 = 与主模型相同;共用同一套 API Key 与接口地址。',
     fetchModels: '获取模型',
     fetching: '获取中...',
     fetchSuccess: '获取到 {count} 个模型',
