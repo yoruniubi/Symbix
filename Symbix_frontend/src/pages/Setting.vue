@@ -325,6 +325,10 @@
           <span class="hint-text">{{ t('setting.ttsEnabledHint') }}</span>
           <n-switch v-model:value="ttsForm.enabled" />
         </n-space>
+        <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
+          <span class="hint-text">{{ t('setting.readAloudHint') }}</span>
+          <n-switch :value="readAloud" @update:value="setReadAloud" />
+        </n-space>
         <n-form :model="ttsForm" label-placement="top" size="small" :disabled="!ttsForm.enabled">
           <n-form-item :label="t('setting.voicePrimary')">
             <n-select
@@ -409,6 +413,7 @@ import TitleBar from '@/components/TitleBar.vue'
 import { useTheme } from '@/composables/useTheme'
 import { useLocale } from '@/composables/useLocale'
 import { useCompanion, type CompanionSettings } from '@/composables/useCompanion'
+import { useReadAloud } from '@/composables/useReadAloud'
 import {
   useNotify,
   playNotifySound,
@@ -427,6 +432,7 @@ import {
 
 const message = useMessage()
 const { t } = useI18n()
+const { readAloud, setReadAloud } = useReadAloud()
 const { mode, setMode } = useTheme()
 const { locale, localeOptions: uiLocaleOptions, setLocale } = useLocale()
 const {

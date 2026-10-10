@@ -123,11 +123,9 @@
         :model-options="modelOptions"
         :current-model="currentModel"
         :session-id="activeSessionId"
-        :voice-enabled="voiceEnabled"
         @send="sendMessage"
         @update:model="setModel"
         @stop="handleStopGeneration"
-        @update:voice-enabled="voiceEnabled = $event"
         @reserve-session="pendingSessionId = $event"
       />
     </div>
@@ -190,6 +188,7 @@ import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
 import { feedSpeechSentence, flushSpeechSentence, speakStart, stopSpeak } from '@/utils/backend'
+import { useReadAloud } from '@/composables/useReadAloud'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
 const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
@@ -197,7 +196,7 @@ const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
 const pendingSessionId = ref<string>('')
-const voiceEnabled = ref(false)
+const { readAloud } = useReadAloud()
 let userAborted = false
 let ttsStreaming = false
 interface Skill {
@@ -940,7 +939,7 @@ function handleSSEEvent(
       // 重试已出内容:撤掉「正在重新生成」提示
       msg.retryHint = ''
       // 句子级朗读:首段 delta 时开启本轮回合,之后逐句喂入 TTS 队列
-      if (voiceEnabled.value && evt.content) {
+      if (readAloud.value && evt.content) {
         if (!ttsStreaming) {
           ttsStreaming = true
           speakStart()

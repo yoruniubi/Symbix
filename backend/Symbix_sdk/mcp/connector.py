@@ -641,6 +641,50 @@ class McpRemoteClient:
         self._client = None
 
 
+# browser_* 工具的参数里可能是本地路径(模型想把上传的图片「打开看看」),
+# playwright 会直接拦掉 file:// 并返回一句英文报错,模型往往又试一次。
+# 这里提前挡掉并给出正确做法,省一轮审批 + 一轮无效重试。
+_LOCAL_REF_KEYS = ("url", "path", "file", "filepath", "filename")
+_BROWSER_LOCAL_HINT = (
+    "[Error] browser_* 工具只能访问 http/https 网页,不支持 file:// 或本地文件路径。"
+    "本地文件请用 read_file / parse_file;图片内容无法用文本工具读取,"
+    "请基于本轮已提供的视觉输入,或请用户用文字描述(不要反复尝试打开本地图片)。"
+)
+
+
+def _is_local_reference(value: str) -> bool:
+    v = value.strip()
+    if v.lower().startswith("file:"):
+        return True
+    if len(v) > 2 and v[1] == ":" and v[0].isalpha() and v[2] in "\\/":
+        return True  # F:\... / F:/...
+    return v.startswith("/") and not v.startswith("//")
+
+
+def _guard_local_path_call(tool_name: str, arguments) -> Optional[str]:
+    """拦住 browser_* 的本地路径调用,返回给模型的提示;不该拦则返回 None。"""
+    if not tool_name.startswith("browser_") or not isinstance(arguments, dict):
+        return None
+    for key in _LOCAL_REF_KEYS:
+        val = arguments.get(key)
+        if isinstance(val, str) and _is_local_reference(val):
+            print(f"[mcp] 拦截 {tool_name} 的本地路径参数 {key}={val[:120]!r}")
+            return _BROWSER_LOCAL_HINT
+    return None
+
+
+def _tool_desc_hint(name: str) -> str:
+    """给 MCP 工具描述补一句边界说明(描述由上游 server 提供,不能直接改)。"""
+    if name == "browser_navigate":
+        return (
+            " 仅支持 http/https 网页;不要传本地路径或 file:// 地址(浏览器策略会拦掉),"
+            "本地文件请用 read_file/parse_file;抓取静态网页正文优先用 fetch_webpage。"
+        )
+    if name.startswith("browser_"):
+        return " 仅用于真实网站(http/https),不能读写本地文件;静态内容优先用 fetch_webpage。"
+    return ""
+
+
 class McpServerManager:
     """管理多个 MCP server 客户端(stdio + remote)"""
 
@@ -759,7 +803,7 @@ class McpServerManager:
                     "type": "function",
                     "function": {
                         "name": name,
-                        "description": tool.get("description", ""),
+                        "description": tool.get("description", "") + _tool_desc_hint(name),
                         "parameters": schema,
                     },
                     # 扩展:风险分级元数据(不进入 OpenAI 参数)
@@ -808,6 +852,9 @@ class McpServerManager:
     
     def call_tool(self, tool_name: str, arguments) -> str:
         """调用指定工具（自动查找服务器）"""
+        blocked = _guard_local_path_call(tool_name, arguments)
+        if blocked:
+            return blocked
         # 遍历所有服务器查找工具
         for server_id, client in self.servers.items():
             tools = client.list_tools()

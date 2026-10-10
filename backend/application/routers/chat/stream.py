@@ -43,6 +43,7 @@ from application.routers.chat.helpers import (
     _assert_tool_pairing,
     _prepare_user_message,
     _filter_image_parts,
+    attachment_history_note,
     _stream_tool_events,
     _is_read_only_parallel_tool,
     run_tools_parallel,
@@ -117,14 +118,16 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             # 有图片时,异步探测模型视觉能力;无视觉模型降级在 client._build_messages 内(取色+文本)
             image_parts, supports_vision = await _filter_image_parts(image_parts, model, api_key, api_base)
             mem_msg = request.message
+            att_note = attachment_history_note(parsed_atts)
             if request.attachments:
                 names = [
                     (a.filename or a.name or a.path or "file")
                     for a in request.attachments
                 ]
-                mem_msg = (mem_msg + "\n" if mem_msg else "") + " ".join(
-                    f"[文件: {n}]" for n in names
-                )
+                label = " ".join(f"[文件: {n}]" for n in names)
+                att_note = f"{label}\n{att_note}" if att_note else label
+            if att_note:
+                mem_msg = (mem_msg + "\n" if mem_msg else "") + att_note
             memory.add(request.session_id, "user", mem_msg)
             history = memory.get_compressed_history(request.session_id, recent_limit=20)
             act_decision = act_mode_controller.decide(mem_msg, history[:-1])

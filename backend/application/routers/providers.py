@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from application.schemas import ProviderAddRequest
 from application.state import provider_registry
-from Symbix_sdk.model_capabilities import get_model_capabilities, check_vision, clear_vision_cache
+from Symbix_sdk.model_capabilities import get_model_capabilities, get_vision_note, resolve_vision, clear_vision_cache
 
 router = APIRouter(tags=["providers"])
 
@@ -97,7 +97,14 @@ async def probe_model_vision(model: str = ""):
     provider = provider_registry.get_active()
     api_key = provider.api_key or ""
     api_base = provider.api_base or ""
-    supports = await check_vision(target, api_key, api_base)
+    supports = await resolve_vision(target, api_key, api_base)
+    if supports is None:
+        note = get_vision_note(target) or "未知原因"
+        return {
+            "model": target,
+            "vision": None,
+            "vision_reason": f"探测未得出结论({note});可能是上游限流或网络问题,可稍后重试",
+        }
     reason = (
         f"模型 {target} 支持视觉理解，图片将以 base64 方式发送"
         if supports

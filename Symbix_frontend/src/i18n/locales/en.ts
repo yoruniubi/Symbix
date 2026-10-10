@@ -152,10 +152,6 @@ export default {
     stopGenerate: 'Stop generating',
     uploadFile: 'Upload file',
     voiceInput: 'Voice input',
-    voiceRead: 'Read reply aloud',
-    voiceReadOn: 'Reading on: AI replies are read aloud',
-    voiceReadOff: 'Reading off',
-    voiceReadFail: 'Read failed, check TTS settings',
     voiceInputOn: '🎤 Listening…',
     voiceInputOff: 'Voice input stopped',
     sttDisabled: 'Speech recognition is disabled, enable STT in settings first',
@@ -169,6 +165,7 @@ export default {
     uploadFailed: 'Upload failed: {name}',
     imageNoVision: 'Current model "{model}" does not support vision. The image will be sent as a text description. (Use a multimodal model like GPT-4o / Claude 3+ / Gemini)',
     imageVision: 'Current model "{model}" supports vision, it can read images directly',
+    imageVisionUnknown: 'Vision probe inconclusive (upstream rate limit or network). Model "{model}" may not receive this image; retry later or switch to a vision model',
   },
 
   // ===== Chat Welcome =====
@@ -612,6 +609,7 @@ export default {
     // TTS
     tts: 'Speech Synthesis (TTS)',
     ttsEnabledHint: 'Enable speech synthesis',
+    readAloudHint: 'Read aloud: AI replies and scheduled reminders are spoken',
     ttsProvider: 'TTS Provider',
     ttsProviderPlaceholder: 'Select TTS provider',
     ttsApiKey: 'API Key',

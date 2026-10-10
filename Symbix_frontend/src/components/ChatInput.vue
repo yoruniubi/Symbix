@@ -105,27 +105,6 @@
         </n-icon>
         <span v-if="isRecording" class="recording-dot"></span>
       </n-button>
-      <!-- 朗读开关按钮 -->
-      <n-button
-        text
-        class="tool-btn voice-btn"
-        :class="{ 'voice-on': props.voiceEnabled }"
-        @click="toggleVoiceRead"
-        :title="props.voiceEnabled ? t('chatInput.voiceReadOn') : t('chatInput.voiceRead')"
-      >
-        <n-icon size="20">
-          <svg v-if="props.voiceEnabled" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-          </svg>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <line x1="22" y1="9" x2="16" y2="15"/>
-            <line x1="16" y1="9" x2="22" y2="15"/>
-          </svg>
-        </n-icon>
-      </n-button>
       <n-popover v-model:show="showModelPopover" trigger="click" placement="top-start" :show-arrow="false" :content-style="{ padding: 0 }" content-class="model-popover-content">
         <template #trigger>
           <n-button text size="tiny" class="footer-btn">
@@ -158,7 +137,6 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { stopSpeak } from '@/utils/backend'
 
 export interface AttachmentItem {
   name: string
@@ -181,15 +159,12 @@ const props = defineProps<{
   currentModel: string
   /** 当前会话 id，用于上传目录隔离；未创建会话时用 pending 占位 */
   sessionId?: string | null
-  /** 朗读开关：AI 回复后自动朗读 */
-  voiceEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
   send: [text: string, files: AttachmentItem[]]
   'update:model': [model: string]
   stop: []
-  'update:voice-enabled': [value: boolean]
   /** 无实际会话时首次上传/发声会生成预留会话 id,通知父组件建会话时复用 */
   'reserve-session': [id: string]
 }>()
@@ -211,24 +186,25 @@ const BACKEND_URL = 'http://127.0.0.1:8000'
 /** 图片扩展名集合 */
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 
-/** 缓存模型视觉能力查询结果，避免重复请求 */
+/** 缓存模型视觉能力查询结果，避免重复请求；探测失败(null)不缓存，下次会重试 */
 let _visionCache: { model: string; vision: boolean } | null = null
 
-/** 查询当前模型是否支持视觉（带缓存） */
-async function checkModelVision(): Promise<boolean> {
+/** 查询当前模型是否支持视觉（带缓存）:true / false / null=探测未得出结论 */
+async function checkModelVision(): Promise<boolean | null> {
   const model = props.currentModel
   if (!model) return false
   if (_visionCache && _visionCache.model === model) return _visionCache.vision
   try {
     // 调用实时探测接口（后端发起最小请求测试）
     const res = await fetch(`${BACKEND_URL}/model/probe-vision?model=${encodeURIComponent(model)}`)
-    if (!res.ok) return false
+    if (!res.ok) return null
     const data = await res.json()
+    if (data.vision === null || data.vision === undefined) return null
     const vision = !!data.vision
     _visionCache = { model, vision }
     return vision
   } catch {
-    return false
+    return null
   }
 }
 
@@ -352,7 +328,9 @@ async function uploadFile(raw: File) {
       // 如果是图片,检查当前模型是否支持视觉
       if (isImageFile(raw.name, raw.type)) {
         const vision = await checkModelVision()
-        if (!vision) {
+        if (vision === null) {
+          messageUi.warning(t('chatInput.imageVisionUnknown', { model: props.currentModel }))
+        } else if (!vision) {
           messageUi.warning(t('chatInput.imageNoVision', { model: props.currentModel }))
         } else {
           messageUi.success(t('chatInput.imageVision', { model: props.currentModel }))
@@ -412,18 +390,6 @@ function toggleVoice() {
     // 异步判断 STT 主引擎:openai(云端文件式)走浏览器录音上传,sensevoice 走 SSE 流式
     checkSttModeAndStart()
   }
-}
-
-/** 朗读开关:切换时给 toast 反馈;关闭时同时打断正在播放的音频。 */
-function toggleVoiceRead() {
-  const next = !props.voiceEnabled
-  if (next) {
-    messageUi.success(t('chatInput.voiceReadOn'))
-  } else {
-    stopSpeak()
-    messageUi.info(t('chatInput.voiceReadOff'))
-  }
-  emit('update:voice-enabled', next)
 }
 
 // 云端(STT 主引擎 = openai):浏览器麦克风录音,松手→上传 /voice/stt/upload。
@@ -721,9 +687,6 @@ onBeforeUnmount(() => {
   color: var(--error, #D3555A) !important;
   background: rgba(211, 85, 90, 0.15) !important;
   animation: pulse-rec 1.5s ease-in-out infinite;
-}
-.voice-btn.voice-on {
-  color: var(--accent-500, #EF6B6E) !important;
 }
 .recording-dot {
   position: absolute;

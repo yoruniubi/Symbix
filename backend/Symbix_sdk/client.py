@@ -187,6 +187,9 @@ class SymbixClient:
             "  - 用户问文件内容 → 用 `read_file` 读取，不要猜测\n"
             "  - 用户要创建/修改文件 → 用 `edit_file` 或 `create_skill`，不要只给建议\n"
             "  - 用户要搜索信息 → 用 `search_online` 或 `fetch_webpage`，不要说'我无法访问'\n"
+            "  - 要读网页/资料 → 优先 `fetch_webpage`(快且省)；只有必须交互(点击/登录/JS 渲染)时才用 `browser_*`\n"
+            "  - 本地文件(含用户上传的图片) → 用 `read_file` / `parse_file`；"
+            "**不要给 `browser_navigate` 传本地路径或 `file://` 地址**(浏览器策略会直接拦掉，白跑一轮)\n"
             "  - 用户要执行命令 → 用 `execute_command` 或 `open_terminal`\n"
             "- 如果不确定用哪个工具，先用 `list_files` 或 `search_files` 探索环境\n"
             "- 工具执行成功后，向用户总结结果；失败则说明原因并尝试其他方法\n\n"
@@ -276,9 +279,17 @@ class SymbixClient:
                     hint = palette_to_hint(hexes)
                     image_summary_parts.append(label + (f"({hint})" if hint else ""))
                 image_summary = ", ".join(image_summary_parts)
+                # 如实告知模型「图没进来」:不说清楚它会去翻文件、开浏览器找图
+                # (browser_navigate 读 file:// 必被拦),白烧轮次与审批。
+                blind_note = (
+                    "\n[注意] 本轮图片**未作为图像输入传入**(模型无视觉能力，或视觉能力探测失败)，"
+                    "你只能看到上面的文件名与配色提示。不要用 parse_file / read_file / browser_navigate "
+                    "去打开图片文件(读不到图像内容，只会白费轮次)；需要图片细节时可用命令行/脚本做像素分析"
+                    "(取色、尺寸、ASCII 缩略图)，或请用户用文字描述。"
+                )
                 messages.append({
                     "role": "user",
-                    "content": f"{user_prefix}{user_input or ''}\n{image_summary}".strip(),
+                    "content": f"{user_prefix}{user_input or ''}\n{image_summary}{blind_note}".strip(),
                 })
                 return messages
             content_parts = [{"type": "text", "text": f"{user_prefix}{user_input or ''}"}]

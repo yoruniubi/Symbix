@@ -74,9 +74,11 @@ import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets 
 
 import { useI18n } from 'vue-i18n'
 import { speak } from '@/utils/backend'
+import { useReadAloud } from '@/composables/useReadAloud'
 
 const { t } = useI18n()
 const router = useRouter()
+const { readAloud } = useReadAloud()
 const appWindow = getCurrentWindow()
 
 // ---- 状态 ----
@@ -650,8 +652,8 @@ function applyRemotePetAction(payload: {
   loop?: boolean
   source?: string
 }) {
-  // 定时任务通知:朗读其摘要(bubble)
-  if ((payload.source === 'schedule' || payload.action === 'scheduled_job') && payload.bubble) {
+  // 定时任务通知:开关打开时才朗读其摘要(bubble)
+  if ((payload.source === 'schedule' || payload.action === 'scheduled_job') && payload.bubble && readAloud.value) {
     speak(payload.bubble)
   }
   // 工作模式下忽略远程动作(仅接收 bubble 消息)

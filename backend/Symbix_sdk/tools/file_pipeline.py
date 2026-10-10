@@ -9,6 +9,7 @@ import re
 import uuid
 from pathlib import Path
 from typing import Any, Optional
+from ..color_extract import extract_palette_bytes
 
 # ── 配置 ──────────────────────────────────────────────
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -374,6 +375,35 @@ def save_upload(
     }
 
 
+def _image_reference_summary(resolved: str, filename: str, size: int, mime: str, data: bytes = b"") -> str:
+    """图片的「文字替身」:尺寸 + 主色(纯 Pillow,复用 color_extract)。
+
+    与 pet-forge 的 palette_hint.py 同一套取色代码;有了它,即使图片没被
+    内嵌(模型无视觉 / 压缩后仍超限)或已经过了当轮,模型手上也不会只剩一个文件名。
+    """
+    dims = ""
+    try:
+        from PIL import Image
+        with Image.open(resolved) as im:
+            dims = f"{im.width}x{im.height}"
+    except Exception:
+        dims = ""
+    hexes = extract_palette_bytes(data, n=6) if data else None
+    parts = [f"参考图: {filename}", f"{size} bytes", mime]
+    if dims:
+        parts.append(f"尺寸 {dims}")
+    if hexes:
+        parts.append("主色 " + ",".join(hexes))
+    if resolved:
+        parts.append(f"路径 {resolved}")
+    return (
+        "[参考图摘要] "
+        + ", ".join(parts)
+        + "(图像只在当轮上传时传入,后续轮次仅有本摘要;需要更细的像素分析可用命令行脚本处理该路径,"
+        "不要用 browser_navigate 打开本地文件)"
+    )
+
+
 def _read_text_bytes(data: bytes, max_chars: int = DEFAULT_MAX_TEXT_CHARS) -> str:
     for enc in ("utf-8", "utf-8-sig", "gbk", "gb18030", "latin-1"):
         try:
@@ -488,8 +518,13 @@ def parse_file_path(
                 f"[图片文件: {filename}, {size} bytes, {mime}。"
                 f"路径: {resolved}]\n"
                 "(图片内容无法通过文本工具读取;若需理解图片请直接基于用户本轮已提供的视觉输入,"
-                "不要用 parse_file/read_file 反复读图片。)"
+                "不要用 parse_file/read_file 反复读图片,也不要给 browser_navigate 传本地路径或 file:// 地址。)"
             )
+        # 所有分支都补一份「文字替身」:没有视觉能力的模型、以及后续轮次(如「请继续」)
+        # 都只能靠它拿到参考图信息。与 pet-forge 的 palette_hint.py 同源(纯 Pillow 取色)。
+        summary = _image_reference_summary(resolved, filename, size, mime, data)
+        result["image_summary"] = summary
+        result["text"] = f"{result.get('text', '')}\n{summary}".strip()
         return result
 
     if ext in PDF_EXTS:

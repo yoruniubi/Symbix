@@ -270,6 +270,8 @@ WEB_TOOLS_SCHEMAS = {
         "description": (
             "获取指定 URL 的网页 HTML 内容（纯文本）。"
             "返回页面内容预览（最多 10000 字符），可用于分析页面结构或提取信息。"
+            "读网页/查资料时的**首选**工具(比 browser_* 快且省 token);"
+            "仅支持 http/https,本地文件请用 read_file 或 parse_file。"
         ),
         "parameters": {
             "type": "object",

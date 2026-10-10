@@ -403,6 +403,21 @@ def _prepare_user_message(
     return enriched, parsed_list, image_parts
 
 
+def attachment_history_note(parsed_atts: list[dict]) -> str:
+    """
+    把附件摘要(尤其是参考图的尺寸/主色)拼成一行,写进会话记忆。
+
+    图像只在当轮上传时传入,所以无视觉模型、以及后续轮次(「请继续」)
+    只能靠这段文字拿到参考图信息——不写进历史,模型就会去翻文件、开浏览器找图。
+    """
+    parts = [
+        str(p.get("image_summary", "")).strip()
+        for p in parsed_atts or []
+        if isinstance(p, dict) and p.get("image_summary")
+    ]
+    return "\n".join(p for p in parts if p)
+
+
 async def _filter_image_parts(
     image_parts: list[dict],
     model: str,

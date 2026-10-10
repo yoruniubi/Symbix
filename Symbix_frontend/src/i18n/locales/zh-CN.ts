@@ -151,10 +151,6 @@ export default {
     stopGenerate: '停止生成',
     uploadFile: '上传文件',
     voiceInput: '语音输入',
-    voiceRead: '朗读回复',
-    voiceReadOn: '朗读已开启,AI 回复后自动朗读',
-    voiceReadOff: '朗读已关闭',
-    voiceReadFail: '朗读失败,请检查 TTS 设置',
     voiceInputOn: '🎤 语音输入已开启,正在聆听…',
     voiceInputOff: '语音输入已停止',
     sttDisabled: '语音识别未启用,请先在设置页开启 STT',
@@ -168,6 +164,7 @@ export default {
     uploadFailed: '上传失败: {name}',
     imageNoVision: '当前模型「{model}」不支持读图,图片将以文字描述发送(建议使用 GPT-4o / Claude 3+ / Gemini 等多模态模型)',
     imageVision: '当前模型「{model}」支持视觉,可以直接读图',
+    imageVisionUnknown: '视觉能力探测未得出结论(可能是上游限流/网络问题),「{model}」本轮可能读不到这张图;可稍后重试或改用支持视觉的模型',
   },
 
   // ===== Chat Welcome =====
@@ -611,6 +608,7 @@ export default {
     // TTS
     tts: '语音合成 (TTS)',
     ttsEnabledHint: '启用语音合成功能',
+    readAloudHint: '开启文字朗读:AI 回复与定时任务提醒自动朗读',
     ttsProvider: 'TTS 服务商',
     ttsProviderPlaceholder: '选择 TTS 服务商',
     ttsApiKey: 'API Key',
