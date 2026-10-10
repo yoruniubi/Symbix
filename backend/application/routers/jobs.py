@@ -109,8 +109,9 @@ async def resume_job(job_id: str):
 
 @router.post("/{job_id}/run")
 async def run_job(job_id: str):
+    """立即执行:后台跑并立刻返回,前端轮询 /jobs 的 running 字段直到跑完。"""
     try:
-        return await _get_manager().run_now(job_id)
+        return _get_manager().start_run(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="job not found")
     except RuntimeError as e:

@@ -643,7 +643,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
                 # 把本轮(assistant tool_calls + tool 结果)累积进 running_msgs,
                 # 使后续轮模型能看到前面所有已执行工具 —— 不再每轮从 history 重建。
-                symbix_client._build_tool_result_messages(running_msgs, round_results)
+                symbix_client._build_tool_result_messages(running_msgs, round_results, last_reasoning)
                 _assert_tool_pairing(running_msgs, strict=False)
                 # 防上下文无限增长:累计工具结果 token 超限则结束循环。
                 cum_tool_tokens += sum(

@@ -60,6 +60,10 @@ export default {
     reject: 'Reject',
     generating: 'AI is generating response...',
     retrying: 'Upstream interrupted, regenerating',
+    actModeReactive: 'Auto',
+    actModeReactiveTip: 'Agent auto-routed this turn to a direct reply (no plan)',
+    actModePlan: 'Plan',
+    actModePlanTip: 'Agent auto-routed this turn to plan-then-solve',
     // Risk levels
     riskLevelSafe: 'Safe',
     riskLevelMedium: 'Needs approval',
@@ -330,11 +334,12 @@ export default {
     saveFail: 'Failed to save: {msg}',
     loadFail: 'Failed to load tasks: {msg}',
     runFail: 'Failed to run: {msg}',
-    runSuccess: 'Run triggered',
+    runSuccess: 'Started in the background; the result will be recorded in history',
     historyFail: 'Failed to load history: {msg}',
     active: 'active',
     paused: 'paused',
     completed: 'completed',
+    runningNow: 'running',
   },
 
   // ===== Checkpoint Panel =====

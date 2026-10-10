@@ -199,6 +199,11 @@
           <span class="retry-hint-reason">{{ msg.retryHint }}</span>
         </div>
 
+        <!-- 执行模式角标:后端自动判决的 act_mode(reactive / plan_solve) -->
+        <div v-if="actModeLabel" class="act-mode-row">
+          <span class="act-mode-badge" :class="msg.act_mode" :title="actModeTip">{{ actModeLabel }}</span>
+        </div>
+
       </template>
 
       <!-- 操作按钮 (仅 assistant: 复制 & 重试) -->
@@ -347,8 +352,21 @@ function submitAnswer() {
   emit('answer', a)
 }
 
+/** 执行模式角标:后端自动判决的 act_mode(reactive / plan_solve);历史消息没有该字段则不显示 */
+const actModeLabel = computed(() => {
+  if (props.msg?.act_mode === 'plan_solve') return t('chat.actModePlan')
+  if (props.msg?.act_mode === 'reactive') return t('chat.actModeReactive')
+  return ''
+})
+const actModeTip = computed(() => {
+  if (props.msg?.act_mode === 'plan_solve') return t('chat.actModePlanTip')
+  if (props.msg?.act_mode === 'reactive') return t('chat.actModeReactiveTip')
+  return ''
+})
+
 /** 提问卡选项:优先用后端给的 options(带描述/动作),旧消息回退到 suggestions 纯文本。 */
-const questionOptions = computed(() => {
+// 显式声明返回类型:否则 v-for 的索引会被推成 string | number,oi + 1 与 pickOption(…, oi) 都会报类型错
+const questionOptions = computed<{ label: string; description?: string; action?: string }[]>(() => {
   const q = props.msg?.pending_question
   if (!q) return []
   const opts = Array.isArray(q.options) ? q.options : []
@@ -844,6 +862,32 @@ onMounted(() => {
   background: var(--surface-hover) !important;
 }
 
+/* ---- 执行模式角标(默认淡显,悬停更亮) ---- */
+.act-mode-row {
+  display: flex;
+  margin-top: 4px;
+  margin-left: 2px;
+}
+.act-mode-badge {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  opacity: 0.85;
+  cursor: default;
+}
+.act-mode-badge.plan_solve {
+  border-color: rgba(246, 173, 85, 0.45);
+  background: rgba(246, 173, 85, 0.08);
+  color: var(--warning-500, #F6AD55);
+  opacity: 1;
+}
+.act-mode-row:hover .act-mode-badge {
+  opacity: 1;
+}
+
 
 /* ---- User Actions (right-aligned) ---- */
 .user-actions {
@@ -867,11 +911,17 @@ onMounted(() => {
   border-radius: var(--radius-md, 8px);
   padding: 4px;
 }
-.edit-input :deep(.n-input__textarea-el) {
-  color: var(--text-primary) !important;
+/* 自动高度由隐藏的 mirror 量出来:文本域 / mirror / 占位符的字号、行高、内边距必须一致,
+   否则 mirror 量出的高度偏小 → 文字被裁、光标与占位符错位 */
+.edit-input :deep(.n-input__textarea-el),
+.edit-input :deep(.n-input__textarea-mirror),
+.edit-input :deep(.n-input__placeholder) {
   padding: 10px 14px !important;
   font-size: 14px;
   line-height: 1.55;
+}
+.edit-input :deep(.n-input__textarea-el) {
+  color: var(--text-primary) !important;
   caret-color: var(--accent-500, #EF6B6E);
 }
 .edit-input :deep(.n-input__border),

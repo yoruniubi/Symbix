@@ -1103,6 +1103,8 @@ function handleSSEEvent(
     case 'done':
       if (evt.content && evt.content !== msg.content) msg.content = evt.content
       if (evt.reasoning) msg.reasoning = evt.reasoning
+      // 后端本轮自动判决的执行模式(reactive / plan_solve):聊天页据此显示角标
+      if (evt.act_mode) msg.act_mode = evt.act_mode
       msg.retryHint = ''
       break
 

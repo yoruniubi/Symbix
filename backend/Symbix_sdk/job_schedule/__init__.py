@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import os
 import uuid
 from datetime import datetime
@@ -26,6 +27,9 @@ class JobManager:
         self.runner: Optional[JobRunner] = None
         # 持有执行所需业务单例（在 build_runner 注入前为 None）
         self._deps: dict = {}
+        # 正在执行的 job id(定时到点 + 立即执行共用)与后者的后台任务
+        self._running: set[str] = set()
+        self._tasks: dict[str, asyncio.Task] = {}
 
     # ------- 依赖注入（启动时 main.py 调用）-------
     def build(self, **deps) -> None:
@@ -57,6 +61,10 @@ class JobManager:
         self.scheduler.start()
 
     def shutdown(self) -> None:
+        for task in self._tasks.values():
+            task.cancel()
+        self._tasks.clear()
+        self._running.clear()
         self.scheduler.shutdown()
 
     # ------- CRUD -------
@@ -143,14 +151,33 @@ class JobManager:
                 self.scheduler.add_job(existing)
         return self._to_out(existing)
 
-    async def run_now(self, job_id: str) -> dict:
-        """立即试跑一次（dev）。"""
+    async def execute_job(self, job_id: str) -> None:
+        """真正跑一次(定时到点与「立即执行」都走这里),并把 job 登记为「执行中」。"""
+        job = self.storage.get_meta(job_id)
+        if not job or self.runner is None:
+            return
+        self._running.add(job_id)
+        try:
+            await self.runner.execute(job)
+        finally:
+            self._running.discard(job_id)
+
+    def start_run(self, job_id: str) -> dict:
+        """立即执行改为后台跑:一次任务可能要好几分钟,同步等会把 HTTP 请求挂死,
+        前端看起来就像"点了没反应"(历史也要等跑完才写)。前端轮询 running 字段即可。
+        """
         job = self.storage.get_meta(job_id)
         if not job:
             raise KeyError(job_id)
         if self.runner is None:
             raise RuntimeError("runner not built")
-        await self.runner.execute(job)
+        if job_id not in self._running:
+            # 先占位再排队:create_task 要等事件循环让出才会跑,
+            # 不提前标记的话接口返回的 running 会还是 False。
+            self._running.add(job_id)
+            task = asyncio.create_task(self.execute_job(job_id))
+            self._tasks[job_id] = task
+            task.add_done_callback(lambda _t, jid=job_id: self._tasks.pop(jid, None))
         return self._to_out(job)
 
     def list(self) -> list[dict]:
@@ -180,6 +207,7 @@ class JobManager:
         out = dict(job)
         out["next_run_time"] = self.scheduler.get_next_run(job["id"])
         out.setdefault("completed", False)
+        out["running"] = job["id"] in self._running
         # 人话频率回显,面板直接显示,不必自己拼 cron
         try:
             from .humanize import describe_trigger

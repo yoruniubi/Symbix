@@ -171,6 +171,7 @@ async def run_child_agent(
 
         tools_used: list[str] = []
         last_content = ""
+        last_reasoning: str | None = None
         rounds = 0
         loop_error: str | None = None
 
@@ -181,6 +182,7 @@ async def run_child_agent(
             )
             if resp.get("content"):
                 last_content = resp["content"]
+            last_reasoning = resp.get("reasoning") or None
             # 上游模型调用失败(如 503 / 鉴权失败):立即停止,并如实标记为失败,
             # 否则会把「没拿到任何结论」当成成功报给主 Agent。
             if resp.get("error"):
@@ -217,7 +219,7 @@ async def run_child_agent(
                     "content": out,
                     "arguments": args,
                 })
-            llm_client._build_tool_result_messages(messages, round_results)
+            llm_client._build_tool_result_messages(messages, round_results, last_reasoning)
 
         content = (last_content or "").strip()
         if len(content) > max_content_chars:

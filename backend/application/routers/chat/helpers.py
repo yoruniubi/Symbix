@@ -8,6 +8,7 @@ import json as _json
 
 from application.schemas import ChatRequest
 from application.services.memory_ops import format_sse
+from Symbix_sdk.client import build_tool_result_messages
 from Symbix_sdk.model_capabilities import check_vision
 from application.state import checkpoint_recorder
 
@@ -320,10 +321,13 @@ def _steps_to_tool_messages(steps: list[dict]) -> list[dict]:
     out: list[dict] = []
     # 当前正在累积的 round 的 tool_calls(尚未 flush 成 assistant 消息)
     pending_calls: list[dict] = []
+    # 该 round 的思考内容:思考模式的上游要求回传,否则续跑会 400
+    pending_reasoning: str | None = None
     # 已 flush 的 tool_call_id → 是否已拿到对应 tool 结果
     for block in steps:
         if block.get("type") == "tool_calls":
             pending_calls = list(block.get("tool_calls") or [])
+            pending_reasoning = block.get("reasoning") or None
             continue
         if block.get("type") == "tool_result":
             tr_id = block.get("tool_call_id")
@@ -334,24 +338,12 @@ def _steps_to_tool_messages(steps: list[dict]) -> list[dict]:
             tc = next((c for c in pending_calls if c.get("id") == tr_id), None)
             if tc is None:
                 continue
-            out.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tc.get("name", ""),
-                        "arguments": tc.get("arguments", "{}"),
-                    },
-                }],
-            })
-            out.append({
-                "role": "tool",
-                "tool_call_id": tr_id,
-                "name": block.get("name", ""),
+            build_tool_result_messages(out, [{
+                "tool_call_id": tc["id"],
+                "name": tc.get("name", ""),
+                "arguments": tc.get("arguments", "{}") or "{}",
                 "content": block.get("content", ""),
-            })
+            }], reasoning=pending_reasoning)
     return out
 
 

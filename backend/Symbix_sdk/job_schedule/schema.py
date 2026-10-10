@@ -42,6 +42,8 @@ class JobOut(JobBase):
     last_error: Optional[str] = None
     # 一次性任务「已跑过」:不再重排
     completed: bool = False
+    # 当前是否有一次执行正在进行(定时到点或「立即执行」)
+    running: bool = False
     # 人话频率回显（「每天 09:00」），由 humanize.describe_trigger 生成
     trigger_label: Optional[str] = None
 

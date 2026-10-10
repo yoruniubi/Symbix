@@ -6,8 +6,34 @@ fn greet(name: &str) -> String {
 
 use tauri::{Manager, menu::{MenuBuilder, MenuItemBuilder}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton}};
 
+/// 让本机回环地址绕过系统代理。
+///
+/// 系统代理(如 Clash)会把 127.0.0.1 的请求也交给远端节点转发,而远端节点上的
+/// 127.0.0.1 并不是本机,连不到本地后端,只能返回 502 空响应(前端表现为
+/// "Unexpected end of JSON input")。这里只排除回环地址,外网请求仍照常走代理。
+fn ensure_loopback_bypasses_proxy() {
+    const LOOPBACK: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
+    for key in ["NO_PROXY", "no_proxy"] {
+        let current = std::env::var(key).unwrap_or_default();
+        let mut hosts: Vec<String> = current
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for host in LOOPBACK {
+            if !hosts.iter().any(|h| h == host) {
+                hosts.push(host.to_string());
+            }
+        }
+        std::env::set_var(key, hosts.join(","));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 必须早于任何 reqwest 客户端构造(tauri-plugin-http 每次请求都会新建客户端)
+    ensure_loopback_bypasses_proxy();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_http::init())

@@ -48,7 +48,8 @@ async def _dispatch_job(job_id: str) -> None:
     if not job.get("enabled", True):
         return
     try:
-        await mgr.runner.execute(job)
+        # 走 manager 统一入口:同时登记「执行中」状态,前端能看到定时触发也在跑
+        await mgr.execute_job(job_id)
     except Exception:
         import traceback
         traceback.print_exc()

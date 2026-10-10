@@ -5,13 +5,39 @@ import time
 from datetime import datetime
 
 # 定时任务「整次模型调用」的重试次数与退避基数(秒)。
-# 比对话链路更宽松:无人值守时宁可多等 45s,也别把提醒弄丢。
-JOB_MODEL_ATTEMPTS = 3
+# 内层 _stream_with_retry 已经会重试单次调用,这里再叠一层「整次调用重试」;
+# 上层还有 wait_for 硬上限托底,所以次数不宜多(否则最坏耗时成倍增长)。
+JOB_MODEL_ATTEMPTS = 2
 JOB_RETRY_BASE_DELAY = 15.0
+
+# 单次模型调用硬上限 / 单次调用(含内层重试)的预算 / 一次任务给模型的总预算。
+# 上游「接了连接不发数据」时,不能白等满默认 300s 读超时
+# (旧行为最坏 3 次整次 × 3 次内层 × 300s ≈ 45 分钟,用户只看到面板卡死)。
+# 整轮上限很必要:一轮任务最多 25 个工具轮,只限单次的话总时长仍会失控。
+JOB_READ_TIMEOUT = 90.0
+JOB_CALL_TIMEOUT = 150.0
+JOB_CALL_BUDGET = 240.0
+JOB_RUN_BUDGET = 600.0
 
 # 一次性任务失败后的整轮补偿重试:提醒晚到 1 分钟好过丢掉
 JOB_ONE_SHOT_RUN_ATTEMPTS = 2
 JOB_COMPENSATE_DELAY = 60.0
+
+# 无人值守必须屏蔽的两个交互工具:它们会挂起等用户回答,定时任务没人回答。
+# 只在 job 链路拦,正常对话不受影响。
+UNATTENDED_BLOCKED_TOOLS = ("ask_clarifying_question", "propose_plan")
+
+# 这条追加在固定 system 规则**最后**(system_tail),因为 client 里那段固定规则
+# 含「多步任务先报计划、等用户点头」,不压过去的话定时任务反而会先问用户。
+UNATTENDED_SYSTEM_TAIL = (
+    "\n\n## 无人值守(定时任务,优先于上面所有冲突的规则)\n"
+    "- 没有人会回答你:**不要调用 `ask_clarifying_question`、不要调用 `propose_plan`、"
+    "不要要求用户确认或选择**,也不要输出「等你点头我再做」之类的待确认计划。\n"
+    "- 需要取舍的地方,自己选最合理的一种直接做完,在回复里一句话说明你选了什么。\n"
+    "- 不要把任务本身当成话题讨论(比如改频率、改配置、查上一次报错),"
+    "除非任务指令明确要求这么做;你的职责是把指令执行掉。\n"
+    "- 最终回复用 1-2 句人话给结论:做了什么 / 有什么需要用户知道。"
+)
 
 
 def _raise_if_upstream_failed(response: dict) -> None:
@@ -109,6 +135,8 @@ class JobRunner:
             import uuid as _uuid
             ckpt_round_id = _uuid.uuid4().hex[:12]
             start_ts = time.time()
+            # 本次执行的总预算:所有模型调用(含工具轮)共享,用完就判失败并落历史
+            run_deadline = start_ts + JOB_RUN_BUDGET
 
             steps = []
             last_reasoning = None
@@ -123,7 +151,10 @@ class JobRunner:
                     override_api_base=api_base,
                     override_model=model,
                     system_prompt=job_system_prompt,
-                )
+                    system_tail=UNATTENDED_SYSTEM_TAIL,
+                    read_timeout=JOB_READ_TIMEOUT,
+                ),
+                deadline=run_deadline,
             )
             last_reasoning = response.get("reasoning")
 
@@ -174,6 +205,18 @@ class JobRunner:
                                       "content": skip_msg})
                         continue
 
+                    # 无人值守不能提问/等确认:直接回一句「自行决定」,避免任务卡在等人回答
+                    if fn["name"] in UNATTENDED_BLOCKED_TOOLS:
+                        skip_msg = (
+                            "[系统] 定时任务无人值守,没有用户可回答:请自行选择最合理的做法继续执行,"
+                            "把需要用户知晓的事直接写进最终回复。"
+                        )
+                        tool_results.append({"tool_call_id": fn["id"], "role": "tool", "name": fn["name"],
+                                             "content": skip_msg, "arguments": fn.get("arguments")})
+                        steps.append({"type": "tool_result", "tool_call_id": fn["id"], "name": fn["name"],
+                                      "content": skip_msg})
+                        continue
+
                     # auto_safe:非 SAFE 跳过；否则非 SAFE 也跳过（后台无人审批，一律不执行写操作）
                     if risk_level != ToolRiskLevel.SAFE:
                         skip_msg = (
@@ -210,7 +253,12 @@ class JobRunner:
                         override_api_base=api_base,
                         override_model=model,
                         system_prompt=job_system_prompt,
-                    )
+                        system_tail=UNATTENDED_SYSTEM_TAIL,
+                        # thinking 模式的上游要求把上一轮 reasoning 原样回传,否则 400
+                        reasoning=last_reasoning,
+                        read_timeout=JOB_READ_TIMEOUT,
+                    ),
+                    deadline=run_deadline,
                 )
                 last_reasoning = response.get("reasoning")
                 final_text = response.get("content") or final_text
@@ -245,25 +293,32 @@ class JobRunner:
                 self._notify(job, str(e), "error")
             return "error"
 
-    async def _call_model(self, factory, attempts: int = JOB_MODEL_ATTEMPTS) -> dict:
-        """调模型并在上游抖动时重试**整次调用**。
+    async def _call_model(self, factory, attempts: int = JOB_MODEL_ATTEMPTS,
+                          deadline: float | None = None) -> dict:
+        """调模型并在上游抖动时重试**整次调用**,同时给单次调用与整轮任务设硬上限。
 
-        非流式管道内部的流式重试已经负责「单次调用的分段重试」,但网关抖动可能把
-        3 次尝试全部撞满(实测该网关约 1/5 的调用即使重试 3 次也失败)。定时任务无人
-        值守,失败就是用户丢提醒,所以这里再加一层「整次调用重试 + 更长退避」。
+        wait_for 会在上游不发数据时打断本次调用(取消内层流与重试),
+        避免把默认 300s 读超时一层层白等满;预算用尽就不再重试,直接判失败。
         """
+        stop_at = min(deadline if deadline else float("inf"), time.time() + JOB_CALL_BUDGET)
         last: Exception | None = None
         for i in range(1, attempts + 1):
-            response = await factory()
+            remaining = stop_at - time.time()
+            if remaining <= 1:
+                raise RuntimeError(f"{last}; 且已用尽模型调用时间预算" if last else "已用尽模型调用时间预算")
+            per_call = min(JOB_CALL_TIMEOUT, remaining)
             try:
+                response = await asyncio.wait_for(factory(), timeout=per_call)
                 _raise_if_upstream_failed(response)
                 return response
+            except asyncio.TimeoutError:
+                last = RuntimeError(f"模型调用超时(超过 {per_call:.0f}s 无输出)")
             except RuntimeError as e:
                 last = e
-                if i < attempts:
-                    delay = JOB_RETRY_BASE_DELAY * i
-                    print(f"[job] 模型调用第 {i}/{attempts} 次失败,{delay:.0f}s 后重试: {e}")
-                    await asyncio.sleep(delay)
+            if i < attempts:
+                delay = JOB_RETRY_BASE_DELAY * i
+                print(f"[job] 模型调用第 {i}/{attempts} 次失败,{delay:.0f}s 后重试: {last}")
+                await asyncio.sleep(delay)
         raise last if last else RuntimeError("模型调用失败")
 
     def _notify(self, job: dict, snippet: str, status: str) -> None:

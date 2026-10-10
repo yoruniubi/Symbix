@@ -25,6 +25,7 @@ from application.services.memory_ops import (
     format_sse,
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
+from Symbix_sdk.client import build_tool_result_messages
 from Symbix_sdk.checkpoint import set_current as _ctx_set_current
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
@@ -277,22 +278,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 tool_chain_msgs = ctx.get("tool_chain_msgs") or []
                 if tool_chain_msgs:
                     msgs.extend(tool_chain_msgs)
-                msgs.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {"id": tr["tool_call_id"], "type": "function",
-                         "function": {"name": tr["name"], "arguments": tr.get("arguments", "{}") or "{}"}}
-                        for tr in tool_results
-                    ],
-                })
-                for tr in tool_results:
-                    msgs.append({
-                        "role": "tool",
-                        "tool_call_id": tr["tool_call_id"],
-                        "name": tr["name"],
-                        "content": tr["content"],
-                    })
+                # 本轮 assistant(tool_calls) + tool 结果:带上本轮 reasoning
+                # (思考模式上游要求回传 reasoning_content,否则续跑 400)
+                build_tool_result_messages(msgs, tool_results, reasoning=last_reasoning)
                 # 首轮消息即作为后续累积基底,后续轮工具结果在此之上追加。
                 running_msgs = msgs
                 _assert_tool_pairing(running_msgs, strict=False)
@@ -564,7 +552,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                         break
 
                     # 后续轮同样增量累积到 running_msgs,不再从 history 重建。
-                    symbix_client._build_tool_result_messages(running_msgs, new_results)
+                    symbix_client._build_tool_result_messages(running_msgs, new_results, last_reasoning)
                     _assert_tool_pairing(running_msgs, strict=False)
                     cum_tool_tokens += sum(
                         _estimate_tool_tokens(str(tr.get("content", ""))) for tr in new_results

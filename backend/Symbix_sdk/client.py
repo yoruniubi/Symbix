@@ -16,6 +16,40 @@ from .retry_policy import (
 # 改为提示模型用 `skill__<name>` 工具按需加载(如 skill-creator 的 33.6KB SKILL.md)。
 SKILL_INJECT_MAX_BYTES = 12000
 
+# 流式读取的空闲上限:上游「接了连接但不发数据」时,靠它把等待打断。
+# 定时任务这类无人值守链路会传更短的值,见 job_schedule.runner.JOB_READ_TIMEOUT。
+DEFAULT_READ_TIMEOUT = 300.0
+
+
+def build_tool_result_messages(messages: list[dict], tool_results: list[dict],
+                               reasoning: Optional[str] = None) -> list[dict]:
+    """把工具执行结果回传拼成 assistant tool_calls + tool 消息(全项目共用这一份)。
+
+    reasoning 非空时必须随 assistant 消息一起回传 reasoning_content:
+    DeepSeek 等思考模式的上游要求后续请求原样带回上一轮思考内容,缺了会直接 400
+    (The `reasoning_content` in the thinking mode must be passed back to the API)。
+    """
+    assistant_msg = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": tr["tool_call_id"], "type": "function",
+             "function": {"name": tr["name"], "arguments": tr.get("arguments", "{}") or "{}"}}
+            for tr in (tool_results or [])
+        ],
+    }
+    if reasoning:
+        assistant_msg["reasoning_content"] = reasoning
+    messages.append(assistant_msg)
+    for tr in (tool_results or []):
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tr["tool_call_id"],
+            "name": tr["name"],
+            "content": tr["content"],
+        })
+    return messages
+
 
 def _sanitize_tools(tools: list[dict]) -> list[dict]:
     """统一清洗 tool 列表，确保符合 OpenAI function-calling 严格 schema：
@@ -161,7 +195,8 @@ class SymbixClient:
 
     def _build_messages(self, history, user_input, registry=None, tools=None, image_parts=None,
                          supports_vision: Optional[bool] = None,
-                         system_prompt: Optional[str] = None):
+                         system_prompt: Optional[str] = None,
+                         system_tail: Optional[str] = None):
         messages = []
         # 显式传入的 system_prompt 优先(后台链路如记忆提取/决策),
         # 不覆盖全局 self.system_prompt,避免并发跑到一半被读走污染值。
@@ -261,6 +296,12 @@ class SymbixClient:
                     + "\n\n"
                 )
 
+        # 模式级规则(如定时任务的「无人值守」)必须排在固定规则**之后**:
+        # 固定规则里有「多步任务先报计划、等用户点头」这类要人参与的要求,
+        # 只写在 system_prompt 里会被它压过去。
+        if system_tail:
+            system += system_tail
+
         if system:
             messages.append({"role": "system", "content": system})
         messages.extend(history)
@@ -326,25 +367,10 @@ class SymbixClient:
         return messages
 
     # ── 非流式（原生 HTTP，复用流式管道聚合）────────
-    def _build_tool_result_messages(self, messages: list[dict], tool_results: list[dict]) -> list[dict]:
+    def _build_tool_result_messages(self, messages: list[dict], tool_results: list[dict],
+                                    reasoning: Optional[str] = None) -> list[dict]:
         """把工具执行结果回传拼成 assistant tool_calls + tool 消息，供续聊使用。"""
-        messages.append({
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {"id": tr["tool_call_id"], "type": "function",
-                 "function": {"name": tr["name"], "arguments": tr.get("arguments", "{}") or "{}"}}
-                for tr in (tool_results or [])
-            ],
-        })
-        for tr in (tool_results or []):
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tr["tool_call_id"],
-                "name": tr["name"],
-                "content": tr["content"],
-            })
-        return messages
+        return build_tool_result_messages(messages, tool_results, reasoning)
 
     async def _chat_raw(
         self,
@@ -354,6 +380,7 @@ class SymbixClient:
         raw_base: str = None,
         api_key: str = None,
         caps: Optional[dict] = None,
+        read_timeout: Optional[float] = None,
     ) -> dict:
         """非流式核心：解析端点 + 分发到原生流式管道，聚合结果返回。
 
@@ -364,7 +391,7 @@ class SymbixClient:
 
         async for evt in self._open_stream(
             url, provider_type, headers, model_name, messages, tools,
-            caps=caps, caps_model_override=raw_model,
+            caps=caps, caps_model_override=raw_model, read_timeout=read_timeout,
         ):
             if evt.get("type") == "done":
                 return {
@@ -389,6 +416,8 @@ class SymbixClient:
         override_model: str = None,
         image_parts: Optional[list[dict]] = None,
         system_prompt: Optional[str] = None,
+        system_tail: Optional[str] = None,
+        read_timeout: Optional[float] = None,
     ) -> dict:
         provider = self.registry.get_active()
         raw_model = override_model or provider.model
@@ -398,11 +427,13 @@ class SymbixClient:
         # 显式传入的 system_prompt 优先(如记忆提取/决策等后台链路),
         # 直达 _build_messages,不碰全局 self.system_prompt → 并发安全。
         messages = self._build_messages(history or [], user_input, registry=registry, tools=tools,
-                                        image_parts=image_parts, system_prompt=system_prompt)
+                                        image_parts=image_parts, system_prompt=system_prompt,
+                                        system_tail=system_tail)
         caps = resolve_capabilities(raw_model, provider)
 
         print(">>> [chat] model:", raw_model, "base:", raw_base, "caps:", caps)
-        return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps)
+        return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps,
+                                    read_timeout=read_timeout)
 
     async def chat_with_tool_results(
         self,
@@ -416,6 +447,9 @@ class SymbixClient:
         override_model: str = None,
         image_parts: Optional[list[dict]] = None,
         system_prompt: Optional[str] = None,
+        system_tail: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        read_timeout: Optional[float] = None,
     ) -> dict:
         provider = self.registry.get_active()
         raw_model = override_model or provider.model
@@ -423,12 +457,14 @@ class SymbixClient:
         api_key_val = override_api_key or provider.api_key
 
         messages = self._build_messages(history or [], user_input, registry=registry, tools=tools,
-                                        image_parts=image_parts, system_prompt=system_prompt)
-        messages = self._build_tool_result_messages(messages, tool_results)
+                                        image_parts=image_parts, system_prompt=system_prompt,
+                                        system_tail=system_tail)
+        messages = self._build_tool_result_messages(messages, tool_results, reasoning)
         caps = resolve_capabilities(raw_model, provider)
 
         print(">>> [tool_results] model:", raw_model, "caps:", caps)
-        return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps)
+        return await self._chat_raw(messages, tools, raw_model, raw_base, api_key_val, caps,
+                                    read_timeout=read_timeout)
 
     # ── 原生 HTTP 流式 SSE ────────────────────────────────────
     async def chat_stream(
@@ -474,6 +510,7 @@ class SymbixClient:
         tools: Optional[list] = None,
         caps: Optional[dict] = None,
         caps_model_override: Optional[str] = None,
+        read_timeout: Optional[float] = None,
     ) -> AsyncGenerator[dict, None]:
         """按 provider 类型挑管道,并统一套上重试外壳(流式对话与子 Agent 共用)。"""
         if provider_type == "anthropic":
@@ -483,7 +520,7 @@ class SymbixClient:
         else:
             factory = lambda: self._stream_openai_compat(  # noqa: E731
                 url, headers, model_name, messages, tools, caps=caps,
-                caps_model_override=caps_model_override,
+                caps_model_override=caps_model_override, read_timeout=read_timeout,
             )
         label = {"anthropic": "Anthropic", "gemini": "Gemini"}.get(provider_type, "OpenAI")
         async for evt in self._stream_with_retry(factory, label):
@@ -677,6 +714,7 @@ class SymbixClient:
         tools: Optional[list] = None,
         caps: Optional[dict] = None,
         caps_model_override: Optional[str] = None,
+        read_timeout: Optional[float] = None,
     ) -> AsyncGenerator[dict, None]:
         """OpenAI /v1/chat/completions 及兼容接口 SSE 流(单次尝试,重试由 `_stream_with_retry` 统一负责)。
 
@@ -720,7 +758,8 @@ class SymbixClient:
             body["prompt_cache_key"] = "symbix-session"
 
         # 分开设置各阶段超时，而不是一个数字打天下
-        timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+        timeout = httpx.Timeout(connect=10.0, read=read_timeout or DEFAULT_READ_TIMEOUT,
+                                write=30.0, pool=10.0)
 
         full_text = ""
         full_reasoning = ""

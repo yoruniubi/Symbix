@@ -715,15 +715,21 @@ onBeforeUnmount(() => {
   border: none !important;
   box-shadow: none !important;
 }
+/* 自动高度由隐藏的 mirror 量出来:可见文本域 / mirror / 占位符三个元素的
+   字号、行高、内边距必须完全一致,否则高度算小 → 光标与占位符错位、末行被裁 */
+.chat-input :deep(.n-input__textarea-el),
+.chat-input :deep(.n-input__textarea-mirror),
+.chat-input :deep(.n-input__placeholder) {
+  padding: 8px 4px 6px 4px !important;
+  font-size: 14px;
+  line-height: 1.55;
+}
 .chat-input :deep(.n-input__textarea-el) {
   background: transparent !important;
   border: none !important;
   border-radius: 0 !important;
-  padding: 8px 4px 6px 4px;
   caret-color: var(--accent-500, #EF6B6E);
   color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.55;
 }
 .chat-input :deep(.n-input__textarea-el:focus) {
   background: transparent !important;
@@ -736,8 +742,6 @@ onBeforeUnmount(() => {
   transition: background-color 5000s ease-in-out 0s;
 }
 .chat-input :deep(.n-input__placeholder) {
-  padding: 8px 4px 6px 4px !important;
-  line-height: 1.55;
   color: var(--text-muted);
 }
 

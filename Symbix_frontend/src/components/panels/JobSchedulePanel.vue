@@ -142,7 +142,11 @@
               <span class="job-name" :title="job.name">{{ job.name }}</span>
               <div class="job-badges">
                 <!-- 运行状态徽章 -->
-                <span v-if="job.completed" class="job-state completed">
+                <span v-if="job.running" class="job-state running">
+                  <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
+                  {{ $t('jobPanel.runningNow') }}
+                </span>
+                <span v-else-if="job.completed" class="job-state completed">
                   <svg class="badge-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg>
                   {{ $t('jobPanel.completed') }}
                 </span>
@@ -176,7 +180,7 @@
               <n-button size="tiny" quaternary class="panel-icon-btn sm" :class="{ 'has-error': !!job.last_error }" :title="$t('jobPanel.edit')" @click="startEdit(job)">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </n-button>
-              <n-button size="tiny" quaternary class="panel-icon-btn sm" :title="$t('jobPanel.runNow')" @click="runNow(job.id)">
+              <n-button size="tiny" quaternary class="panel-icon-btn sm" :loading="!!job.running" :disabled="!!job.running" :title="$t('jobPanel.runNow')" @click="runNow(job.id)">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               </n-button>
               <n-button size="tiny" quaternary class="panel-icon-btn sm" :title="job.enabled ? $t('jobPanel.pause') : $t('jobPanel.resume')" @click="toggleJob(job)">
@@ -216,7 +220,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
@@ -225,7 +229,7 @@ type TriggerType = 'cron' | 'interval' | 'date'
 /** 表单里的「重复方式」:比 raw trigger_type 更贴近日常说法 */
 type Mode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once' | 'cron'
 type IntervalUnit = 'minutes' | 'hours' | 'days' | 'weeks'
-type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string; trigger_label?: string; completed?: boolean }
+type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType; trigger_config: Record<string, any>; enabled: boolean; auto_safe: boolean; next_run_time?: string; last_run_time?: string; last_status?: 'ok' | 'error' | 'skipped'; last_error?: string; trigger_label?: string; completed?: boolean; running?: boolean }
 type History = { job_id: string; run_time: string; status: 'ok' | 'error' | 'skipped'; output_snippet: string; error: string }
 
 const props = defineProps<{ activePanel: Panel | null }>()
@@ -240,6 +244,10 @@ const saving = ref(false)
 const editing = ref(false)
 const historyVisible = ref(false)
 const editingId = ref<string | null>(null)
+// 正在看历史的任务 id(跑完后自动刷新这份历史)
+const historyJobId = ref<string | null>(null)
+// 「执行中」轮询:立即执行是后台跑的,靠它感知跑完并刷新列表/历史
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // ── 表单状态 ──
 const form = ref({ name: '', prompt: '', enabled: true, auto_safe: true })
@@ -291,12 +299,38 @@ async function loadJobs() {
   loading.value = true
   try {
     jobs.value = await request('/jobs')
+    syncPolling()
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('jobPanel.loadFail', { msg: e.message }))
   } finally {
     loading.value = false
   }
 }
+
+function syncPolling() {
+  const anyRunning = jobs.value.some((job) => job.running)
+  if (anyRunning && !pollTimer) pollTimer = setInterval(pollRunning, 3000)
+  if (!anyRunning && pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+async function pollRunning() {
+  try {
+    jobs.value = await request('/jobs')
+  } catch {
+    return
+  }
+  if (jobs.value.some((job) => job.running)) return
+  syncPolling()
+  // 刚跑完:正在看这个任务的历史就刷新一份,否则用户会以为没写入
+  if (historyVisible.value && historyJobId.value) await openHistory(historyJobId.value)
+}
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
 
 // ── 时间 → trigger 组装 / 反填 ──
 
@@ -524,10 +558,14 @@ async function saveJob() {
 
 async function runNow(id: string) {
   try {
+    // 后端立即返回、后台执行:这里只提示已开始,并在执行期间轮询任务状态
+    jobs.value = jobs.value.map((job) => (job.id === id ? { ...job, running: true } : job))
     await request(`/jobs/${id}/run`, { method: 'POST' })
     ;(window as any).$message?.success?.(t('jobPanel.runSuccess'))
+    await loadJobs()
   } catch (e: any) {
     ;(window as any).$message?.error?.(t('jobPanel.runFail', { msg: e.message }))
+    await loadJobs()
   }
 }
 
@@ -560,6 +598,7 @@ async function deleteJob(id: string) {
 
 async function openHistory(id: string) {
   try {
+    historyJobId.value = id
     history.value = await request(`/jobs/${id}/history`)
     historyVisible.value = true
   } catch (e: any) {
@@ -858,7 +897,7 @@ defineExpose({ refresh: loadJobs })
   color:var(--text-muted);
   background:var(--surface-raised);
 }
-.completed {
+.completed, .running {
   color:var(--accent,#60a5fa);
   background:color-mix(in srgb,var(--accent,#60a5fa) 14%,transparent);
 }

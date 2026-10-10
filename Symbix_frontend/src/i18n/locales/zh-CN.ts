@@ -60,6 +60,10 @@ export default {
     reject: '拒绝',
     generating: 'AI 正在生成回复...',
     retrying: '上游中断,正在重新生成',
+    actModeReactive: '自动',
+    actModeReactiveTip: '本轮由后端自动判断为「直接回应」,不列计划',
+    actModePlan: '计划',
+    actModePlanTip: '本轮由后端自动判断为「先列计划再执行」',
     // Risk levels
     riskLevelSafe: '安全',
     riskLevelMedium: '需审批',
@@ -329,11 +333,12 @@ export default {
     saveFail: '保存失败: {msg}',
     loadFail: '加载任务失败: {msg}',
     runFail: '运行失败: {msg}',
-    runSuccess: '已触发立即运行',
+    runSuccess: '已开始后台执行,跑完会写入历史记录',
     historyFail: '加载历史失败: {msg}',
     active: '运行中',
     paused: '已暂停',
     completed: '已完成',
+    runningNow: '执行中',
   },
 
   // ===== Checkpoint Panel =====
