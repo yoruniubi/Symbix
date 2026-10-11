@@ -36,6 +36,16 @@ CREATE INDEX IF NOT EXISTS idx_chk_kind          ON checkpoint_records(kind);
 """
 
 
+def _parse_row(row: sqlite3.Row) -> dict:
+    """一行 checkpoint 记录 → dict，payload 解回 json object。"""
+    obj = dict(row)
+    try:
+        obj["payload"] = json.loads(obj.get("payload") or "{}")
+    except json.JSONDecodeError:
+        obj["payload"] = {}
+    return obj
+
+
 class CheckpointStore:
     """SQLite 存储。简单写，不做高级特性。
 
@@ -129,15 +139,27 @@ class CheckpointStore:
                         LIMIT ? OFFSET ?""",
                     (session_id, limit, offset),
                 ).fetchall()
-        out = []
-        for r in rows:
-            obj = dict(r)
-            try:
-                obj["payload"] = json.loads(obj.get("payload") or "{}")
-            except json.JSONDecodeError:
-                obj["payload"] = {}
-            out.append(obj)
-        return out
+        return [_parse_row(r) for r in rows]
+
+    def list_recent(self, session_id: str, limit: int = 300,
+                    include_superseded: bool = True) -> list[dict]:
+        """取最近 limit 条（返回仍按 seq 升序）。
+
+        只看会话尾部的场景（如「最近几轮做过什么」）不能用 list_by_session ——
+        它是从最早一条开始截断的，长会话拿到的永远是最旧的那批。
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            extra = "" if include_superseded else " AND status != 'superseded'"
+            rows = conn.execute(
+                f"""SELECT id, kind, ts, round_id, seq, status, error, payload
+                      FROM checkpoint_records
+                     WHERE session_id = ?{extra}
+                     ORDER BY seq DESC
+                     LIMIT ?""",
+                (session_id, limit),
+            ).fetchall()
+        return [_parse_row(r) for r in rows[::-1]]
 
     def list_by_round(self, session_id: str, round_id: str,
                        include_superseded: bool = False) -> list[dict]:
@@ -160,15 +182,7 @@ class CheckpointStore:
                         ORDER BY seq ASC""",
                     (session_id, round_id),
                 ).fetchall()
-        out = []
-        for r in rows:
-            obj = dict(r)
-            try:
-                obj["payload"] = json.loads(obj.get("payload") or "{}")
-            except json.JSONDecodeError:
-                obj["payload"] = {}
-            out.append(obj)
-        return out
+        return [_parse_row(r) for r in rows]
 
     def summary_by_session(self, session_id: str) -> dict:
         """一个 session 一镜头 overview —— 喂给前端时间线头部。"""
@@ -214,12 +228,7 @@ class CheckpointStore:
             ).fetchone()
         if not row:
             return None
-        obj = dict(row)
-        try:
-            obj["payload"] = json.loads(obj.get("payload") or "{}")
-        except json.JSONDecodeError:
-            obj["payload"] = {}
-        return obj
+        return _parse_row(row)
 
     def prune_session(self, session_id: str, keep_recent_rounds: int = 50) -> dict:
         """保留最近 N 个 round，删除更早 round 的所有记录。返回删除统计。"""

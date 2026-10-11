@@ -19,6 +19,7 @@ from application.state import (
     unregister_session_task,
 )
 from application.services.risk_context import classify_for_chat, maybe_apply_trust_command
+from application.services.round_digest import build_recent_tool_digest
 from application.services.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
@@ -111,6 +112,14 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             api_key = request.api_key
             api_base = request.api_base
             model = request.model or provider_registry.get_active().model
+            # 本轮 user_msg → agent 的 checkpoint 标识(整轮 tool_call 与轮末总结点共用)。
+            # 提前初始化:客户端在轮次早期断开时,取消分支也要能落一条 round 记录。
+            ckpt_round_id = _new_round_id()
+            ckpt_tool_count = 0
+            ckpt_failed = 0
+            ckpt_start_ts = asyncio.get_event_loop().time()
+            full_text = ""
+            last_reasoning = None
 
             user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
             # auto-pilot 自然语言开关指令(消费时替换为提示占位)
@@ -147,6 +156,11 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             dyn_parts: list[str] = []
             if dyn_mem:
                 dyn_parts.append(dyn_mem)
+            # 「最近几轮做了什么」:来自 checkpoint 的工具调用摘要,避免模型为了知道自己做过什么
+            # 去重读文件(那更烧 token)。没有工具记录的轮次不产生任何开销。
+            tool_digest = build_recent_tool_digest(request.session_id)
+            if tool_digest:
+                dyn_parts.append(tool_digest)
             if act_mode == "reactive":
                 dyn_parts.append(
                     "[Act Mode: reactive]\n"
@@ -173,14 +187,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
 
             steps = []
-            full_text = ""
             tool_calls_raw = None
-            last_reasoning = None
-            # 本轮 user_msg → agent 的 checkpoint 标识。整轮中所有 tool_call 与最后的 round 总结点共用.
-            ckpt_round_id = _new_round_id()
-            ckpt_tool_count = 0
-            ckpt_failed = 0
-            ckpt_start_ts = asyncio.get_event_loop().time()
             yield format_sse({"type": "round_id", "round_id": ckpt_round_id})
 
             if parsed_atts:
@@ -736,6 +743,14 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     else "[本条回复在生成过程中被用户中断,尚未输出任何内容。]"
                 )
                 memory.add(request.session_id, "assistant", interrupted_note)
+                # 中断轮也补一条 round 总结点,否则时间线里这一轮只有起点、没有终点
+                _emit_round_summary(
+                    request.session_id, ckpt_round_id,
+                    mem_msg, interrupted_note, last_reasoning,
+                    ckpt_tool_count, ckpt_failed,
+                    duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                    status="error", error="用户中断",
+                )
             except Exception:
                 pass
             return
@@ -746,6 +761,16 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             try:
                 from application.services.danmaku_service import emit_danmaku
                 emit_danmaku("error")
+            except Exception:
+                pass
+            try:
+                _emit_round_summary(
+                    request.session_id, ckpt_round_id,
+                    mem_msg, full_text, last_reasoning,
+                    ckpt_tool_count, ckpt_failed,
+                    duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                    status="error", error=str(e),
+                )
             except Exception:
                 pass
             yield format_sse({"type": "error", "content": str(e)})

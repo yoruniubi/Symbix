@@ -269,8 +269,10 @@ def _emit_round_summary(
     tool_count: int,
     failed_tools: int,
     duration_ms: int = 0,
+    status: str = "ok",
+    error: str | None = None,
 ) -> None:
-    """一轮结束时发送 round 总结点。"""
+    """一轮结束时发送 round 总结点(status=error 用于中断/异常轮)。"""
     try:
         checkpoint_recorder.emit_round(
             session_id=session_id,
@@ -281,6 +283,8 @@ def _emit_round_summary(
             tool_count=tool_count,
             failed_tools=failed_tools,
             duration_ms=duration_ms,
+            status=status,
+            error=error,
         )
     except Exception as e:
         print(f"[checkpoint] emit_round failed: {e}")

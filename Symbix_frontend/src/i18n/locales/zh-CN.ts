@@ -64,6 +64,9 @@ export default {
     actModeReactiveTip: '本轮由后端自动判断为「直接回应」,不列计划',
     actModePlan: '计划',
     actModePlanTip: '本轮由后端自动判断为「先列计划再执行」',
+    rigPreview: '桌宠形象预览(base.svg)',
+    rigPreviewLoading: '正在读取 base.svg…',
+    rigPreviewMissing: 'base.svg 还没写入或读取失败',
     // Risk levels
     riskLevelSafe: '安全',
     riskLevelMedium: '需审批',

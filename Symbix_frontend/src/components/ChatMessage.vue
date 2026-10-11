@@ -86,6 +86,21 @@
           </div>
         </div>
 
+        <!-- pet-forge 预览:Agent 写一次 base.svg 就刷新一次,方便直观看到形象 -->
+        <div v-if="rigPath" class="rig-preview">
+          <div class="rig-preview-head">
+            <span class="rig-preview-title">{{ t('chat.rigPreview') }}</span>
+            <span v-if="rigName" class="rig-preview-name">{{ rigName }}</span>
+          </div>
+          <div class="rig-preview-body">
+            <img v-if="rigUrl" class="rig-preview-img" :src="rigUrl" :alt="rigName || 'base.svg'" />
+            <div v-else class="rig-preview-hint">
+              {{ rigLoading ? t('chat.rigPreviewLoading') : t('chat.rigPreviewMissing') }}
+            </div>
+          </div>
+          <div class="rig-preview-path" :title="rigPath">{{ rigPath }}</div>
+        </div>
+
         <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续。kind=plan 时为待办清单确认卡 -->
         <div v-if="msg.pending_question" class="question-block" :class="{ 'plan-block': msg.pending_question.kind === 'plan' }">
           <div class="question-hint">
@@ -253,10 +268,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useI18n } from 'vue-i18n'
+import { BACKEND_URL } from '@/utils/backend'
+import { extractRigPath, rigFolderName } from '@/utils/petRig'
 
 const props = defineProps<{
   msg: any
@@ -362,6 +379,78 @@ const actModeTip = computed(() => {
   if (props.msg?.act_mode === 'plan_solve') return t('chat.actModePlanTip')
   if (props.msg?.act_mode === 'reactive') return t('chat.actModeReactiveTip')
   return ''
+})
+
+/** pet-forge 预览:取本轮工具步骤里最近一次写出的 base.svg,直观看到桌宠形象大致长什么样 */
+const rigPath = computed(() => {
+  const steps: any[] = props.msg?.steps || []
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const hit = extractRigPath(steps[i]?.arguments)
+    if (hit) return hit
+  }
+  return ''
+})
+const rigName = computed(() => rigFolderName(rigPath.value))
+/** 最后一步的状态:落 done 往往意味着一批文件刚写完,值得重读一次 base.svg */
+const lastStepStatus = computed(() => {
+  const steps: any[] = props.msg?.steps || []
+  return steps.length ? steps[steps.length - 1]?.status || '' : ''
+})
+
+const rigUrl = ref('')
+const rigLoading = ref(false)
+/** 已渲染进 <img> 的 SVG 文本:内容没变就不重建 Blob URL,避免闪烁 */
+let rigText = ''
+/** 在途请求令牌:只认最后一次结果,防止旧请求覆盖新预览 */
+let rigToken = 0
+
+function releaseRig() {
+  rigText = ''
+  if (rigUrl.value) {
+    URL.revokeObjectURL(rigUrl.value)
+    rigUrl.value = ''
+  }
+}
+
+/** 读 base.svg 文本 → Blob URL(SVG 走 <img> 而不是 v-html,避免脚本注入);文件没写出来时静默隐藏 */
+async function loadRig(path: string) {
+  if (!path) {
+    rigToken++
+    releaseRig()
+    rigLoading.value = false
+    return
+  }
+  const token = ++rigToken
+  rigLoading.value = true
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/files/read?path=${encodeURIComponent(path)}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    const text = typeof data?.content === 'string' ? data.content : ''
+    if (token !== rigToken) return
+    if (text && text !== rigText) {
+      rigText = text
+      const next = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }))
+      if (rigUrl.value) URL.revokeObjectURL(rigUrl.value)
+      rigUrl.value = next
+    }
+  } catch {
+    if (token === rigToken) releaseRig()
+  } finally {
+    if (token === rigToken) rigLoading.value = false
+  }
+}
+
+// 路径变了 / 步骤数变了 / 最后一步落状态(文件刚写完)都重读一次
+watch(
+  [rigPath, () => (props.msg?.steps || []).length, lastStepStatus],
+  () => { void loadRig(rigPath.value) },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  rigToken++
+  releaseRig()
 })
 
 /** 提问卡选项:优先用后端给的 options(带描述/动作),旧消息回退到 suggestions 纯文本。 */
@@ -886,6 +975,61 @@ onMounted(() => {
 }
 .act-mode-row:hover .act-mode-badge {
   opacity: 1;
+}
+
+/* ---- pet-forge 预览卡 ---- */
+.rig-preview {
+  width: min(72%, 760px);
+  max-width: 100%;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  padding: 8px 10px;
+}
+.rig-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.rig-preview-title {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.rig-preview-name {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-border);
+  color: var(--accent-500, #EF6B6E);
+}
+.rig-preview-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-sm, 6px);
+}
+.rig-preview-img {
+  max-height: 180px;
+  max-width: 100%;
+  object-fit: contain;
+}
+.rig-preview-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 24px 0;
+}
+.rig-preview-path {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 

@@ -64,6 +64,9 @@ export default {
     actModeReactiveTip: 'Agent auto-routed this turn to a direct reply (no plan)',
     actModePlan: 'Plan',
     actModePlanTip: 'Agent auto-routed this turn to plan-then-solve',
+    rigPreview: 'Pet preview (base.svg)',
+    rigPreviewLoading: 'Reading base.svg…',
+    rigPreviewMissing: 'base.svg not written yet or unreadable',
     // Risk levels
     riskLevelSafe: 'Safe',
     riskLevelMedium: 'Needs approval',
