@@ -87,24 +87,25 @@
         </div>
 
         <!-- pet-forge 预览:Agent 写一次 base.svg 就刷新一次,方便直观看到形象 -->
-        <div v-if="rigPath" class="rig-preview">
+        <div v-if="rigPath && !rigMissing" class="rig-preview">
           <div class="rig-preview-head">
             <span class="rig-preview-title">{{ t('chat.rigPreview') }}</span>
             <span v-if="rigName" class="rig-preview-name">{{ rigName }}</span>
           </div>
           <div class="rig-preview-body">
             <img v-if="rigUrl" class="rig-preview-img" :src="rigUrl" :alt="rigName || 'base.svg'" />
-            <div v-else class="rig-preview-hint">
-              {{ rigLoading ? t('chat.rigPreviewLoading') : t('chat.rigPreviewMissing') }}
+            <div v-else-if="rigLoading" class="rig-preview-hint">
+              {{ t('chat.rigPreviewLoading') }}
             </div>
           </div>
           <div class="rig-preview-path" :title="rigPath">{{ rigPath }}</div>
         </div>
 
         <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续。kind=plan 时为待办清单确认卡 -->
-        <div v-if="msg.pending_question" class="question-block" :class="{ 'plan-block': msg.pending_question.kind === 'plan' }">
+        <div v-if="msg.pending_question" class="question-block"
+          :class="{ 'plan-block': msg.pending_question.kind === 'plan', 'question-block-expired': msg.approval_expired === true }">
           <div class="question-hint">
-            {{ msg.pending_question.kind === 'plan' ? t('chat.planConfirm') : t('chat.agentQuestion') }}
+            {{ msg.approval_expired ? t('chat.questionExpired') : (msg.pending_question.kind === 'plan' ? t('chat.planConfirm') : t('chat.agentQuestion')) }}
           </div>
           <div class="question-text">{{ msg.pending_question.question }}</div>
           <div v-if="msg.pending_question.context" class="question-context">
@@ -115,7 +116,7 @@
               v-for="(opt, oi) in questionOptions"
               :key="oi"
               class="q-option"
-              :class="{ 'q-option-picked': pickedOption === oi, 'q-option-disabled': msg.approval_pending === true }"
+              :class="{ 'q-option-picked': pickedOption === oi, 'q-option-disabled': msg.approval_pending === true || msg.approval_expired === true }"
               @click="pickOption(opt, oi)"
             >
               <span class="q-option-idx">{{ oi + 1 }}.</span>
@@ -131,14 +132,14 @@
               v-model:value="answerText"
               :placeholder="msg.pending_question.kind === 'plan' ? t('chat.planAnswerPlaceholder') : t('chat.answerPlaceholder')"
               size="small"
-              :disabled="msg.approval_pending === true"
+              :disabled="msg.approval_pending === true || msg.approval_expired === true"
               @keydown.enter.prevent="submitAnswer"
             />
             <n-button
               size="small"
               type="primary"
               :loading="msg.approval_pending === true"
-              :disabled="!answerText.trim()"
+              :disabled="!answerText.trim() || msg.approval_expired === true"
               @click="submitAnswer"
             >
               {{ t('chat.submitAnswer') }}
@@ -146,20 +147,22 @@
             <n-button
               size="small"
               tertiary
-              :disabled="msg.approval_pending === true"
+              :disabled="msg.approval_pending === true || msg.approval_expired === true"
               @click="emit('approve', false)"
             >
               {{ msg.pending_question.kind === 'plan' ? t('chat.planReject') : t('chat.rejectQuestion') }}
             </n-button>
           </div>
-          <div v-if="questionOptions.length" class="question-foot">
+          <div v-if="msg.approval_expired" class="question-expired-note">{{ t('chat.approvalExpiredNote') }}</div>
+          <div v-else-if="questionOptions.length" class="question-foot">
             {{ msg.pending_question.kind === 'plan' ? t('chat.planPickHint') : t('chat.questionPickHint') }}
           </div>
         </div>
 
-        <!-- 审批按钮 -->
-        <div v-if="msg.approval_id && !msg.pending_question" class="approval-block">
-          <div class="approval-hint">{{ t('chat.awaitingApproval') }}</div>
+        <!-- 审批按钮;审批态已失效(后端重启/挂起态被清理)时只展示原因,不再给可点的按钮 -->
+        <div v-if="(msg.approval_id || msg.approval_expired) && !msg.pending_question" class="approval-block"
+          :class="{ 'approval-block-expired': msg.approval_expired === true }">
+          <div class="approval-hint">{{ msg.approval_expired ? t('chat.approvalExpired') : t('chat.awaitingApproval') }}</div>
           
           <!-- 风险等级显示 -->
           <div v-if="msg.risk_level" class="risk-info">
@@ -171,7 +174,8 @@
             </span>
           </div>
           
-          <div class="approval-actions">
+          <div v-if="msg.approval_expired" class="approval-expired-note">{{ t('chat.approvalExpiredNote') }}</div>
+          <div v-else class="approval-actions">
             <n-button size="small" type="primary" :loading="msg.approval_pending === true" :disabled="msg.approval_pending === true" @click="emit('approve', true)">{{ t('chat.approve') }}</n-button>
             <n-button size="small" tertiary :disabled="msg.approval_pending === true" @click="emit('approve', false)">{{ t('chat.reject') }}</n-button>
           </div>
@@ -364,6 +368,7 @@ watch(
 
 /** 提交自定义回答(提问卡)。 */
 function submitAnswer() {
+  if (props.msg?.approval_expired === true) return
   const a = answerText.value.trim()
   if (!a) return
   emit('answer', a)
@@ -399,6 +404,11 @@ const lastStepStatus = computed(() => {
 
 const rigUrl = ref('')
 const rigLoading = ref(false)
+/** 读不到(路径根本不存在 / 后端 404)时:卡片静默隐藏,不再补一句「读取失败」占着位置 */
+const rigMissing = ref(false)
+/** 路径 → 上次失败时间:一轮 pet-forge 里步骤状态会变好几次,不节流就会把同一个 404 刷满后端日志 */
+const rigFailAt = new Map<string, number>()
+const RIG_RETRY_MS = 5000
 /** 已渲染进 <img> 的 SVG 文本:内容没变就不重建 Blob URL,避免闪烁 */
 let rigText = ''
 /** 在途请求令牌:只认最后一次结果,防止旧请求覆盖新预览 */
@@ -418,6 +428,13 @@ async function loadRig(path: string) {
     rigToken++
     releaseRig()
     rigLoading.value = false
+    rigMissing.value = false
+    return
+  }
+  const failedAt = rigFailAt.get(path)
+  if (failedAt && Date.now() - failedAt < RIG_RETRY_MS) {
+    // 刚失败过:静默藏着,别再去打扰后端(下次步骤状态变化时再试)
+    rigMissing.value = true
     return
   }
   const token = ++rigToken
@@ -434,8 +451,14 @@ async function loadRig(path: string) {
       if (rigUrl.value) URL.revokeObjectURL(rigUrl.value)
       rigUrl.value = next
     }
+    rigFailAt.delete(path)
+    rigMissing.value = false
   } catch {
-    if (token === rigToken) releaseRig()
+    if (token === rigToken) {
+      releaseRig()
+      rigMissing.value = true
+    }
+    rigFailAt.set(path, Date.now())
   } finally {
     if (token === rigToken) rigLoading.value = false
   }
@@ -467,7 +490,7 @@ const questionOptions = computed<{ label: string; description?: string; action?:
 
 /** 点选项分流:reject=直接拒绝 / fill=填进输入框待改写 / 其余=直接提交答案。 */
 function pickOption(opt: { label: string; action?: string }, index: number) {
-  if (props.msg?.approval_pending === true) return
+  if (props.msg?.approval_pending === true || props.msg?.approval_expired === true) return
   const action = opt.action || ''
   if (action === 'reject') {
     emit('approve', false)
@@ -745,6 +768,7 @@ onMounted(() => {
 <style scoped>
 .message-row {
   display: flex;
+  min-width: 0;              /* 窄窗口下整行必须能收缩,否则长内容会把聊天区撑出横向滚动条 */
   align-items: flex-end;
   gap: 10px;
   margin: 8px 0;
@@ -762,6 +786,8 @@ onMounted(() => {
 .message-content {
   display: flex;
   flex-direction: column;
+  min-width: 0;              /* flex 子项默认 min-width:auto,不放开就压不下去 */
+  max-width: 100%;           /* 子元素里的百分比 max-width 才有意义 */
 }
 .message-content.assistant {
   align-items: flex-start;
@@ -792,6 +818,7 @@ onMounted(() => {
 
 /* ---- Bubble ---- */
 .message-bubble {
+  min-width: 0;
   max-width: min(78%, 640px);     /* 原本 72%/760, 凑窄 unicode 内容仍造氣 */
   padding: 8px 12px;              /* 原 12 18，减少内边距 */
   border-radius: var(--radius-md, 8px);
@@ -910,6 +937,20 @@ onMounted(() => {
   padding: 0;
   border-radius: 0;
   font-size: inherit;
+}
+/* 图片/媒体必须有宽度上限:markdown 里的原图动辄 1024px,没有任何约束时会把
+   bubble 撑到 max-width 上限,缩小窗口就直接溢出(真实浏览器实测:气泡右侧溢出 351px、消息列表横滚 765px)。 */
+.msg-markdown :deep(img),
+.msg-markdown :deep(video),
+.msg-markdown :deep(iframe),
+.msg-markdown :deep(canvas) {
+  max-width: 100%;
+  height: auto;
+}
+/* 行间公式/图表可能比窗口还宽,让它们自己横滑而不是撑破气泡 */
+.msg-markdown :deep(.katex-display) {
+  max-width: 100%;
+  overflow-x: auto;
 }
 .msg-markdown :deep(table) {
   border-collapse: collapse;
@@ -1582,6 +1623,24 @@ onMounted(() => {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.4;
+}
+
+./* 审批/提问已失效:只留一行说明,不给可点的按钮 */
+.approval-expired-note,
+.question-expired-note {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: rgba(127, 127, 127, 0.1);
+  border: 1px dashed rgba(127, 127, 127, 0.35);
+}
+
+.approval-block-expired,
+.question-block-expired {
+  opacity: 0.85;
 }
 
 .approval-actions {

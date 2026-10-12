@@ -74,6 +74,7 @@ import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets 
 
 import { useI18n } from 'vue-i18n'
 import { speak } from '@/utils/backend'
+import { fitsSheetContract, SHEET_COLS, SHEET_FRAME_H, SHEET_FRAME_W, SHEET_MIN_ROWS } from '@/utils/petSheet'
 import { useReadAloud } from '@/composables/useReadAloud'
 
 const { t } = useI18n()
@@ -1105,8 +1106,15 @@ onMounted(async () => {
   let texture: Texture
   try {
     texture = await Assets.load<Texture>(spritesheetPath)
+    // 尺寸不符同样会「加载成功」,但切出来是错位马赛克 —— 当作失败回退,不把坏皮肤播出去
+    if (!fitsSheetContract(texture.width, texture.height)) {
+      throw new Error(
+        `尺寸 ${texture.width}x${texture.height} 不符切片契约 ` +
+          `${SHEET_FRAME_W * SHEET_COLS}x${SHEET_FRAME_H * SHEET_MIN_ROWS}`,
+      )
+    }
   } catch (e) {
-    // 加载失败（如旧导入皮肤损坏/格式不支持），回退到内置 frieren
+    // 加载失败（旧导入皮肤损坏/格式不支持/尺寸不符），回退到内置 frieren
     console.warn(`[pet] 加载 ${spritesheetPath} 失败，回退到 frieren`, e)
     spritesheetPath = '/codex_pet/frieren/spritesheet.webp'
     try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }

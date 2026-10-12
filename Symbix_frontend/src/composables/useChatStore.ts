@@ -16,6 +16,8 @@ export interface Message {
   reasoning?: string
   steps?: ToolCallStep[]
   approval_id?: string
+  /** 审批/提问已失效(后端重启或挂起态被清理):卡片只展示原因,不再可点 */
+  approval_expired?: boolean
   /** 上游中断重试中:非空时前端显示「正在重新生成」提示(内容已清空重来) */
   retryHint?: string
   /** 本轮后端自动判决的执行模式(reactive / plan_solve):聊天页据此显示角标 */

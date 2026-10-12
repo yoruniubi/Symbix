@@ -93,6 +93,11 @@
                 </svg>
               </div>
               <div v-if="pet.ready === false" class="pending-tag">{{ t('skinWindow.notBaked') }}</div>
+              <div
+                v-else-if="pet.template"
+                class="pending-tag template-tag"
+                :title="(pet.warnings || []).join('\n')"
+              >{{ t('skinWindow.templateTag') }}</div>
               <button
                 v-if="pet.id.startsWith('custom_')"
                 type="button"
@@ -197,6 +202,7 @@ import TitleBar from '@/components/TitleBar.vue'
 import { Assets, Texture } from 'pixi.js'
 import { useI18n } from 'vue-i18n'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { fitsSheetContract } from '@/utils/petSheet'
 const { t } = useI18n()
 const skillList = ref([])
 interface PetSkin {
@@ -204,10 +210,14 @@ interface PetSkin {
   displayName: string
   preview: string
   source?: string
-  /** false = 只有 rig 源文件,还没烘焙出 spritesheet(只能看,不能切) */
+  /** false = 只有 rig 源文件 / spritesheet 不符切片契约(只能看,不能切) */
   ready?: boolean
   origin?: 'codex' | 'pixiv'
   folder?: string
+  /** true = 校验失败后的模板兜底产物(外形是占位,可让 Agent 重画) */
+  template?: boolean
+  /** 烘焙/校验警告(缺失帧、动画没作用到部件、尺寸不符等) */
+  warnings?: string[]
 }
 
 /** 打开或激活已有窗口 */
@@ -677,6 +687,8 @@ async function loadDiskSkins(manual = false) {
       ready: s.ready !== false,
       origin: s.origin,
       folder: s.folder,
+      template: s.template === true,
+      warnings: Array.isArray(s.warnings) ? s.warnings : [],
     })
   }
 
@@ -719,6 +731,10 @@ async function bakeTheme(pet: PetSkin) {
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
     loading.destroy()
+    // 烘焙警告(缺失帧 / 动画没作用到部件 / 走了模板兜底)必须让用户看见,不能只写在文件里
+    const warns: string[] = Array.isArray(data?.warnings) ? data.warnings : []
+    for (const w of warns.slice(0, 3)) message.warning(String(w))
+    if (warns.length > 3) message.warning(t('skinWindow.moreWarnings', { count: warns.length - 3 }))
     await loadDiskSkins()
     const baked = availablePets.value.find((p) => p.folder === name && p.ready !== false)
     if (baked) {
@@ -735,8 +751,11 @@ async function bakeTheme(pet: PetSkin) {
 // ── 切换 / 删除 ─────────────────────────────────────────────
 async function switchPet(pet: PetSkin) {
   try {
-    // 预检纹理是否可加载（失败则不切、不提示成功）
-    await Assets.load<Texture>(pet.preview)
+    // 预检纹理是否可加载、尺寸是否符合切片契约(不符则不切、不提示成功)
+    const tex = await Assets.load<Texture>(pet.preview)
+    if (!fitsSheetContract(tex.width, tex.height)) {
+      throw new Error(t('skinWindow.sheetMismatch', { w: tex.width, h: tex.height }))
+    }
 
     currentPetId.value = pet.id
     localStorage.setItem('currentPetId', pet.id)
@@ -1065,6 +1084,12 @@ onMounted(() => {
   color: var(--accent-300, #F7A85B);
   background: var(--bg-elevated, #2B2523);
   border: 1px solid var(--accent-border, rgba(239, 107, 110, 0.35));
+}
+
+.template-tag {
+  color: var(--text-secondary, #A9A29C);
+  border-style: dashed;
+  cursor: help;
 }
 
 .skin-preview-wrap {

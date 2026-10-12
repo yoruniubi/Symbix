@@ -369,6 +369,8 @@ watch(sessions, () => {
 onMounted(async () => {
   loadSettings()
   currentModel.value = settings.value.model || 'gpt-4o-mini'
+  // 冷启动恢复的会话同样可能带着过期审批卡
+  if (activeSessionId.value) void syncPendingApprovals(activeSessionId.value)
   // 尝试获取模型列表
   if (settings.value.apiKey && settings.value.baseUrl) {
     try {
@@ -599,6 +601,9 @@ function loadSession(id: string) {
   if (!session) return
   activeSessionId.value = id
   messages.value = [...session.messages]
+  // 历史消息里可能残留早已失效的 approval_id(后端重启后挂起态就没了),
+  // 先和后端对账,把过期卡片标成「已失效」,别留一个点了必然报错的按钮。
+  void syncPendingApprovals(id)
   // markstream-vue 是异步批量渲染,内容高度可能渲染完成才稳定。
   // 用短暂延迟 + 多帧重试,确保切会话后能真正到底(而不是停在中间)。
   scrollToBottom()
@@ -1463,10 +1468,47 @@ async function submitInstallMcp() {
 }
 
 
+/** 审批挂起态只活在后端内存里:「点击时 410/404」与「对账发现已不在列表」都走这里 */
+class ApprovalExpiredError extends Error {}
+
+/** 把一条消息的审批/提问标成不可续跑:卡片改为展示原因,不再给按钮 */
+function markApprovalExpired(msg: any) {
+  if (!msg) return
+  msg.approval_expired = true
+  msg.approval_pending = false
+  msg.approval_id = undefined
+  for (const step of msg.steps || []) {
+    if (step.status === 'awaiting_approval') {
+      step.status = 'skipped'
+      step.result = t('chat.approvalExpiredNote')
+    }
+  }
+}
+
+/** 与后端对账:把 localStorage 里残留的、后端已经不认的审批卡标成已失效 */
+async function syncPendingApprovals(sid: string | null) {
+  if (!sid) return
+  let ids: string[] = []
+  try {
+    const res = await fetch(`${BACKEND_URL}/chat/pending?session_id=${encodeURIComponent(sid)}`)
+    if (!res.ok) return
+    const data = await res.json()
+    ids = Array.isArray(data?.ids) ? data.ids : []
+  } catch {
+    return // 后端没起来时不能误判,保留卡片原样
+  }
+  if (activeSessionId.value !== sid) return // 已经又切走了,别改别的会话
+  const alive = new Set(ids)
+  for (const msg of messages.value as any[]) {
+    if (msg?.approval_id && !alive.has(msg.approval_id)) markApprovalExpired(msg)
+  }
+}
+
 // 工具审批:用户在 ChatMessage 卡片点击 同意/拒绝 后回调
 async function approveTool(msgIdx: number, approved: boolean, answer: string = '') {
   const msg: any = messages.value[msgIdx]
   if (!msg || !msg.approval_id) return
+  if (msg.approval_expired === true) return
   // 后端会在第一次请求开始时移除 pending 记录;双击会导致第二次请求得到
   // 404,虽然第一次工具实际上已经执行成功。先在前端锁住当前审批卡片。
   if (msg.approval_pending === true) return
@@ -1495,7 +1537,14 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
       }),
       signal: abortController.value?.signal,
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      // 410(新)/404(旧后端)都是「挂起态已经没了」,属于不可续跑,别当普通报错
+      if (res.status === 410 || res.status === 404) {
+        markApprovalExpired(msg)
+        throw new ApprovalExpiredError()
+      }
+      throw new Error(`HTTP ${res.status}`)
+    }
 
     // 后端现在返回 SSE 流，逐字渲染回复（避免审批后干等）
     const reader = res.body!.getReader()
@@ -1559,7 +1608,12 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
     // 可点击并再次提交同一个已经消费的 approval_id。
     if (msg.approval_id === approvalId) msg.approval_id = undefined
     msg.approval_pending = false
-    
+
+    if (e instanceof ApprovalExpiredError) {
+      publishAgentStatus('idle', t('chat.approvalExpired'))
+      messageUi.error(t('chat.approvalExpiredNote'))
+      return
+    }
     // 检查是否是用户主动中断（通过标志位或 AbortError 兼容不同浏览器）
     if (userAborted || e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort') || e.message?.includes('fetch')) {
       console.log('=== 审批请求被用户中断 ===')

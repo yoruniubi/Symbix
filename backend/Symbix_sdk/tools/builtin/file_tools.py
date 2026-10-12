@@ -4,6 +4,7 @@ import os
 import re as _re
 import shutil
 import subprocess
+from pathlib import Path
 from Symbix_sdk.tools.file_pipeline import (
     assert_path_allowed,
     parse_file_path,
@@ -41,6 +42,30 @@ def _find_rg() -> str | None:
         if cand and os.path.isfile(cand):
             return cand
     return None
+
+
+# 关了忽略规则之后仍要挡掉的目录:依赖/构建产物/字节码是噪音,checkpoint_blobs 是用户文件内容快照
+_NO_IGNORE_EXCLUDES = ("node_modules", "dist", "__pycache__", "checkpoint_blobs")
+
+
+def _excluded_dir_names(roots: list[str]) -> list[str]:
+    """--no-ignore 之后仍需排除的目录名。
+
+    搜索根本身就在某个目录里时不排除它,留出「显式指过去就能搜」的口子。
+    """
+    parts = {p.lower() for r in roots for p in Path(r).parts}
+    return [name for name in _NO_IGNORE_EXCLUDES if name not in parts]
+
+
+def _no_match_note(excluded: list[str]) -> str:
+    """搜不到时的提醒:避免把「被排除」误读成「不存在」。"""
+    if not excluded:
+        return "未命中(已含 .gitignore 里的目录)。"
+    return (
+        f"未命中。已搜过 .gitignore 里的目录,仍排除了 {' / '.join(excluded)};"
+        "若目标就在这些目录里,请把 path 直接指到该目录。"
+    )
+
 
 def create_file(file_path: str, content: str) -> str:
     """创建新文件并写入内容。
@@ -300,7 +325,13 @@ def _search_with_rg(
     max_results: int,
     timeout: int,
 ) -> dict:
-    cmd = [rg_path, "--json", query, root_path]
+    # --no-ignore:不读 .gitignore。否则 installed_skills/、uploads/ 这类被 ignore 的目录会静默搜不到,
+    # Agent 拿到 0 条就会误判「代码不存在」;噪音目录改用 glob 显式挡掉。
+    excluded = _excluded_dir_names([root_path])
+    cmd = [rg_path, "--json", "--no-ignore"]
+    for name in excluded:
+        cmd += ["--glob", f"!**/{name}/**"]
+    cmd += [query, root_path]
     if glob:
         cmd += ["--glob", glob]
     cmd += ["--max-count", str(max_results)]
@@ -336,13 +367,17 @@ def _search_with_rg(
     if len(matches) > max_results:
         matches = matches[:max_results]
         truncated = True
-    return {"success": True, "error_msg": None, "results": matches, "truncated": truncated}
+    out = {"success": True, "error_msg": None, "results": matches, "truncated": truncated}
+    if not matches:
+        out["note"] = _no_match_note(excluded)
+    return out
 
 
-# Python 回退时的默认忽略目录（保持与 rg .gitignore 默认行为接近）
+# Python 回退时的默认忽略目录（与 rg 路径的 _NO_IGNORE_EXCLUDES 保持一致）
 _PY_FALLBACK_IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     ".mypy_cache", ".pytest_cache", "dist", "build", ".next",
+    "checkpoint_blobs",
 }
 
 
@@ -502,16 +537,22 @@ def search_file_with_name(
             if os.path.isdir(r) and r not in roots:
                 roots.append(r)
 
-    # 用 ripgrep --files 列出所有文件,然后客户端模糊匹配文件名(包含)。
-    # 这样能复用 ripgrep 的 .gitignore / 隐藏文件过滤逻辑,避免扫到 node_modules。
+    # 用 ripgrep --files 列出所有文件,再按文件名做包含匹配。
+    # --no-ignore:gitignored 目录(installed_skills / uploads 等)也要能看到,否则「文件找不到」会误导 Agent
+    # (可见性与 search_files 保持一致);node_modules 这类噪音目录用 glob 排除。
     results: list[dict] = []
     needle = file_name.lower()
     use_walk = False
     rg_path = _find_rg()
+    excluded = _excluded_dir_names(roots)
     try:
         if rg_path:
+            cmd = [rg_path, "--files", "-S", "--hidden", "--no-ignore"]
+            for name in excluded:
+                cmd += ["--glob", f"!**/{name}/**"]
+            cmd += roots
             proc = subprocess.run(
-                [rg_path, "--files", "-S", "--hidden", *roots],
+                cmd,
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=timeout,
             )
@@ -541,8 +582,9 @@ def search_file_with_name(
 
     # 回退:ripgrep 不可用时用 os.walk
     if use_walk:
-        # 跳过常见大目录,避免扫死项目
-        _SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".next", "dist", "build", ".venv", "venv"}
+        # 跳过常见大目录,避免扫死项目(与 _PY_FALLBACK_IGNORE_DIRS 同口径)
+        _SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".next", "dist", "build",
+                      ".venv", "venv", "checkpoint_blobs"}
         for root in roots:
             for dirpath, dirs, files in os.walk(root):
                 dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
@@ -561,12 +603,16 @@ def search_file_with_name(
 
     truncated = len(results) >= max_results
     if not results:
+        if excluded:
+            hint = f"(已排除 {' / '.join(excluded)};若目标在其中,请把 root_path 指到该目录)"
+        else:
+            hint = ""
         return {
             "success": True,
             "error_msg": None,
             "results": [],
             "truncated": False,
-            "message": f"未找到匹配 {file_name!r} 的文件",
+            "message": f"未找到匹配 {file_name!r} 的文件{hint}",
         }
     return {
         "success": True,
@@ -728,6 +774,8 @@ FILE_TOOLS_SCHEMAS = {
             "在指定路径下使用 ripgrep 进行正则/关键词搜索（类似 grep）。"
             "用于快速定位某个函数定义、类名、TODO 注释、配置项或任何文本片段的位置。"
             "返回匹配所在的文件路径、行号和行内容；支持 glob 过滤文件类型（如 *.py、*.vue）。"
+            "搜索范围包含 .gitignore 里的目录（如 skill/installed_skills/、uploads/），"
+            "仅排除 node_modules / dist / __pycache__ / checkpoint_blobs（要搜这些目录就把 path 指到它本身）。"
         ),
         "parameters": {
             "type": "object",
@@ -767,6 +815,7 @@ FILE_TOOLS_SCHEMAS = {
             "root_path 可不传:缺省搜索整个可访问工作区(项目根 + uploads + 后端 + 文件面板授权过的目录),"
             "所以通常无需指定 root_path;只有当你知道目标在某个特定子目录、想缩小范围时才传。"
             "与 search_files 区别:后者按内容找行;本工具按文件名找文件。底层优先用 ripgrep,找不到时回退到 os.walk。"
+            "搜索范围含 .gitignore 里的目录(如 installed_skills/、uploads/),仅排除 node_modules / dist / __pycache__ / checkpoint_blobs。"
         ),
         "parameters": {
             "type": "object",

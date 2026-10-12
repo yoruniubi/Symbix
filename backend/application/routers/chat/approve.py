@@ -46,6 +46,22 @@ from application.routers.chat.helpers import (
 
 router = APIRouter(tags=["chat"])
 
+
+@router.get("/chat/pending")
+async def chat_pending(session_id: str = ""):
+    """查询某会话仍挂着的审批/提问 id。
+
+    前端恢复会话(切回旧对话/重开窗口)时用它对账:localStorage 里的历史消息带着
+    早已失效的 approval_id,后端只把挂起态放在内存里,重启就没了。对账后前端把
+    过期卡片标成「已失效」,而不是留一个点了必然报错的按钮。
+    """
+    ids = [
+        aid for aid, ctx in _pending_approvals.items()
+        if not session_id or ctx.get("session_id") == session_id
+    ]
+    return {"ids": ids}
+
+
 @router.post("/chat/approve")
 async def chat_approve(req: ApproveRequest, http_request: Request):
     print(f"[APPROVE] Received approval_id={req.approval_id}, pending keys={list(_pending_approvals.keys())}")
@@ -55,7 +71,12 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
     ctx = _pending_approvals.pop(req.approval_id, None)
     if not ctx:
         print(f"[APPROVE] approval_id {req.approval_id} not found in pending")
-        raise HTTPException(status_code=404, detail="approval not found")
+        # 410 而不是 404:这是「曾经有效但已经失效」(后端重启 / 会话挂起态被清理),
+        # 前端要把卡片标成不可续跑并说人话,而不是弹一个 HTTP 404。
+        raise HTTPException(
+            status_code=410,
+            detail="审批已失效:后端重启或该会话的挂起状态已被清理,请直接回复一句话让我继续",
+        )
 
     # pop 后立即加锁,覆盖工具执行与后续模型生成期间的整个窗口。
     # 必须在第一个 await 之前完成,才能防止并发重复审批。

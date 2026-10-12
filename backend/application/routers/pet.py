@@ -4,6 +4,7 @@ import asyncio
 import json as _json
 import os
 import shutil
+from functools import lru_cache
 from pathlib import Path
 from typing import List
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
@@ -322,6 +323,51 @@ _BUILTIN_SKINS = frozenset({"frieren"})
 _SPRITESHEET_CANDIDATES = ("spritesheet.webp", "spritesheet.png", "preview.webp", "preview.png")
 
 
+@lru_cache(maxsize=1)
+def _sheet_contract() -> tuple[int, int, int, int]:
+    """Home.vue 的切片契约:(帧宽, 帧高, 每行列数, 至少行数)。
+
+    帧尺寸从 pet-forge 的打包常量读,行数从 spritesheet_map.json 读;读不到就退默认值。
+    """
+    frame_w, frame_h, cols, rows = 192, 208, 8, 9
+    try:
+        mod = _load_forge_script("pack_spritesheet")
+        frame_w = int(getattr(mod, "FRAME_W", frame_w))
+        frame_h = int(getattr(mod, "FRAME_H", frame_h))
+        cols = int(getattr(mod, "COLS", cols))
+        mapping = _read_json_quiet(_FORGE_SCRIPTS.parent / "config" / "spritesheet_map.json")
+        rows = len(mapping.get("rows") or []) or rows
+    except Exception:  # noqa: BLE001
+        pass
+    return frame_w, frame_h, cols, rows
+
+
+def _sheet_issue(sheet: str | None, folder: Path) -> str:
+    """spritesheet 是否满足切片契约;不满足时返回原因(空串 = 合格)。
+
+    尺寸不对的皮肤「能加载但会切错行」—— Home.vue 不会回退(它认为加载成功了),
+    于是整只宠物变成一坨错位马赛克。所以这里必须当成不可用。
+    宽度必须精确(每行 8 帧),高度允许更多行(旧 Codex 皮肤有 11 行的,多出行忽略)。
+    """
+    if not sheet:
+        return ""
+    frame_w, frame_h, cols, rows = _sheet_contract()
+    try:
+        from PIL import Image
+
+        with Image.open(folder / sheet) as im:
+            width, height = im.size
+    except Exception as e:  # noqa: BLE001
+        return f"spritesheet 无法读取: {e}"
+    if width != frame_w * cols:
+        return f"spritesheet 宽度 {width} ≠ 契约 {frame_w * cols}({cols} 帧 × {frame_w}px)"
+    if height < frame_h * rows:
+        return f"spritesheet 高度 {height} < 契约 {frame_h * rows}({rows} 行 × {frame_h}px)"
+    if height % frame_h:
+        return f"spritesheet 高度 {height} 不是 {frame_h} 的整数倍,切片会错位"
+    return ""
+
+
 def _first_existing(folder: Path, names: tuple[str, ...]) -> str | None:
     for name in names:
         if (folder / name).is_file():
@@ -343,7 +389,9 @@ async def pet_list_skins():
 
     以前皮肤列表只存在前端 localStorage(仅记「导入过什么」),
     pet-forge 直接把产物写进 public/pixiv_pet/,前端根本不知道它存在。
-    ready=False 表示只有 rig 源文件、还没烘焙出 spritesheet(不能切换,只能预览)。
+    ready=False 表示只有 rig 源文件、还没烘焙出 spritesheet(不能切换,只能预览),
+    或者 spritesheet 不满足切片契约(尺寸不对 → 切出来是错位马赛克,同样不能切换)。
+    template=True 表示这只皮肤是校验失败后的模板兜底产物(外形是占位,可让 Agent 重画)。
     """
     skins: list[dict] = []
 
@@ -355,6 +403,7 @@ async def pet_list_skins():
             if not meta:
                 continue
             sheet = _first_existing(folder, _SPRITESHEET_CANDIDATES)
+            issue = _sheet_issue(sheet, folder)
             skins.append(
                 {
                     "id": f"codex_{folder.name}",
@@ -364,7 +413,9 @@ async def pet_list_skins():
                     "preview": f"/codex_pet/{folder.name}/{sheet or 'spritesheet.webp'}",
                     "origin": "codex",
                     "builtin": folder.name in _BUILTIN_SKINS,
-                    "ready": sheet is not None,
+                    "ready": sheet is not None and not issue,
+                    "template": bool(meta.get("fallback")),
+                    "warnings": ([issue] if issue else []),
                 }
             )
 
@@ -376,6 +427,11 @@ async def pet_list_skins():
             if not meta and not (folder / "base.svg").is_file():
                 continue
             sheet = _first_existing(folder, _SPRITESHEET_CANDIDATES)
+            issue = _sheet_issue(sheet, folder)
+            meta_warnings = meta.get("warnings") or []
+            warnings = [str(w) for w in meta_warnings]
+            if issue:
+                warnings.insert(0, issue)
             skins.append(
                 {
                     "id": f"pixiv_{folder.name}",
@@ -386,8 +442,10 @@ async def pet_list_skins():
                     "preview": f"/pixiv_pet/{folder.name}/{sheet or 'base.svg'}",
                     "origin": "pixiv",
                     "builtin": folder.name in _BUILTIN_SKINS,
-                    "ready": sheet is not None,
+                    "ready": sheet is not None and not issue,
                     "capabilities": meta.get("capabilities") or [],
+                    "template": bool(meta.get("fallback")),
+                    "warnings": warnings,
                 }
             )
 

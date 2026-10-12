@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil
 from fastapi import APIRouter, HTTPException
+import Symbix_sdk
 from Symbix_sdk.tools.file_pipeline import (
     get_project_root,
     add_workspace_root,
@@ -12,6 +13,7 @@ from Symbix_sdk.tools.file_pipeline import (
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 MAX_EDIT_BYTES = 5 * 1024 * 1024
+SKILL_ROOTS_DIR = Path(Symbix_sdk.__file__).resolve().parent / "skill" / "installed_skills"
 
 
 def _resolve(path: str = ".") -> Path:
@@ -33,6 +35,25 @@ def _relative(path: Path) -> str:
 
 def _forbidden_hint() -> str:
     return " / ".join(str(p) for p in forbidden_roots()[:3]) + " 等系统保护目录不可作为工作区"
+
+
+def _read_candidates(path: str) -> list[Path]:
+    """读文件的候选路径:常规解析优先,再兜回 skill 目录。
+
+    pet-forge 这类 skill 的脚本以 skill 目录为工作目录运行,Agent 传进工具的参数
+    常是 `assets/fixtures/xx/base.svg` 这种相对路径 —— 按项目根解析必然 404,
+    而文件其实躺在 installed_skills/<skill>/ 下。补一层候选根,预览就能读到。
+    """
+    candidates = [_resolve(path)]
+    raw = str(path or "").strip()
+    if raw and not Path(raw).is_absolute():
+        try:
+            for skill_dir in sorted(SKILL_ROOTS_DIR.iterdir()):
+                if skill_dir.is_dir():
+                    candidates.append((skill_dir / raw).resolve())
+        except OSError:
+            pass
+    return candidates
 
 
 @router.get("/workspace")
@@ -95,7 +116,8 @@ async def list_directory(path: str = "."):
 
 @router.get("/read")
 async def read_workspace_file(path: str):
-    file_path = _resolve(path)
+    candidates = _read_candidates(path)
+    file_path = next((c for c in candidates if c.is_file()), candidates[0])
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
     if file_path.stat().st_size > MAX_EDIT_BYTES:
