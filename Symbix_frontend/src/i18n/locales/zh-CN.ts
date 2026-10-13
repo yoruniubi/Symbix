@@ -35,6 +35,14 @@ export default {
   // ===== Chat Window =====
   chat: {
     noApiKey: '未设置 API Key,请先配置 API 密钥',
+    usageLine: '↑{up} ↓{down} · 工具 {tools}',
+    usageSession: '本会话 ↑{up} ↓{down} · {calls} 轮',
+    usageDetailSystem: '系统提示 {n}',
+    usageDetailTools: '工具定义 {n}（{count} 个） · 消息 {msgs} 条',
+    usageDetailHistory: '历史+本轮 {n}',
+    usageDetailOutput: '输出 {n}',
+    usageDetailTotal: '合计 {n}（约,无 tiktoken） · 已累计 ↑{up} ↓{down} / {calls} 轮',
+    usageDetailUpstream: '上游真实: prompt {p} / completion {c} / total {t}',
     newChat: '新对话',
     newChatTitle: '新对话',
     stopGenerate: '已暂停',
@@ -465,6 +473,9 @@ export default {
     existingSection: '已有皮肤',
     skillGenerate: 'Skill 生成',
     skillGenerateDesc: '通过 Skill 生成新的桌宠皮肤素材',
+    pixelStyleNote: '画风为像素画：AI 在一块 192×208 的像素画板上逐格填色（= 桌面显示尺寸本身，1 格 = 1 像素；整数坐标、只走直线与直角、最多 6–8 色、无渐变/半透明）',
+    stylePixel: '像素',
+    styleSmooth: '平滑',
     codexImport: 'Codex 导入',
     codexImportDesc: '导入 Codex 桌宠文件夹(含 pet.json)',
     comingSoon: '待接入',
@@ -509,7 +520,7 @@ export default {
     empty: '暂无皮肤',
     namePlaceholder: '例如 my-pet',
     pickFolderTitle: '选择 Codex 桌宠文件夹（含 pet.json）',
-    skillMessage: '请使用 pet-forge 技能为我生成一个新的桌宠皮肤。\n\n皮肤名称:{name}\n外观描述:{prompt}\n\n请按照 pet-forge skill 的工作流:你自己直接产出 base.svg 与 states.json(不要调用任何生成脚本),然后依次用脚本校验 validate_rig → derive_mirrors → validate_states,最后用 build_theme.py 一次性完成打包与烘焙:\n\npython "<skill 根目录>/scripts/build_theme.py" -n "{name}" --rig base.svg --states states.json -d "<一句话外观描述>"\n\n注意:skill 根目录就是 skill 工具返回的 [Skill root] 那一行,命令行请用绝对路径;输出目录由脚本自己推导(默认 <项目根>/Symbix_frontend/public/pixiv_pet/{name}),不要写死盘符路径,也不要再单独跑 pack_theme.py / bake_snapshots.py / pack_spritesheet.py。跑完确认目录下已生成 spritesheet.webp 与 pet.json,并把结果路径告诉我。',
+    skillMessage: '请使用 pet-forge 技能为我生成一个新的桌宠皮肤。\n\n皮肤名称:{name}\n外观描述:{prompt}\n\n【画风硬要求·像素画】pet-forge 的 viewBox 0 0 192 208 就是帧尺寸本身,1 格 = 1 像素,每个整数坐标 = 一个像素格:\n1. 所有坐标必须是整数(rect/circle/ellipse/line/polygon/path 的坐标、transform-origin 的 px 值),不要 87.5 这种半格坐标;\n2. path 只允许直线折线(命令限 M/L/H/V/Z),禁止 C/S/Q/T/A 曲线;圆不要用 <circle>/<ellipse>,用整数格矩形+折线拼出对称像素圆;\n3. 禁止渐变/滤镜/阴影/半透明,只用 var(--pet-*) 纯色块(最多 6-8 色);\n4. 最小特征 >= 2x2 格(瞳孔最小 2x2,推荐 4x4);图形不要超出画板(x 0..192,y 0..208),脚底大致落在 y=170~190。\n你可以参考 skill 里的 assets/fixtures/pixel-base.svg。\n\n请按照 pet-forge skill 的工作流:你自己直接产出 base.svg 与 states.json(不要调用任何生成脚本),然后依次用脚本校验 validate_rig → derive_mirrors → validate_states(validate_rig 默认就按像素契约校验,输出的 WARN 行也要修掉),最后用 build_theme.py 一次性完成打包与烘焙:\n\npython "<skill 根目录>/scripts/build_theme.py" -n "{name}" --rig base.svg --states states.json -d "<一句话外观描述>"\n\n注意:skill 根目录就是 skill 工具返回的 [Skill root] 那一行,命令行请用绝对路径;输出目录由脚本自己推导(默认 <项目根>/Symbix_frontend/public/pixiv_pet/{name}),不要写死盘符路径,也不要再单独跑 pack_theme.py / bake_snapshots.py / pack_spritesheet.py;像素风是默认画风,不要加 --scale/--nearest/--style 参数。跑完确认目录下已生成 spritesheet.webp 与 pet.json,并把结果路径告诉我。',
   },
 
   // ===== Setting Page =====

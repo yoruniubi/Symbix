@@ -56,6 +56,23 @@ _VALID_CATEGORIES: set[str] = {
     "identity", "preference", "habit", "goal", "constraint", "other",
 }
 
+# 跨会话自动注入时放行的类别。
+# identity/preference 放在哪个对话里都成立(「用户在做 X 项目」「偏好中文回答」),
+# 而 habit/goal/constraint/other 是强场景绑定的过程细节 —— 别的项目/别的任务的细节
+# 自动冒到当前对话里就是「跨对话串味」。这类改由 search_memories 工具按需显式查。
+_CROSS_SESSION_INJECT_CATEGORIES: set[str] = {"identity", "preference"}
+
+# 注入块的使用纪律:BM25 只有词面,分不清「同一个词、不同项目」,
+# 所以必须明确告诉模型「这是背景,无关就别提」,否则它会把别处的场景当成本轮上下文。
+_MEMORY_INJECT_HEADER = "[用户长期记忆 · 仅作背景参考]"
+_MEMORY_INJECT_DISCIPLINE = (
+    "以下片段按字面关联从历史对话里挑出,可能来自**其他对话或其他项目**,不代表当前上下文。\n"
+    "只有当它与用户当前的问题直接相关时才使用它;若无关,不要主动提起,也不要把它"
+    "当成当前任务的设定 —— 尤其不要用记忆里的项目名/文件名/场景去替用户设定或猜测当前在做什么。\n"
+    "用户没明说当前在做什么时,直接问用户,不要拿记忆里的项目名去指代「这个项目」。\n"
+    "需要其他历史细节时,用 `search_memories` 工具主动查。"
+)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Extraction prompt
@@ -128,7 +145,7 @@ class MemoryStore:
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = Lock()
 
-        # BM25 索引缓存：{user_id: (corpus_tokens, bm25, ids, contents, categories)}
+        # BM25 索引缓存：{user_id: (bm25, ids, contents, categories, sessions)}
         self._bm25_cache: dict[str, tuple] = {}
 
     def _resolve_model(self, override: Optional[str] = None) -> str:
@@ -308,12 +325,12 @@ class MemoryStore:
     def _build_bm25_index(self, user_id: str) -> tuple:
         """构建/重建 BM25 内存索引。
 
-        返回 (bm25, ids, contents, categories)，同时缓存到 self._bm25_cache。
+        返回 (bm25, ids, contents, categories, sessions)，同时缓存到 self._bm25_cache。
         索引为空的场景也缓存（空 corpus），避免反复查询 SQLite。
         """
         conn = self._ensure_conn()
         rows = conn.execute(
-            """SELECT id, content, category, tokens
+            """SELECT id, content, category, tokens, source_session_id
                FROM memories
                WHERE status = 'active' AND user_id = ?""",
             (user_id,),
@@ -322,12 +339,14 @@ class MemoryStore:
         ids: list[int] = []
         contents: list[str] = []
         categories: list[str] = []
+        sessions: list[str] = []
         corpus: list[list[str]] = []
 
         for row in rows:
             ids.append(row[0])
             contents.append(row[1])
             categories.append(row[2])
+            sessions.append(row[4] or "")
             # 用已缓存的 tokens 列（空格分隔）
             raw_tokens = row[3]
             if raw_tokens:
@@ -341,7 +360,7 @@ class MemoryStore:
         else:
             bm25 = None
 
-        cached = (bm25, ids, contents, categories)
+        cached = (bm25, ids, contents, categories, sessions)
         self._bm25_cache[user_id] = cached
         return cached
 
@@ -368,7 +387,7 @@ class MemoryStore:
         if cached is None:
             cached = self._build_bm25_index(uid)
 
-        bm25, ids, contents, categories = cached
+        bm25, ids, contents, categories, sessions = cached
         if bm25 is None or not ids:
             return []
 
@@ -393,6 +412,7 @@ class MemoryStore:
                     "id": mid,
                     "content": content,
                     "category": cat,
+                    "source_session_id": sessions[i],
                     "score": round(final_score, 4),
                 })
 
@@ -656,19 +676,37 @@ class MemoryStore:
         user_id: Optional[str] = None,
         k: int = 5,
         min_score: float = 0.15,
+        session_id: str = "",
     ) -> str:
-        """根据用户当前查询，检索相关长期记忆，返回格式化文本。
+        """根据用户当前查询，检索相关长期记忆，返回格式化文本（空串 = 无匹配）。
 
-        返回空字符串表示无匹配记忆。
+        防「跨对话串味」在这一层:BM25 只有词面,分不清「同一个词、不同项目」。
+        所以自动注入按「是不是本会话的」分级:
+        - 本会话的记忆 → 全部类别都可注入(当前场景的细节本来就该用上);
+        - 其他会话的记忆 → 只放行身份/偏好(见 _CROSS_SESSION_INJECT_CATEGORIES),
+          别的项目的过程细节不自动冒出来,需要时交给 `search_memories` 工具。
+        返回文本自带使用纪律（_MEMORY_INJECT_DISCIPLINE）。
         """
         uid = user_id or self.default_user_id
-        results = self.search_similar(user_query, user_id=uid, k=k, min_score=min_score)
+        # 多取一些候选:按会话/类别过滤后再截到 k 条
+        results = self.search_similar(
+            user_query, user_id=uid, k=max(k * 4, 20), min_score=min_score,
+        )
 
         if not results:
             return ""
 
+        picked = [
+            m for m in results
+            if (session_id and m.get("source_session_id") == session_id)
+            or m.get("category") in _CROSS_SESSION_INJECT_CATEGORIES
+        ][:k]
+
+        if not picked:
+            return ""
+
         # 按 category 添加中文标签
-        CAT_LABELS: dict[str, str] = {
+        cat_labels: dict[str, str] = {
             "identity": "身份",
             "preference": "偏好",
             "habit": "习惯",
@@ -677,10 +715,9 @@ class MemoryStore:
             "other": "其他",
         }
 
-        lines = ["[用户长期记忆]"]
-        for m in results:
-            cat = m.get("category", "other")
-            label = CAT_LABELS.get(cat, "其他")
+        lines = [_MEMORY_INJECT_HEADER, _MEMORY_INJECT_DISCIPLINE]
+        for m in picked:
+            label = cat_labels.get(m.get("category", "other"), "其他")
             lines.append(f"- ({label}) {m['content']}")
 
         return "\n".join(lines)

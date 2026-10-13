@@ -444,6 +444,32 @@ async function onCanvasMousedown(e: MouseEvent) {
 
 
 
+/** 像素风皮肤放大时必须 nearest 采样,否则会被插值糊掉;平滑矢量皮肤保持 linear */
+function applyPetScaleMode(style?: string | null) {
+  if (!baseSource) return
+  try {
+    baseSource.scaleMode = style === 'pixel' ? 'nearest' : 'linear'
+  } catch (e) {
+    console.warn('[pet] set scaleMode failed:', e)
+  }
+}
+
+/**
+ * 从 localStorage 推断某个 spritesheet 的画风:
+ * 先查 customPets 里记住的皮肤(切换时写入),再查最近一次 petSwitchSignal。
+ * 查不到 = 老数据 → 按平滑矢量处理。
+ */
+function currentPetStyle(preview: string): string | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem('customPets') || '[]')
+    const hit = Array.isArray(saved) ? saved.find((p: any) => p?.preview === preview) : null
+    if (hit?.style) return hit.style
+    const signal = JSON.parse(localStorage.getItem('petSwitchSignal') || 'null')
+    if (signal?.spritesheetPath === preview && signal.style) return signal.style
+  } catch { /* ignore */ }
+  return null
+}
+
 function getFrames(
   source: TextureSource,
   row: number,
@@ -1028,6 +1054,7 @@ async function loadPetTexture(spritesheetPath: string) {
   // 加载新纹理
   const texture = await Assets.load<Texture>(loadPath)
   baseSource = texture.source as TextureSource
+  applyPetScaleMode(currentPetStyle(path))
 
   // 重建 sprite textures 并回到 idle
   sprite.textures = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
@@ -1042,6 +1069,7 @@ async function onPetSwitched(payload: {
   petFolder: string
   spritesheetPath: string
   displayName: string
+  style?: 'pixel' | 'smooth'
 }) {
   const key = `${payload.petId}|${payload.spritesheetPath}`
   // 去重:emit + emitTo + storage 可能连发
@@ -1052,6 +1080,7 @@ async function onPetSwitched(payload: {
   console.log('[pet] pet-switched received:', payload)
   try {
     await loadPetTexture(payload.spritesheetPath)
+    applyPetScaleMode(payload.style)
     if (payload.petId) {
       try { localStorage.setItem('currentPetId', payload.petId) } catch { /* ignore */ }
     }
@@ -1121,6 +1150,7 @@ onMounted(async () => {
     texture = await Assets.load<Texture>(spritesheetPath)
   }
   baseSource = texture.source as TextureSource
+  applyPetScaleMode(currentPetStyle(spritesheetPath))
   const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
   sprite = new AnimatedSprite(frames)
   sprite.animationSpeed = animationSpeedFor('idle')
@@ -1170,6 +1200,7 @@ onMounted(async () => {
       petFolder: string
       spritesheetPath: string
       displayName: string
+      style?: 'pixel' | 'smooth'
     }>('pet-switched', (event) => {
       void onPetSwitched(event.payload)
     })
@@ -1188,6 +1219,7 @@ onMounted(async () => {
           petFolder: payload.petFolder || '',
           spritesheetPath: payload.spritesheetPath,
           displayName: payload.displayName || payload.petId || '',
+          style: payload.style,
         })
       }
     } catch (err) {

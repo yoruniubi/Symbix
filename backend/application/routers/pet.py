@@ -445,6 +445,8 @@ async def pet_list_skins():
                     "ready": sheet is not None and not issue,
                     "capabilities": meta.get("capabilities") or [],
                     "template": bool(meta.get("fallback")),
+                    # 画风:老产物没写 style = 历史平滑矢量皮肤
+                    "style": "pixel" if meta.get("style") == "pixel" else "smooth",
                     "warnings": warnings,
                 }
             )

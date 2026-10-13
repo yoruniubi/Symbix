@@ -241,7 +241,10 @@ class SymbixClient:
             "- 用户说「记住…」「以后都用…」，或你了解到值得长期保留的身份/偏好/习惯/目标/约束时，"
             "**必须调用 `save_memory` 真正写入长期记忆库**；只在回复里说「记住了」等于没记住。\n"
             "- 用户问「你还记得我什么」「我之前说过…吗」时，先 `search_memories` 查库再回答，"
-            "不要凭本次对话上下文充当长期记忆。\n\n"
+            "不要凭本次对话上下文充当长期记忆。\n"
+            "- 系统会按当轮提问附上少量长期记忆作为**背景**。它们可能来自其他对话或其他项目："
+            "只有当它与用户当前的问题直接相关时才用；无关就不要主动提起，"
+            "也不要拿记忆里的项目名/文件名去指代用户的「这个项目」或替用户猜当前在做什么。\n\n"
             "## Skill 使用规则(必须先查看,再执行)\n"
             "- 用户请求可能对应某个已安装技能时,**先主动调用对应的 `skill__<skill-name>` 工具**加载完整指南,再按指南执行;不要只靠列表里的一行简介猜做法。\n"
             "- 不确定用户需求对应哪个技能时,可从上方[可用技能列表]按描述与触发关键词判断,必要时调用多个相关技能。\n"
@@ -764,6 +767,7 @@ class SymbixClient:
         full_text = ""
         full_reasoning = ""
         tool_calls_acc: dict[int, dict] = {}   # index → {id, name, arguments}
+        usage_acc: dict | None = None
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, headers=headers, json=body) as resp:
@@ -790,6 +794,11 @@ class SymbixClient:
                         continue
 
                     choices = evt.get("choices", [])
+                    # 上游若自带 usage(部分网关默认返回),顺手透出供前端对照估算误差;
+                    # 这里不主动加 stream_options.include_usage,免得部分网关 400。
+                    usage_chunk = evt.get("usage")
+                    if usage_chunk:
+                        usage_acc = usage_chunk
                     if not choices:
                         continue
                     choice = choices[0]
@@ -834,6 +843,7 @@ class SymbixClient:
             "content": full_text,
             "reasoning": full_reasoning if full_reasoning else None,
             "tool_calls": tool_calls if tool_calls else None,
+            "usage": usage_acc,
         }
         return
 
@@ -877,6 +887,7 @@ class SymbixClient:
                 body["tools"] = gemini_tools
 
         full_text = ""
+        usage_acc: dict | None = None
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream("POST", url, headers=headers, json=body) as resp:
                 if resp.status_code != 200:
@@ -899,6 +910,9 @@ class SymbixClient:
                         continue
 
                     candidates = evt.get("candidates", [])
+                    usage_chunk = evt.get("usageMetadata")
+                    if usage_chunk:
+                        usage_acc = usage_chunk
                     if not candidates:
                         continue
                     content = candidates[0].get("content", {})
@@ -913,4 +927,5 @@ class SymbixClient:
             "type": "done",
             "content": full_text,
             "tool_calls": None,
+            "usage": usage_acc,
         }

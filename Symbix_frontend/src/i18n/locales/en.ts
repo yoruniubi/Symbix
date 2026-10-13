@@ -35,6 +35,14 @@ export default {
   // ===== Chat Window =====
   chat: {
     noApiKey: 'API Key not set, please configure your API key first',
+    usageLine: '↑{up} ↓{down} · tools {tools}',
+    usageSession: 'This session ↑{up} ↓{down} · {calls} turns',
+    usageDetailSystem: 'System prompt {n}',
+    usageDetailTools: 'Tool definitions {n} ({count} tools) · {msgs} messages',
+    usageDetailHistory: 'History + current turn {n}',
+    usageDetailOutput: 'Output {n}',
+    usageDetailTotal: 'Total {n} (approx, no tiktoken) · session total ↑{up} ↓{down} / {calls} turns',
+    usageDetailUpstream: 'Upstream actual: prompt {p} / completion {c} / total {t}',
     newChat: 'New Chat',
     newChatTitle: 'New Chat',
     stopGenerate: 'Generation paused',
@@ -466,6 +474,9 @@ export default {
     existingSection: 'Available Skins',
     skillGenerate: 'Skill Generate',
     skillGenerateDesc: 'Generate new pet skin assets via Skill',
+    pixelStyleNote: 'Art style is pixel art: the AI fills a 192×208 pixel canvas cell by cell (= the on-screen size itself, 1 cell = 1 pixel; integer coordinates, straight lines and right angles only, max 6-8 colors, no gradients or translucency)',
+    stylePixel: 'Pixel',
+    styleSmooth: 'Smooth',
     codexImport: 'Codex Import',
     codexImportDesc: 'Import Codex pet folder (with pet.json)',
     comingSoon: 'Soon',
@@ -510,7 +521,7 @@ export default {
     empty: 'No skins yet',
     namePlaceholder: 'e.g. my-pet',
     pickFolderTitle: 'Select Codex pet folder (with pet.json)',
-    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\nFollow the pet-forge skill workflow: produce base.svg and states.json yourself directly (do not call any generation script), then run validate_rig → derive_mirrors → validate_states, and finally use build_theme.py to pack and bake in one step:\n\npython "<skill root>/scripts/build_theme.py" -n "{name}" --rig base.svg --states states.json -d "<one-line description>"\n\nNote: the skill root is the [Skill root] line returned by the skill tool, so use absolute paths on the command line; the output directory is derived by the script itself (default <project root>/Symbix_frontend/public/pixiv_pet/{name}); never hardcode an absolute drive path, and do not run pack_theme.py / bake_snapshots.py / pack_spritesheet.py separately. When done, confirm that spritesheet.webp and pet.json exist in that directory and report the output path.',
+    skillMessage: 'Please use the pet-forge skill to generate a new pet skin for me.\n\nSkin name: {name}\nAppearance: {prompt}\n\n[Hard requirement - pixel art style] pet-forge\'s viewBox 0 0 192 208 is the frame size itself (1 cell = 1 pixel); every integer coordinate is one pixel cell:\n1. All coordinates must be integers (rect/circle/ellipse/line/polygon/path coordinates, transform-origin px values); no half-cell values like 87.5.\n2. path may only contain straight lines (commands limited to M/L/H/V/Z); C/S/Q/T/A curves are forbidden. Do not use <circle>/<ellipse> for round shapes - build a symmetric pixel circle from integer-cell rects and polylines.\n3. No gradients, filters, shadows or translucency; only flat var(--pet-*) color blocks (max 6-8 colors).\n4. Minimum feature size >= 2x2 cells (pupils at least 2x2, 4x4 preferred); keep shapes inside the canvas (x 0..192, y 0..208), with the feet around y=170~190.\nYou may reference the skill\'s assets/fixtures/pixel-base.svg.\n\nFollow the pet-forge skill workflow: produce base.svg and states.json yourself directly (do not call any generation script), then run validate_rig → derive_mirrors → validate_states (validate_rig already enforces the pixel contract by default - fix any WARN lines too), and finally use build_theme.py to pack and bake in one step:\n\npython "<skill root>/scripts/build_theme.py" -n "{name}" --rig base.svg --states states.json -d "<one-line description>"\n\nNote: the skill root is the [Skill root] line returned by the skill tool, so use absolute paths on the command line; the output directory is derived by the script itself (default <project root>/Symbix_frontend/public/pixiv_pet/{name}); never hardcode an absolute drive path, and do not run pack_theme.py / bake_snapshots.py / pack_spritesheet.py separately; pixel art is the default style, so do not pass --scale/--nearest/--style. When done, confirm that spritesheet.webp and pet.json exist in that directory and report the output path.',
   },
 
   // ===== Setting Page =====

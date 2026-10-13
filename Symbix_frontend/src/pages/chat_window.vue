@@ -117,6 +117,12 @@
         {{ $t('chat.noApiKey') }}
       </n-alert>
 
+      <!-- token 用量:最近一轮 + 本会话累计,hover 看明细 -->
+      <div v-if="usageLine" class="usage-line" :title="usageDetail">
+        <span class="usage-main">{{ usageLine }}</span>
+        <span v-if="usageSessionLine" class="usage-session">{{ usageSessionLine }}</span>
+      </div>
+
       <!-- Chat Input -->
       <ChatInput
         :loading="loading"
@@ -216,6 +222,78 @@ const mcpToolList = ref<{ type: string; function: { name: string; description: s
 const mcpServerGroups = ref<{ server_id: string; tool_count: number; tools: any[]; error?: string; url?: string }[]>([])
 const expandedMcpServers = ref<Set<string>>(new Set())
 const nativeToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
+
+// ── token 用量(后端 done 事件带的估算值;仅展示,不参与业务)──
+interface TokenUsage {
+  system: number
+  tools: number
+  history: number
+  output: number
+  prompt: number
+  total: number
+  tool_count: number
+  message_count: number
+  estimated: boolean
+  upstream?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+}
+const lastUsage = ref<TokenUsage | null>(null)
+const sessionUsage = ref({ prompt: 0, output: 0, calls: 0, tools: 0 })
+
+function fmtTokens(n: number | undefined): string {
+  const v = n || 0
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`
+  return String(v)
+}
+
+const usageLine = computed(() => {
+  const u = lastUsage.value
+  if (!u) return ''
+  return t('chat.usageLine', { up: fmtTokens(u.prompt), down: fmtTokens(u.output), tools: fmtTokens(u.tools) })
+})
+
+const usageSessionLine = computed(() => {
+  const s = sessionUsage.value
+  if (!s.calls) return ''
+  return t('chat.usageSession', { up: fmtTokens(s.prompt), down: fmtTokens(s.output), calls: s.calls })
+})
+
+const usageDetail = computed(() => {
+  const u = lastUsage.value
+  if (!u) return ''
+  const lines = [
+    t('chat.usageDetailSystem', { n: u.system }),
+    t('chat.usageDetailTools', { n: u.tools, count: u.tool_count, msgs: u.message_count }),
+    t('chat.usageDetailHistory', { n: u.history }),
+    t('chat.usageDetailOutput', { n: u.output }),
+    t('chat.usageDetailTotal', {
+      n: u.total, up: sessionUsage.value.prompt, down: sessionUsage.value.output, calls: sessionUsage.value.calls,
+    }),
+  ]
+  const up = u.upstream
+  if (up && (up.prompt_tokens || up.completion_tokens || up.total_tokens)) {
+    lines.push(t('chat.usageDetailUpstream', {
+      p: up.prompt_tokens ?? '-', c: up.completion_tokens ?? '-', t: up.total_tokens ?? '-',
+    }))
+  }
+  return lines.join('\n')
+})
+
+/** 记一轮用量:最近一轮明细 + 会话累计(切换会话时清零) */
+function recordUsage(usage?: TokenUsage | null) {
+  if (!usage) return
+  lastUsage.value = usage
+  sessionUsage.value = {
+    prompt: sessionUsage.value.prompt + (usage.prompt || 0),
+    output: sessionUsage.value.output + (usage.output || 0),
+    tools: usage.tools || sessionUsage.value.tools,
+    calls: sessionUsage.value.calls + 1,
+  }
+}
+
+function resetUsage() {
+  lastUsage.value = null
+  sessionUsage.value = { prompt: 0, output: 0, calls: 0, tools: 0 }
+}
 const hasApiKey = computed(() => !!settings.value.apiKey)
 
 // 添加 Skill / MCP 弹窗
@@ -594,6 +672,7 @@ function newChat() {
   // 清空当前对话区;真正创建会话在首次 sendMessage 时
   messages.value = []
   activeSessionId.value = null
+  resetUsage()
 }
 
 function loadSession(id: string) {
@@ -601,6 +680,7 @@ function loadSession(id: string) {
   if (!session) return
   activeSessionId.value = id
   messages.value = [...session.messages]
+  resetUsage()
   // 历史消息里可能残留早已失效的 approval_id(后端重启后挂起态就没了),
   // 先和后端对账,把过期卡片标成「已失效」,别留一个点了必然报错的按钮。
   void syncPendingApprovals(id)
@@ -1110,6 +1190,8 @@ function handleSSEEvent(
       if (evt.reasoning) msg.reasoning = evt.reasoning
       // 后端本轮自动判决的执行模式(reactive / plan_solve):聊天页据此显示角标
       if (evt.act_mode) msg.act_mode = evt.act_mode
+      // token 用量(后端估算,不是每轮都有:审批挂起/报错轮的 done 也带)
+      recordUsage(evt.usage)
       msg.retryHint = ''
       break
 
@@ -1693,6 +1775,27 @@ function scrollToBottom(instant: boolean = false) {
   flex: 0 0 auto;
   position: relative;
   z-index: 2;
+}
+
+/* token 用量一行小字:最近一轮 + 本会话累计,hover 看明细 */
+.usage-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 4px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted, var(--text-secondary));
+  opacity: 0.75;
+  cursor: help;
+  user-select: none;
+}
+.usage-line .usage-main {
+  font-variant-numeric: tabular-nums;
+}
+.usage-line .usage-session {
+  opacity: 0.7;
 }
 
 

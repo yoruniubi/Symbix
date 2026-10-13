@@ -48,7 +48,9 @@ def build_system_prompt_parts(
         # ── 新管线：BM25 检索 ──
         if user_query.strip():
             try:
-                memory_text = memory_store.retrieve_for_chat(user_query, k=5)
+                memory_text = memory_store.retrieve_for_chat(
+                    user_query, k=5, session_id=session_id,
+                )
             except Exception as e:
                 print(f"[Memory] RAG retrieve failed: {e}")
 
@@ -57,6 +59,9 @@ def build_system_prompt_parts(
             memory_text = memory.get_profile_prompt()
 
         if memory_text:
+            # 只打条数:方便从终端确认「这轮到底喂了几条、是不是串味了」
+            count = sum(1 for line in memory_text.split("\n") if line.startswith("- "))
+            print(f"[Memory] 注入 {count} 条长期记忆 (session={(session_id or '-')[:8]}…)")
             dynamic = memory_text.strip()
 
     return "\n\n".join(stable_parts), dynamic

@@ -47,6 +47,7 @@
             <div class="add-card-body">
               <div class="add-card-title">{{ t('skinWindow.skillGenerate') }}<span v-if="!skillReady" class="soon-tag">{{ skillBadgeText }}</span></div>
               <div class="add-card-desc">{{ t('skinWindow.skillGenerateDesc') }}</div>
+              <div class="add-card-desc pixel-note">{{ t('skinWindow.pixelStyleNote') }}</div>
             </div>
             <svg class="add-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6" />
@@ -112,6 +113,7 @@
               </button>
             </div>
             <span class="skin-name">{{ pet.displayName }}</span>
+            <span v-if="pet.style" class="skin-style-tag" :class="pet.style">{{ t('skinWindow.style' + (pet.style === 'pixel' ? 'Pixel' : 'Smooth')) }}</span>
             <span v-if="pet.source" class="skin-source">{{ t('skinWindow.' + pet.source) }}</span>
           </div>
         </div>
@@ -139,6 +141,8 @@
         <p class="skill-placeholder-text">
           {{ t('skinWindow.skillGenerateDesc') }}<br />
           <span style="font-size: 11px; opacity: 0.7;">{{ t('skinWindow.modalHint') }}</span>
+          <br />
+          <span class="modal-pixel-note">{{ t('skinWindow.pixelStyleNote') }}</span>
         </p>
         <n-form label-placement="top" size="small" style="width: 100%;">
           <n-form-item :label="t('skinWindow.modalName')">
@@ -218,6 +222,8 @@ interface PetSkin {
   template?: boolean
   /** 烘焙/校验警告(缺失帧、动画没作用到部件、尺寸不符等) */
   warnings?: string[]
+  /** 画风:pixel = 像素画板(192x208 格,= 帧尺寸),smooth = 历史平滑矢量 */
+  style?: 'pixel' | 'smooth'
 }
 
 /** 打开或激活已有窗口 */
@@ -284,10 +290,13 @@ async function notifyPetSwitched(payload: {
   petFolder: string
   spritesheetPath: string
   displayName: string
+  /** 画风:决定主窗用 nearest 还是 linear 采样(像素画放大不能用平滑) */
+  style?: 'pixel' | 'smooth'
 }) {
   // 1) localStorage：同源多 webview 会触发 storage 事件（最稳兜底）
   try {
     localStorage.setItem('currentPetId', payload.petId)
+    localStorage.setItem('petStyle', payload.style === 'pixel' ? 'pixel' : 'smooth')
     localStorage.setItem(
       'petSwitchSignal',
       JSON.stringify({ ...payload, ts: Date.now() }),
@@ -650,7 +659,7 @@ async function pickFolder() {
  */
 async function loadDiskSkins(manual = false) {
   const base: PetSkin[] = [
-    { id: 'frieren', displayName: 'Frieren', preview: '/codex_pet/frieren/spritesheet.webp', source: 'builtin', ready: true, origin: 'codex', folder: 'frieren' },
+    { id: 'frieren', displayName: 'Frieren', preview: '/codex_pet/frieren/spritesheet.webp', source: 'builtin', ready: true, origin: 'codex', folder: 'frieren', style: 'smooth' },
   ]
   let saved: PetSkin[] = []
   try {
@@ -689,6 +698,7 @@ async function loadDiskSkins(manual = false) {
       folder: s.folder,
       template: s.template === true,
       warnings: Array.isArray(s.warnings) ? s.warnings : [],
+      style: s.style === 'pixel' ? 'pixel' : 'smooth',
     })
   }
 
@@ -771,6 +781,7 @@ async function switchPet(pet: PetSkin) {
       petFolder,
       spritesheetPath: pet.preview,
       displayName: pet.displayName,
+      style: pet.style,
     })
 
     message.success(t('skinWindow.switchSuccess', { name: pet.displayName }))
@@ -791,6 +802,7 @@ function removePet(id: string) {
       petFolder: 'frieren',
       spritesheetPath: '/codex_pet/frieren/spritesheet.webp',
       displayName: 'Frieren',
+      style: 'smooth',
     })
   }
   message.success(t('skinWindow.deleteSuccess'))
@@ -1090,6 +1102,40 @@ onMounted(() => {
   color: var(--text-secondary, #A9A29C);
   border-style: dashed;
   cursor: help;
+}
+
+.skin-style-tag {
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--text-muted, var(--text-secondary));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+}
+
+.skin-style-tag.pixel {
+  color: var(--accent-300, #F7A85B);
+  border-color: var(--accent-border, rgba(239, 107, 110, 0.35));
+}
+
+.pixel-note {
+  margin-top: 2px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  opacity: 0.7;
+}
+
+.modal-pixel-note {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--text-secondary, #A9A29C);
+  background: var(--bg-elevated, #2B2523);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
 }
 
 .skin-preview-wrap {

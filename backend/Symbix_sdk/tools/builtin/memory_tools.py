@@ -136,7 +136,16 @@ async def search_memories(query: str = "", k: int = 5) -> str:
             "memories": [],
             "message": "没有匹配的长期记忆。" + ("(库中可能还是空的)" if q else ""),
         })
-    return _json({"status": "ok", "count": len(items), "query": q, "memories": items})
+    return _json({
+        "status": "ok",
+        "count": len(items),
+        "query": q,
+        "memories": items,
+        "note": (
+            "这些记忆可能来自**其他对话或其他项目**。只在确实与用户当前的问题相关时引用;"
+            "无关就不要主动提起,也不要把它们当成当前任务的设定。"
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +184,8 @@ MEMORY_TOOLS_SCHEMAS = {
         "description": (
             "检索长期记忆库。用户问「你还记得我什么」「我之前说过…吗」,或你想确认某个"
             "关于用户的事实是否已经记过时调用。query 留空则返回最近保存的若干条。"
+            "注意:结果可能来自其他对话或其他项目 —— 只在确实与当前问题相关时引用,"
+            "无关的不要主动提起,也别当成当前任务的设定。"
         ),
         "parameters": {
             "type": "object",

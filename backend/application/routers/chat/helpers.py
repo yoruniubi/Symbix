@@ -311,6 +311,63 @@ def _estimate_tool_tokens(text: str) -> int:
     return int(cjk * 1.5 + other * 0.3)
 
 
+def _message_tokens(msg: dict) -> int:
+    """单条 messages 的 token 估算(文本段 + tool_calls 参数 + 固定开销)。"""
+    content = msg.get("content")
+    if isinstance(content, list):
+        text = "".join(
+            str(part.get("text") or "") for part in content if isinstance(part, dict)
+        )
+    else:
+        text = content or ""
+    n = _estimate_tool_tokens(str(text))
+    for tc in (msg.get("tool_calls") or []):
+        fn = tc.get("function") or {}
+        n += _estimate_tool_tokens(str(fn.get("arguments") or "")) + 12
+    # 角色 / role 字段 / 分隔符等固定开销,粗略按每条 8 token 计
+    return n + 8
+
+
+def build_usage_payload(
+    messages: list[dict] | None,
+    tools: list[dict] | None,
+    output: str,
+    upstream: dict | None = None,
+) -> dict:
+    """四块 token 估算,随 done 事件透给前端(前端只负责展示)。
+
+    无 tiktoken,数字均为近似值(前端标「约」);upstream 是上游真返回的 usage,
+    拿得到就一并透出,让用户能对照估算误差(不打 include_usage,免得部分网关 400)。
+    """
+    system = 0
+    history = 0
+    for i, msg in enumerate(messages or []):
+        n = _message_tokens(msg)
+        if i == 0 and msg.get("role") == "system":
+            system += n
+        else:
+            history += n
+    tool_tokens = sum(
+        _estimate_tool_tokens(_json.dumps(t, ensure_ascii=False)) for t in (tools or [])
+    )
+    out_tokens = _estimate_tool_tokens(output or "")
+    prompt = system + tool_tokens + history
+    payload = {
+        "system": system,
+        "tools": tool_tokens,
+        "history": history,
+        "output": out_tokens,
+        "prompt": prompt,
+        "total": prompt + out_tokens,
+        "tool_count": len(tools or []),
+        "message_count": len(messages or []),
+        "estimated": True,
+    }
+    if isinstance(upstream, dict):
+        payload["upstream"] = upstream
+    return payload
+
+
 def _steps_to_tool_messages(steps: list[dict]) -> list[dict]:
     """从 steps 中提取"已执行"的工具链,转成 OpenAI 消息序列。
 

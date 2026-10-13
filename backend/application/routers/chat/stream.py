@@ -49,6 +49,7 @@ from application.routers.chat.helpers import (
     _is_read_only_parallel_tool,
     run_tools_parallel,
     MAX_CUM_TOOL_TOKENS,
+    build_usage_payload,
 )
 
 router = APIRouter(tags=["chat"])
@@ -206,6 +207,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 })
 
             _batcher = _DeltaBatcher()
+            # token 统计:上游若在 done 里带回真实 usage,从这里开始收集
+            last_usage: dict | None = None
             async for event in symbix_client.chat_stream(
                 user_input=user_for_llm,
                 history=history[:-1],
@@ -238,6 +241,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     tool_calls_raw = event.get("tool_calls")
                     if event.get("reasoning"):
                         last_reasoning = event.get("reasoning")
+                    if event.get("usage"):
+                        last_usage = event["usage"]
                     if event.get("error"):
                         print(f"[chat_stream] 内容不完整: {event['error']}")
 
@@ -271,6 +276,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 system_prompt=stable_prompt,
             )
             cum_tool_tokens = 0
+            # token 统计:估算用的 messages 快照(每轮更新)
+            usage_msgs = running_msgs
+
+            def _usage_payload() -> dict:
+                return build_usage_payload(usage_msgs, mcp_tools, full_text, upstream=last_usage)
+
             # 子 Agent 委派所需的请求级模型参数(不同模型/网关时与主 Agent 保持一致)
             # 子 Agent 可单独配置模型(model_setting 页「子 Agent 模型」),未配置则沿用主模型;
             # api_key / api_base 仍与主模型共用。
@@ -466,7 +477,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "kind": qdata.get("kind", ""),
                                 "tool": {"id": tc_id, "name": tc_name},
                             })
-                            yield format_sse({"type": "done", "content": full_text})
+                            yield format_sse({"type": "done", "content": full_text, "usage": _usage_payload()})
                             # 掉出本轮工具循环,等待用户回答后由 /chat/approve 续跑
                             tool_calls_raw = None
                             break
@@ -530,7 +541,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         _emit_tool(request.session_id, ckpt_round_id, tc_name, tc_args,
                                    risk_level, False, "", status="skipped",
                                    error="awaiting user approval")
-                        yield format_sse({"type": "done", "content": full_text})
+                        yield format_sse({"type": "done", "content": full_text, "usage": _usage_payload()})
                         # — checkpoint: 本轮被审批拦住,尚未完成 → round 未完待续
                         _emit_round_summary(
                             request.session_id, ckpt_round_id,
@@ -665,6 +676,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     break
 
                 msgs = running_msgs
+                usage_msgs = msgs
 
                 provider = provider_registry.get_active()
                 raw_model = model or provider.model
@@ -694,6 +706,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         tool_calls_raw = e.get("tool_calls")
                         if e.get("reasoning"):
                             last_reasoning = e.get("reasoning")
+                        if e.get("usage"):
+                            last_usage = e["usage"]
                         if e.get("error"):
                             print(f"[chat_stream 轮次] 内容不完整: {e['error']}")
 
@@ -714,6 +728,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 "content": full_text,
                 "act_mode": act_mode,
                 "act_plan": act_plan,
+                "usage": _usage_payload(),
             })
             # 陪伴:任务完成 → 弹幕庆祝(静默失败不影响主流程)
             try:
