@@ -2,6 +2,31 @@ from __future__ import annotations
 import json
 from Symbix_sdk.act_mode.child import CHILD_ROLES, run_child_agent, run_child_agents
 
+
+def _task_context() -> str:
+    """给子 Agent 的主链路上下文:主 Agent 在本会话里已经做过什么。
+
+    子 Agent 是「只读、看不到主 Agent 对话历史」的,不告诉它前面做过什么,
+    它就会去重复翻主 Agent 已经确认过的文件(白烧 token,还可能得出重复结论)。
+    数据源同主链路的 [近期工具记录],压制得更短(见 CHILD_DIGEST_ROUNDS)。
+    """
+    from Symbix_sdk.checkpoint import get_current
+    from application.services.round_digest import (
+        CHILD_DIGEST_HEADER, CHILD_DIGEST_ROUNDS, build_recent_tool_digest,
+    )
+
+    session_id, _round_id = get_current()
+    if not session_id:
+        return ""
+    try:
+        return build_recent_tool_digest(
+            session_id, header=CHILD_DIGEST_HEADER, rounds=CHILD_DIGEST_ROUNDS,
+        )
+    except Exception as e:
+        print(f"[digest] 子 Agent 上下文构建失败,跳过: {e}")
+        return ""
+
+
 async def delegate_task(
     task: str = "",
     agent_role: str = "researcher",
@@ -29,6 +54,7 @@ async def delegate_task(
         task,
         role=agent_role,
         context=context,
+        task_context=_task_context(),
         llm_client=symbix_client,
         toolkit=tool_registry.native,
         override_api_key=ctx.get("api_key") or None,
@@ -92,6 +118,7 @@ async def delegate_tasks(
         override_api_key=ctx.get("api_key") or None,
         override_api_base=ctx.get("api_base") or None,
         override_model=ctx.get("model") or None,
+        task_context=_task_context(),
         on_event=_on_event,
     )
 

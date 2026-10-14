@@ -42,6 +42,7 @@ from application.routers.chat.helpers import (
     _execute_tool,
     _stream_tool_events,
     MAX_CUM_TOOL_TOKENS,
+    build_usage_payload,
 )
 
 router = APIRouter(tags=["chat"])
@@ -309,6 +310,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 full_text = ""
                 tool_calls_raw = None
                 _batcher = _DeltaBatcher()
+                # token 统计:上游若在 done 里带回真实 usage,从这里收集(与 /chat/stream 同口径)
+                last_usage: dict | None = None
 
                 provider = provider_registry.get_active()
                 raw_model = model or provider.model
@@ -338,6 +341,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                         tool_calls_raw = e.get("tool_calls")
                         if e.get("reasoning"):
                             last_reasoning = e.get("reasoning")
+                        if e.get("usage"):
+                            last_usage = e["usage"]
                         if e.get("error"):
                             print(f"[_stream_approve] 内容不完整: {e['error']}")
 
@@ -488,7 +493,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     "kind": qdata.get("kind", ""),
                                     "tool": {"id": tc_id, "name": tc_name},
                                 })
-                                yield format_sse({"type": "done", "content": full_text})
+                                yield format_sse({
+                                    "type": "done",
+                                    "content": full_text,
+                                    "usage": build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage),
+                                })
                                 return
 
                         if _needs_approval:
@@ -541,7 +550,11 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 ckpt_tool_count, ckpt_failed,
                                 duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
                             )
-                            yield format_sse({"type": "done", "content": full_text})
+                            yield format_sse({
+                                "type": "done",
+                                "content": full_text,
+                                "usage": build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage),
+                            })
                             return
 
                         _ctx_set_current(session_id, ckpt_round_id)
@@ -608,6 +621,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             tool_calls_raw = e.get("tool_calls")
                             if e.get("reasoning"):
                                 last_reasoning = e.get("reasoning")
+                            if e.get("usage"):
+                                last_usage = e["usage"]
                             if e.get("error"):
                                 print(f"[_stream_approve] 内容不完整: {e['error']}")
                     flushed2 = _batcher2.flush()
@@ -619,7 +634,13 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 if not full_text:
                     full_text = "[已完成工具调用，但模型未返回最终文本。]"
                 memory.add(session_id, "assistant", full_text)
-                yield format_sse({"type": "done", "content": full_text, "act_mode": act_mode, "act_plan": act_plan})
+                yield format_sse({
+                    "type": "done",
+                    "content": full_text,
+                    "act_mode": act_mode,
+                    "act_plan": act_plan,
+                    "usage": build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage),
+                })
                 # — checkpoint: approve-stream 本轮完成 → 记 round 总结点
                 _emit_round_summary(
                     session_id, ckpt_round_id,

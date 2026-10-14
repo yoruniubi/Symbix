@@ -277,7 +277,7 @@ import MarkdownRender from 'markstream-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useI18n } from 'vue-i18n'
 import { BACKEND_URL } from '@/utils/backend'
-import { extractRigPath, rigFolderName } from '@/utils/petRig'
+import { pickPreviewRigPath, rigFolderName } from '@/utils/petRig'
 
 const props = defineProps<{
   msg: any
@@ -386,15 +386,12 @@ const actModeTip = computed(() => {
   return ''
 })
 
-/** pet-forge 预览:取本轮工具步骤里最近一次写出的 base.svg,直观看到桌宠形象大致长什么样 */
-const rigPath = computed(() => {
-  const steps: any[] = props.msg?.steps || []
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const hit = extractRigPath(steps[i]?.arguments)
-    if (hit) return hit
-  }
-  return ''
-})
+/**
+ * pet-forge 预览:取本轮**写出的** base.svg(详见 utils/petRig.ts 的 pickPreviewRigPath)。
+ * 读模板 / 列目录 / 调 skill 都会在参数里带 base.svg,但那些不是「生成完成」,
+ * 过去会让预览卡从一开始就挂着 skill 自带的模板图,容易被误认为用户的桌宠。
+ */
+const rigPath = computed(() => pickPreviewRigPath(props.msg?.steps))
 const rigName = computed(() => rigFolderName(rigPath.value))
 /** 最后一步的状态:落 done 往往意味着一批文件刚写完,值得重读一次 base.svg */
 const lastStepStatus = computed(() => {
@@ -1625,7 +1622,7 @@ onMounted(() => {
   line-height: 1.4;
 }
 
-./* 审批/提问已失效:只留一行说明,不给可点的按钮 */
+/* 审批/提问已失效:只留一行说明,不给可点的按钮 */
 .approval-expired-note,
 .question-expired-note {
   margin-top: 6px;

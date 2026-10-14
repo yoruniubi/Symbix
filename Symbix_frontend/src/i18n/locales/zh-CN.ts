@@ -35,7 +35,7 @@ export default {
   // ===== Chat Window =====
   chat: {
     noApiKey: '未设置 API Key,请先配置 API 密钥',
-    usageLine: '↑{up} ↓{down} · 工具 {tools}',
+    usageLine: 'token使用量: ↑{up} ↓{down} · 工具 {tools}',
     usageSession: '本会话 ↑{up} ↓{down} · {calls} 轮',
     usageDetailSystem: '系统提示 {n}',
     usageDetailTools: '工具定义 {n}（{count} 个） · 消息 {msgs} 条',
@@ -473,7 +473,7 @@ export default {
     existingSection: '已有皮肤',
     skillGenerate: 'Skill 生成',
     skillGenerateDesc: '通过 Skill 生成新的桌宠皮肤素材',
-    pixelStyleNote: '画风为像素画：AI 在一块 192×208 的像素画板上逐格填色（= 桌面显示尺寸本身，1 格 = 1 像素；整数坐标、只走直线与直角、最多 6–8 色、无渐变/半透明）',
+    pixelStyleNote: '画风为像素画',
     stylePixel: '像素',
     styleSmooth: '平滑',
     codexImport: 'Codex 导入',
@@ -512,6 +512,10 @@ export default {
     sheetMismatch: '尺寸 {w}x{h} 不符切片契约(需 1536 宽 × 9 行)',
     moreWarnings: '还有 {count} 条烘焙警告',
     deleteSuccess: '已删除皮肤',
+    deleteTitle: '删除皮肤',
+    deleteBody: '将删除磁盘上的皮肤「{name}」及其全部素材文件,不可恢复。确定删除吗?',
+    deleteConfirm: '删除',
+    deleteFail: '删除失败:{msg}',
     uploadConfirm: '正在导入皮肤文件夹...',
     uploading: '正在导入皮肤...',
     builtin: '内置',

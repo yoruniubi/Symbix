@@ -320,6 +320,8 @@ async def pet_import_folder(
 
 # 内置皮肤(随仓库分发),其余磁盘上的都算已导入
 _BUILTIN_SKINS = frozenset({"frieren"})
+# 可删除的皮肤根目录(内置皮肤另拦)
+_DELETABLE_ROOTS = {"pixiv": _PIXIV_PET_DIR, "codex": _CODEX_PET_DIR}
 _SPRITESHEET_CANDIDATES = ("spritesheet.webp", "spritesheet.png", "preview.webp", "preview.png")
 
 
@@ -452,6 +454,41 @@ async def pet_list_skins():
             )
 
     return {"skins": skins}
+
+
+@router.delete("/pet/skins/{folder}")
+async def pet_delete_skin(
+    folder: str,
+    origin: str = Query("pixiv", description="pixiv = pet-forge 生成; codex = 本机导入的桌宠"),
+):
+    """真删磁盘上的皮肤目录(内置皮肤除外)。
+
+    以前前端「删除」只清 localStorage,刷新后 /pet/skins 又从磁盘扫回来,
+    于是 skill 生成的皮肤永远删不掉。这里改成真删目录。
+    """
+    root = _DELETABLE_ROOTS.get((origin or "").strip().lower())
+    if root is None:
+        raise HTTPException(status_code=400, detail=f"origin 只支持 pixiv / codex,收到: {origin}")
+    name = _safe_folder_name(folder)
+    if name in _BUILTIN_SKINS:
+        raise HTTPException(status_code=403, detail=f"内置皮肤 {name} 不可删除")
+    target = root / name
+    # 软链接 / 越界一律拒(rmtree 只允许打在固定根目录的直接子目录上)
+    if target.is_symlink() or target.resolve().parent != root.resolve():
+        raise HTTPException(status_code=400, detail="皮肤路径不合法")
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"皮肤目录不存在: {name}")
+    try:
+        await asyncio.to_thread(shutil.rmtree, target)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除失败: {e}") from e
+    return {
+        "status": "ok",
+        "id": f"{origin}_{name}",
+        "folder": name,
+        "origin": origin,
+        "message": f"皮肤 '{name}' 已删除",
+    }
 
 
 def _load_forge_script(module_name: str):

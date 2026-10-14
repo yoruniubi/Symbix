@@ -35,7 +35,7 @@ export default {
   // ===== Chat Window =====
   chat: {
     noApiKey: 'API Key not set, please configure your API key first',
-    usageLine: '↑{up} ↓{down} · tools {tools}',
+    usageLine: 'token usage: ↑{up} ↓{down} · tools {tools}',
     usageSession: 'This session ↑{up} ↓{down} · {calls} turns',
     usageDetailSystem: 'System prompt {n}',
     usageDetailTools: 'Tool definitions {n} ({count} tools) · {msgs} messages',
@@ -474,7 +474,7 @@ export default {
     existingSection: 'Available Skins',
     skillGenerate: 'Skill Generate',
     skillGenerateDesc: 'Generate new pet skin assets via Skill',
-    pixelStyleNote: 'Art style is pixel art: the AI fills a 192×208 pixel canvas cell by cell (= the on-screen size itself, 1 cell = 1 pixel; integer coordinates, straight lines and right angles only, max 6-8 colors, no gradients or translucency)',
+    pixelStyleNote: 'Art style is pixel art',
     stylePixel: 'Pixel',
     styleSmooth: 'Smooth',
     codexImport: 'Codex Import',
@@ -513,6 +513,10 @@ export default {
     sheetMismatch: 'Size {w}x{h} violates the sheet contract (needs 1536 wide × 9 rows)',
     moreWarnings: '{count} more bake warning(s)',
     deleteSuccess: 'Skin deleted',
+    deleteTitle: 'Delete skin',
+    deleteBody: 'This deletes the skin "{name}" and all of its asset files from disk. It cannot be undone. Delete it?',
+    deleteConfirm: 'Delete',
+    deleteFail: 'Delete failed: {msg}',
     uploadConfirm: 'Importing skin folder...',
     uploading: 'Importing skin...',
     builtin: 'Built-in',

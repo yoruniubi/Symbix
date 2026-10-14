@@ -100,11 +100,11 @@
                 :title="(pet.warnings || []).join('\n')"
               >{{ t('skinWindow.templateTag') }}</div>
               <button
-                v-if="pet.id.startsWith('custom_')"
+                v-if="canRemove(pet)"
                 type="button"
                 class="remove-btn"
                 :title="t('skinWindow.removeBtn')"
-                @click.stop="removePet(pet.id)"
+                @click.stop="removePet(pet)"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -200,7 +200,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import TitleBar from '@/components/TitleBar.vue'
 import { Assets, Texture } from 'pixi.js'
@@ -321,6 +321,7 @@ async function notifyPetSwitched(payload: {
 
 
 const message = useMessage()
+const dialog = useDialog()
 const router = useRouter()
 
 /**
@@ -668,22 +669,43 @@ async function loadDiskSkins(manual = false) {
     saved = []
   }
 
+  let scanned: any[] = []
+  let scanOk = false
+  try {
+    const res = await fetch(`${BACKEND_URL}/pet/skins`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    scanned = data?.skins || []
+    scanOk = true
+  } catch (e) {
+    if (manual) message.warning(t('skinWindow.backendOffline'))
+  }
+
+  // 后端扫到的就是权威列表(它直接读磁盘)。localStorage 里指向磁盘目录、
+  // 但磁盘上已经不存在的记录要清掉 —— 否则在文件管理器里删了文件夹,
+  // 皮肤还会一直趴在列表里(旧版「只删 localStorage,不删磁盘」也留下了这类幽灵记录)。
+  // 后端没连上时不做清理(不能因为离线就丢掉用户记录)。
+  if (scanOk) {
+    const onDisk = new Set(scanned.map((s: any) => s.preview))
+    for (const p of saved) {
+      if (!/^\/(?:pixiv_pet|codex_pet)\//.test(p.preview || '')) continue
+      if (onDisk.has(p.preview)) continue
+      console.info(`[skin] 「${p.displayName}」的磁盘目录已不存在,已清理记录`)
+      forgetPet(p.id)
+    }
+    try {
+      saved = migrateOldPetData(JSON.parse(localStorage.getItem('customPets') || '[]'))
+    } catch {
+      saved = []
+    }
+  }
+
   const merged: PetSkin[] = [...base]
   const seen = new Set(merged.map((p) => p.preview))
   for (const p of saved) {
     if (!p?.preview || seen.has(p.preview)) continue
     seen.add(p.preview)
     merged.push({ ...p, ready: p.ready !== false })
-  }
-
-  let scanned: any[] = []
-  try {
-    const res = await fetch(`${BACKEND_URL}/pet/skins`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    scanned = data?.skins || []
-  } catch (e) {
-    if (manual) message.warning(t('skinWindow.backendOffline'))
   }
   for (const s of scanned) {
     if (!s?.preview || seen.has(s.preview)) continue
@@ -790,13 +812,24 @@ async function switchPet(pet: PetSkin) {
   }
 }
 
-function removePet(id: string) {
+/**
+ * 能不能删:内置皮肤不给按钮;磁盘上的(pixiv/codex)和旧版纯前端记录(custom_)可以。
+ * 之前只认 custom_ 前缀,skill 生成的皮肤 id 是 pixiv_xxx —— 压根没有删除按钮。
+ */
+function canRemove(pet: PetSkin): boolean {
+  if (pet.source === 'builtin') return false
+  return !!pet.folder || pet.id.startsWith('custom_')
+}
+
+/** 从列表 + localStorage 里摘掉,当前皮肤被删时回退 frieren */
+function forgetPet(id: string) {
   availablePets.value = availablePets.value.filter(p => p.id !== id)
   let savedPets: PetSkin[] = JSON.parse(localStorage.getItem('customPets') || '[]')
   savedPets = migrateOldPetData(savedPets)
   localStorage.setItem('customPets', JSON.stringify(savedPets.filter(p => p.id !== id)))
   if (currentPetId.value === id) {
     currentPetId.value = 'frieren'
+    localStorage.setItem('currentPetId', 'frieren')
     void notifyPetSwitched({
       petId: 'frieren',
       petFolder: 'frieren',
@@ -805,6 +838,43 @@ function removePet(id: string) {
       style: 'smooth',
     })
   }
+}
+
+async function removePet(pet: PetSkin) {
+  // 旧版纯前端记录:磁盘上没有目录,清掉 localStorage 就行
+  if (!pet.folder) {
+    forgetPet(pet.id)
+    message.success(t('skinWindow.deleteSuccess'))
+    return
+  }
+
+  dialog.warning({
+    title: t('skinWindow.deleteTitle'),
+    content: t('skinWindow.deleteBody', { name: pet.displayName }),
+    positiveText: t('skinWindow.deleteConfirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      void deletePetOnDisk(pet)
+    },
+  })
+}
+
+async function deletePetOnDisk(pet: PetSkin) {
+  const origin = pet.origin === 'codex' ? 'codex' : 'pixiv'
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/pet/skins/${encodeURIComponent(pet.folder!)}?origin=${origin}`,
+      { method: 'DELETE' },
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.detail || `HTTP ${res.status}`)
+    }
+  } catch (e: any) {
+    message.error(t('skinWindow.deleteFail', { msg: e.message || e }))
+    return
+  }
+  forgetPet(pet.id)
   message.success(t('skinWindow.deleteSuccess'))
 }
 

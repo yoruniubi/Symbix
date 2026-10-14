@@ -36,6 +36,7 @@ from application.routers.chat.helpers import (
     _parse_interaction_request,
     _DeltaBatcher,
     _batch_yield,
+    _client_event,
     _new_round_id,
     _emit_tool,
     _emit_round_summary,
@@ -697,7 +698,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         full_text_round = ""
                         yield format_sse({"type": "content_reset", "reason": e.get("reason")})
                         continue
-                    yield format_sse(e)
+                    yield format_sse(_client_event(e))
                     if e["type"] == "delta":
                         full_text_round += e["content"]
                     elif e["type"] == "reasoning":

@@ -194,6 +194,18 @@ class _DeltaBatcher:
         return evt
 
 
+def _client_event(event: dict) -> dict:
+    """转发 SDK 事件给前端前摘掉只给后端用的字段。
+
+    `done.usage` 是上游原始 usage(键名 prompt_tokens/completion_tokens),
+    只给后端的 last_usage 累计用;前端只认 build_usage_payload 的四块估算,
+    原样下发会被前端当成本轮用量 → 显示 ↑0 ↓0。
+    """
+    if event.get("type") == "done" and "usage" in event:
+        return {k: v for k, v in event.items() if k != "usage"}
+    return event
+
+
 def _batch_yield(
     event: dict,
     batcher: "_DeltaBatcher",
@@ -214,7 +226,7 @@ def _batch_yield(
     flushed = batcher.flush()
     if flushed is not None:
         out.append(format_sse(flushed))
-    out.append(format_sse(event))
+    out.append(format_sse(_client_event(event)))
     return out
 
 

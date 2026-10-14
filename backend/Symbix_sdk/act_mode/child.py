@@ -103,6 +103,7 @@ async def run_child_agent(
     *,
     role: str = DEFAULT_ROLE,
     context: str = "",
+    task_context: str = "",
     llm_client,
     toolkit,
     override_api_key: str | None = None,
@@ -119,6 +120,9 @@ async def run_child_agent(
         task: 交给子 Agent 的子任务描述(必填)
         role: 角色键(researcher/analyst/designer/tester/reviewer),未知则回退 researcher
         context: 附加背景(主 Agent 可把已知信息/相关路径喂进来)
+        task_context: 主链路任务上下文(含「主 Agent 已做过什么」的摘要),
+            由工具层组装后传入 —— 子 Agent 只读、看不到主 Agent 的对话历史,
+            不注入的话它会去重复翻主 Agent 已经确认过的东西
         llm_client: SymbixClient 实例(非流式 chat 内核)
         toolkit: NativeToolkit 实例(提供只读工具)
         override_api_key / override_api_base / override_model: 请求级模型参数(可选)
@@ -147,6 +151,8 @@ async def run_child_agent(
     user_msg = task
     if context and context.strip():
         user_msg = f"{task}\n\n[已知背景]\n{context.strip()}"
+    if task_context and task_context.strip():
+        user_msg = f"{user_msg}\n\n{task_context.strip()}"
 
     async def _emit(ev: dict) -> None:
         if on_event is None:
@@ -312,6 +318,7 @@ async def run_child_agents(
     max_rounds: int = 6,
     child_timeout: float = _DEFAULT_CHILD_TIMEOUT,
     max_content_chars: int = _BATCH_CHILD_CONTENT_CHARS,
+    task_context: str = "",
     on_event: Optional[Callable[[dict], Awaitable[None]]] = None,
 ) -> dict:
     """并发扇出多个子 Agent(扇出/扇入),单个失败不影响其它。
@@ -325,6 +332,7 @@ async def run_child_agents(
         max_concurrency: 同时运行的子 Agent 数上限
         child_timeout: 每个子 Agent 的超时(秒)
         max_content_chars: 每个子 Agent 结论的截断长度(批量会压得更短)
+        task_context: 主链路任务上下文(含「主 Agent 已做过什么」的摘要),透传给每个子 Agent
         on_event: 可选 async 进度回调
 
     Returns:
@@ -371,6 +379,7 @@ async def run_child_agents(
                 spec["task"],
                 role=spec["agent_role"],
                 context=spec["context"],
+                task_context=task_context,
                 llm_client=llm_client,
                 toolkit=toolkit,
                 override_api_key=override_api_key,

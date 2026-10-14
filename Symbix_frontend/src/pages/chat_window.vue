@@ -281,6 +281,9 @@ const usageDetail = computed(() => {
 /** 记一轮用量:最近一轮明细 + 会话累计(切换会话时清零) */
 function recordUsage(usage?: TokenUsage | null) {
   if (!usage) return
+  // 只认后端 build_usage_payload 的四块估算(prompt/output/tools 都是数字)。
+  // 上游原始 usage(prompt_tokens/completion_tokens)形状不同,当真会显示成 ↑0 ↓0。
+  if (typeof usage.prompt !== 'number' && typeof usage.tools !== 'number') return
   lastUsage.value = usage
   sessionUsage.value = {
     prompt: sessionUsage.value.prompt + (usage.prompt || 0),
