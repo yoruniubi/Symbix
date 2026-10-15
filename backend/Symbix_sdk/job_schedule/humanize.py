@@ -69,11 +69,27 @@ def _parse_weekdays(spec: str) -> Optional[str]:
     if not spec:
         return None
     if spec in ("工作日", "weekday", "weekdays", "workday", "workdays"):
-        return "1-5"
+        # 0=周一,所以工作日是 0-4;写成 1-5 会被 APScheduler 理解成「周二~周六」
+        return "0-4"
     if spec in ("周末", "weekend", "weekends"):
         return "5,6"
     if re.fullmatch(r"[0-6](?:-[0-6])?(?:,[0-6](?:-[0-6])?)*", spec):
         return spec
+    # 英文缩写,支持单日与区间:mon,wed / mon-fri / sat,sun
+    # 星期名没有「0 算周一还是周日」的歧义,是推荐写法
+    if re.fullmatch(r"[a-z]{3}(?:-[a-z]{3})?(?:,[a-z]{3}(?:-[a-z]{3})?)*", spec):
+        out: set[int] = set()
+        for part in spec.split(","):
+            rng = part.split("-")
+            if len(rng) == 2 and rng[0] in _WEEKDAY_EN and rng[1] in _WEEKDAY_EN:
+                a, b = _WEEKDAY_EN[rng[0]], _WEEKDAY_EN[rng[1]]
+                out.update(range(a, b + 1) if a <= b else list(range(a, 7)) + list(range(0, b + 1)))
+            elif part in _WEEKDAY_EN:
+                out.add(_WEEKDAY_EN[part])
+            else:
+                return None
+        if out:
+            return ",".join(str(d) for d in sorted(out))
     parts = [p for p in re.split(r"[,\s、]+|[和与及]|and", spec) if p]
     if parts and all(p in _WEEKDAY_EN for p in parts):
         return ",".join(str(d) for d in sorted({_WEEKDAY_EN[p] for p in parts}))
@@ -86,11 +102,15 @@ def _parse_weekdays(spec: str) -> Optional[str]:
 
 
 def _weekday_tail(low: str) -> Optional[str]:
-    """取「每周/每星期/每礼拜/weekly」后面紧跟的那一段星期写法(空格/钟点前为止)。"""
+    """取「每周/每星期/每礼拜/weekly/every <day>」后面紧跟的那段星期写法(空格/钟点前为止)。"""
     m = re.search(r"(?:每(?:个)?周|每星期|每礼拜|weekly)\s*([^\s]+)", low)
-    if not m:
-        return None
-    return m.group(1)
+    if m:
+        return m.group(1)
+    # 英文 every friday / every mon-fri
+    m = re.search(r"every\s+([a-z]{3}(?:-[a-z]{3})?)", low)
+    if m and (m.group(1) in _WEEKDAY_EN or "-" in m.group(1)):
+        return m.group(1)
+    return None
 
 
 def _parse_clock(text: str) -> Optional[tuple]:
@@ -104,14 +124,12 @@ def _parse_clock(text: str) -> Optional[tuple]:
         return None
     hour = int(m.group(1))
     minute = int(m.group(2) or 0)
-    if minute > 59 or hour > 24:
+    if minute > 59 or hour > 23:
         return None
     # 下午/晚上/傍晚 后若仍是 12 小时制 → +12;上午/早上/凌晨 保持
     pm = any(k in text for k in ("下午", "晚上", "傍晚", "夜里", "夜间", "pm", "PM"))
     if pm and hour < 12:
         hour += 12
-    if hour == 24:
-        hour = 0
     return hour, minute
 
 
@@ -122,8 +140,86 @@ def _cron_cfg(minute: str = "*", hour: str = "*", day: str = "*",
             "month": month, "day_of_week": day_of_week}
 
 
+# Unix 标准 cron 的星期编号:0/7=周日,1=周一 … 6=周六。
+# 本系统(APScheduler)是 0=周一 … 6=周日,两者差一天,所以边界必须转换。
+_UNIX_DOW_NAMES = {"sun": 0, "mon": 1, "tue": 2, "wed": 3,
+                   "thu": 4, "fri": 5, "sat": 6}
+
+
+def unix_dow_to_scheduler(spec) -> str:
+    """Unix cron 星期字段(0=周日) → 本系统 cron 字段(0=周一)。
+
+    支持 `*` / 数字 / 区间 / 步长 / 列表混写,也支持 mon、tue、… 名字。
+    英文名字本身没有「0 算周一还是周日」的歧义,会被规范化成正确下标
+    (sun→6、mon→0),因此两种写法混用也不会再差一天。
+
+    Returns:
+        str: 可直接交给 APScheduler CronTrigger 的 day_of_week 串
+    """
+    s = str(spec).strip().lower() if spec is not None else "*"
+    if not s or s == "*":
+        return "*"
+
+    def _one(tok: str) -> str:
+        tok = tok.strip()
+        if not tok:
+            return "*"
+        # 步长:拆出 */n 或 a-b/n
+        if "/" in tok:
+            num, _, step = tok.partition("/")
+            return f"{_one(num) if num else '*'}/{step}"
+        if "-" in tok:
+            a, _, b = tok.partition("-")
+            na = _UNIX_DOW_NAMES.get(a.strip(), None)
+            if na is None and a.strip().isdigit():
+                na = int(a.strip())
+            nb = _UNIX_DOW_NAMES.get(b.strip(), None)
+            if nb is None and b.strip().isdigit():
+                nb = int(b.strip())
+            if na is None or nb is None:
+                return tok
+            na, nb = na % 7, nb % 7
+            return f"{(na - 1) % 7}-{(nb - 1) % 7}"
+        n = _UNIX_DOW_NAMES.get(tok, None)
+        if n is None and tok.isdigit():
+            n = int(tok)
+        if n is None:
+            return tok
+        return str((n % 7 - 1) % 7)
+
+    return ",".join(_one(p) for p in s.split(","))
+
+
+def normalize_cron_config(cfg: dict) -> dict:
+    """把「按 Unix 直觉(0=周日)写」的 cron config 归一成 APScheduler(0=周一)语义。
+
+    只该在**用户/模型输入的边界**调用。内部已经归一过的值不要再走这里,
+    否则会被二次偏移一天。
+
+    Returns:
+        dict: 新的 config(dow 改成系统语义;其余字段不动)
+    """
+    if not cfg:
+        return cfg
+    dow = cfg.get("day_of_week")
+    if dow is None or str(dow).strip() in ("", "*"):
+        return cfg
+    out = dict(cfg)
+    out["day_of_week"] = unix_dow_to_scheduler(dow)
+    return out
+
+
 def _hhmm(hour: int, minute: int) -> tuple:
     return f"{hour:d}", f"{minute:d}"
+
+
+def _now() -> datetime:
+    """当前本地时间(带时区)。
+
+    裸 datetime.now() 拿到的是无时区时间,与 next_run_times 里
+    datetime.now().astimezone() 的基准不一致,跨时区/夏令时会偏一小时。
+    """
+    return datetime.now().astimezone()
 
 
 def parse_schedule(text: str) -> dict:
@@ -135,7 +231,7 @@ def parse_schedule(text: str) -> dict:
       - 每周: 每周一 8:30 / 每周一三五 9:00 / 工作日 9:00 / 周末 10点 / weekly mon,wed 08:30
       - 每月: 每月1号 9:00 / 每月15日 12:00 / 每月最后一天 9:00 / monthly 1 09:00
       - 一次: 2026-10-05 09:00 / 明天 9:00 / 30分钟后 / in 2 hours
-      - cron: 0 9 * * 1-5 或 cron: 0 9 * * 1-5
+      - cron: 0 9 * * mon-fri(星期 0=周一;推荐用 mon/tue/... 名字,无歧义)
     """
     raw = (text or "").strip()
     if not raw:
@@ -159,7 +255,7 @@ def parse_schedule(text: str) -> dict:
         rel = _REL_DELTA.search(low)
         if rel and any(k in low for k in ("后", "later", "from now", "in ")):
             delta = _delta_from_unit(int(rel.group(1)), rel.group(2))
-            when = datetime.now() + delta
+            when = _now() + delta
             return {"trigger_type": "date", "trigger_config": {"run_date": when.isoformat(timespec="seconds")}}
 
     # 4) 绝对日期 → 只跑一次
@@ -181,10 +277,29 @@ def parse_schedule(text: str) -> dict:
             break
     if day_offset is not None:
         clock = _parse_clock(t) or (9, 0)
-        base = datetime.now() + timedelta(days=day_offset)
+        base = _now() + timedelta(days=day_offset)
         when = base.replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
-        if when <= datetime.now():
+        if when <= _now():
             when += timedelta(days=1)
+        return {"trigger_type": "date", "trigger_config": {"run_date": when.isoformat(timespec="seconds")}}
+
+    # 5.5) 本周X / 这周X / 下周X → 只跑一次(带具体日期,不再每周重复)
+    m = re.search(r"(本|这|下)(?:个)?(?:周|星期|礼拜)([一二三四五六日天七])", t)
+    if m:
+        target = _WEEKDAY_CN[m.group(2)]
+        today = _now().weekday()
+        delta = target - today
+        if m.group(1) == "下":
+            delta += 7
+        elif delta < 0:
+            # 「本周五」但本周的周五已经过去 → 按最近的下一个周五算
+            delta += 7
+        clock = _parse_clock(t) or (9, 0)
+        when = (_now() + timedelta(days=delta)).replace(
+            hour=clock[0], minute=clock[1], second=0, microsecond=0
+        )
+        if when <= _now():
+            when += timedelta(days=7)
         return {"trigger_type": "date", "trigger_config": {"run_date": when.isoformat(timespec="seconds")}}
 
     clock = _parse_clock(t)
@@ -206,13 +321,17 @@ def parse_schedule(text: str) -> dict:
         return {"trigger_type": "cron", "trigger_config": _cron_cfg(minute, hour, day_spec)}
 
     # 7) 每周 / 工作日 / 周末
-    if re.search(r"(每(?:个)?周|每星期|每礼拜|weekly|weekday|workday|weekend|周末|工作日)", low):
+    if re.search(
+        r"(每(?:个)?周|每星期|每礼拜|weekly|weekday|workday|weekend|周末|工作日"
+        r"|every\s+(?:mon|tue|wed|thu|fri|sat|sun))",
+        low,
+    ):
         dow = None
         tail = _weekday_tail(low)
         if tail:
             dow = _parse_weekdays(tail)
         if not dow and ("工作日" in low or "weekday" in low or "workday" in low):
-            dow = "1-5"
+            dow = "0-4"
         if not dow and ("周末" in low or "weekend" in low):
             dow = "5,6"
         if not dow:
@@ -248,7 +367,7 @@ def parse_schedule(text: str) -> dict:
     raise ValueError(
         "没看懂这个时间,可用的写法:每天 9:00 / 每天早上8点 / 每周一三五 8:30 / "
         "工作日 9:00 / 每月1号 9:00 / 每 30 分钟 / 每 2 小时 / 30分钟后 / "
-        "2026-10-05 09:00 / cron: 0 9 * * 1-5"
+        "2026-10-05 09:00 / cron: 0 9 * * mon-fri"
     )
 
 
@@ -258,10 +377,11 @@ def _parse_raw_cron(text: str) -> dict:
     if len(parts) == 6:  # 容忍带秒的写法(丢掉秒那一段)
         parts = parts[1:]
     if len(parts) != 5:
-        raise ValueError("cron 需要 5 段:分 时 日 月 星期,例如 0 9 * * 1-5")
+        raise ValueError("cron 需要 5 段:分 时 日 月 星期,例如 0 9 * * mon-fri")
     minute, hour, day, month, dow = parts
     from .schema import validate_trigger
-    cfg = _cron_cfg(minute, hour, day, month, dow)
+    # 用户写 cron 用的是 Unix 直觉(0=周日/7=周日),这里归一成系统语义
+    cfg = normalize_cron_config(_cron_cfg(minute, hour, day, month, dow))
     try:
         validate_trigger("cron", cfg)
     except ValueError as e:
@@ -317,7 +437,8 @@ def _two(value) -> str:
 def _dow_label(dow: str) -> str:
     """cron day_of_week → 「周一、三、五」/「工作日」/「周末」。"""
     s = (dow or "*").strip().lower()
-    if s in ("1-5",):
+    # 0=周一,工作日是 0-4;1-5 其实是周二~周六,不要谎称「工作日」
+    if s in ("0-4",):
         return "工作日"
     if s in ("5,6", "6,5"):
         return "周末"
@@ -368,7 +489,8 @@ def describe_trigger(trigger_type: str, cfg: dict) -> str:
 
     if dow != "*":
         dow_txt = _dow_label(dow)
-        return f"{dow_txt} {time_part}".strip()
+        prefix = "每" if dow_txt.startswith("周") else "每个"
+        return f"{prefix}{dow_txt} {time_part}".strip()
     if day != "*":
         day_txt = "每月最后一天" if str(day) == "last" else f"每月 {day} 号"
         return f"{day_txt} {time_part}".strip()

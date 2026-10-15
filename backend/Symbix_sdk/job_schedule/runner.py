@@ -4,6 +4,8 @@ import json as _json
 import time
 from datetime import datetime
 
+from Symbix_sdk.time_context import current_time_line
+
 # 定时任务「整次模型调用」的重试次数与退避基数(秒)。
 # 内层 _stream_with_retry 已经会重试单次调用,这里再叠一层「整次调用重试」;
 # 上层还有 wait_for 硬上限托底,所以次数不宜多(否则最坏耗时成倍增长)。
@@ -130,6 +132,9 @@ class JobRunner:
                 "这次请求由定时任务触发,无人值守。如需要执行工具,只做安全的只读/无副作用操作;"
                 "写入、删除、执行命令等需要人工确认的操作不要做,直接在回复里说明需要人工处理。"
             )
+            # 时间必须显式告知:job 链路不像聊天链路会拼 dyn_parts,
+            # 不注入的话模型连今天是几号都不知道,回复里的日期只能瞎编。
+            job_system_prompt += "\n\n" + current_time_line()
 
             mcp_tools = self.tool_registry.get_openai_tools()
             import uuid as _uuid

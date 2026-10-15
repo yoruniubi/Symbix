@@ -30,6 +30,7 @@ from Symbix_sdk.checkpoint import (
     set_current as _ctx_set_current,
     get_recorder as _get_recorder,
 )
+from Symbix_sdk.time_context import current_time_line
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
     _is_interaction_tool,
@@ -156,6 +157,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 session_id=request.session_id,
             )
             dyn_parts: list[str] = []
+            # 当前时间:模型原本完全拿不到系统时间,「本周五」这类相对时间只能猜。
+            # 拼在用户消息里而不是 system,保住 system 前缀的 prompt cache。
+            dyn_parts.append(current_time_line())
             if dyn_mem:
                 dyn_parts.append(dyn_mem)
             # 「最近几轮做了什么」:来自 checkpoint 的工具调用摘要,避免模型为了知道自己做过什么

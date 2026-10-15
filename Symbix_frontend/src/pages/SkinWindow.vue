@@ -229,10 +229,26 @@ interface PetSkin {
 /** 打开或激活已有窗口 */
 async function revealWindow(win: WebviewWindow): Promise<boolean> {
   try {
-    await win.unminimize()
-    await win.setFocus()
+    // 强制还原(不依赖 isMinimized 查询结果,避免权限/状态误判)
+    try { await win.unminimize() } catch (e) {
+      console.warn('unminimize failed:', e)
+    }
+    // show() 不能省:最小化的窗口 unminimize 未必能恢复显示
+    // (Home.vue 那份一直有,这里漏了 → 点已存在的窗口没反应)
+    try { await win.show() } catch (e) {
+      console.warn('show failed:', e)
+    }
+    try { await win.setFocus() } catch (e) {
+      console.warn('setFocus failed:', e)
+    }
+    // 任务栏闪烁提示(即使前台抢焦点被系统拦截也能看见)
+    try {
+      const { UserAttentionType } = await import('@tauri-apps/api/window')
+      await win.requestUserAttention(UserAttentionType.Informational)
+    } catch {}
     return true
-  } catch {
+  } catch (e) {
+    console.warn('revealWindow failed, will recreate:', e)
     return false
   }
 }

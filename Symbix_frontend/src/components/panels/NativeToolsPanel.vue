@@ -12,9 +12,7 @@
         <n-text depth="3" style="font-size:13px;">{{ $t('nativeToolsPanel.summary', { count: nativeToolList.length }) }}</n-text>
         <div v-for="tool in nativeToolList" :key="tool.function.name" class="mcp-tool-item">
           <div class="mcp-tool-name">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-right:6px;">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-            </svg>
+            <span class="tool-icon" v-html="toolIconSvgOrFallback(tool.function.name)"></span>
             {{ tool.function.name }}
           </div>
           <div style="font-size:11px; color:var(--text-muted); margin-top:2px; padding-left:20px; word-break:break-word; overflow-wrap:anywhere; min-width:0;">{{ tool.function.description }}</div>
@@ -27,6 +25,7 @@
 
 <script setup lang="ts">
 import { useResizablePanel } from '@/composables/useResizablePanel'
+import { toolIconSvgOrFallback } from '@/utils/toolIcons'
 
 const props = defineProps<{
   activePanel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs' | null
@@ -167,5 +166,19 @@ function handleClose() {
   line-height: 1.35;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+.tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  margin-top: 1px;
+  color: var(--accent-400, #F7A85B);
+}
+.tool-icon :deep(svg) {
+  display: block;
 }
 </style>

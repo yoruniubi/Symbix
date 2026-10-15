@@ -112,7 +112,7 @@
           <!-- 高级:Cron -->
           <div v-if="mode === 'cron'" class="job-field">
             <span>{{ $t('jobPanel.cronExpression') }}</span>
-            <n-input v-model:value="cronText" size="small" placeholder="0 9 * * 1-5" />
+            <n-input v-model:value="cronText" size="small" placeholder="0 9 * * 0-4" />
             <div class="job-hint">{{ $t('jobPanel.cronHint') }}</div>
           </div>
 
@@ -286,7 +286,9 @@ const intervalUnitOptions = computed(() => [
   { label: t('jobPanel.intervalUnitDay'), value: 'days' },
   { label: t('jobPanel.intervalUnitWeek'), value: 'weeks' },
 ])
-const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+// 星期下标语义必须与后端 cron day_of_week 一致:0=周一 … 6=周日
+// (APScheduler 用 0=周一,和 JS Date.getDay() 的 0=周日**不同**,别混用)
+const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 
 async function request(path: string, options?: RequestInit): Promise<any> {
   const res = await fetch(`${BACKEND_URL}${path}`, options)
@@ -348,6 +350,37 @@ function cronConfig(minute: string, hour: string, day = '*', month = '*', dayOfW
   return { minute, hour, day, month, day_of_week: dayOfWeek }
 }
 
+// 高级 Cron 输入框里写的是 Unix 习惯(0/7=周日),但系统按 0=周一 存。
+// 必须在这里转一次,否则「0 9 * * 1-5」会被跑成周二~周六。
+// 与后端 humanize.unix_dow_to_scheduler 保持同一套语义。
+const UNIX_DOW: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
+
+function unixDowToScheduler(spec: string): string {
+  const toIdx = (tok: string): number | null => {
+    const t = tok.trim().toLowerCase()
+    if (t in UNIX_DOW) return UNIX_DOW[t]
+    return /^\d+$/.test(t) ? Number(t) : null
+  }
+  const one = (tok: string): string => {
+    const t = tok.trim()
+    if (!t) return '*'
+    if (t.includes('/')) {
+      const [num, step] = t.split('/')
+      return `${num ? one(num) : '*'}/${step}`
+    }
+    if (t.includes('-')) {
+      const [a, b] = t.split('-')
+      const ia = toIdx(a)
+      const ib = toIdx(b)
+      if (ia === null || ib === null) return t
+      return `${((ia % 7) + 6) % 7}-${((ib % 7) + 6) % 7}`
+    }
+    const n = toIdx(t)
+    return n === null ? t : String(((n % 7) + 6) % 7)
+  }
+  return spec.split(',').map(one).join(',')
+}
+
 /** 表单 → { trigger_type, trigger_config };字段不完整时抛错(错误文案直接给用户看) */
 function buildTrigger(): { trigger_type: TriggerType; trigger_config: Record<string, any> } {
   if (mode.value === 'interval') {
@@ -376,7 +409,7 @@ function buildTrigger(): { trigger_type: TriggerType; trigger_config: Record<str
   const parts = cronText.value.trim().split(/\s+/)
   if (parts.length !== 5) throw new Error(t('jobPanel.cronHint'))
   const [minute = '*', hour = '*', day = '*', month = '*', day_of_week = '*'] = parts
-  return { trigger_type: 'cron', trigger_config: cronConfig(minute, hour, day, month, day_of_week) }
+  return { trigger_type: 'cron', trigger_config: cronConfig(minute, hour, day, month, unixDowToScheduler(day_of_week)) }
 }
 
 /** trigger → 表单反填(编辑已有任务、或「一句话」识别成功后调用) */
@@ -608,11 +641,37 @@ async function openHistory(id: string) {
 
 // ── 展示 ──
 
+// 库里存的是「0=周一」的下标;裸 cron 回显要还原成用户能看懂的星期名
+function describeDow(dow: string): string {
+  const s = String(dow ?? '*').trim()
+  if (!s || s === '*') return s || '*'
+  return s
+    .split(',')
+    .map((part) => {
+      const range = part.split('-')
+      if (range.length === 2) {
+        const a = Number(range[0])
+        const b = Number(range[1])
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          const out: string[] = []
+          for (let i = Math.min(a, b); i <= Math.max(a, b); i++) out.push(weekdayShort(i))
+          return out.join('')
+        }
+      }
+      const n = Number(part)
+      return Number.isFinite(n) ? weekdayShort(n) : part
+    })
+    .join(',')
+}
+
 function triggerLabel(job: Job) {
   if (job.trigger_label) return job.trigger_label
   if (job.trigger_type === 'interval') return `${t('jobPanel.triggerInterval')}: ${Object.entries(job.trigger_config).map(([k, v]) => `${v} ${k}`).join(', ')}`
   if (job.trigger_type === 'date') return `${t('jobPanel.triggerDate')}: ${job.trigger_config.run_date}`
-  return `Cron: ${[job.trigger_config.minute, job.trigger_config.hour, job.trigger_config.day, job.trigger_config.month, job.trigger_config.day_of_week].join(' ')}`
+  const cfg = job.trigger_config
+  // 星期列换成人话再拼,避免把 0=周一 的下标当 Unix cron 直接摆给用户看
+  const dow = describeDow(cfg.day_of_week)
+  return `Cron: ${[cfg.minute, cfg.hour, cfg.day, cfg.month, dow].join(' ')}`
 }
 
 function weekdayShort(index: number) {

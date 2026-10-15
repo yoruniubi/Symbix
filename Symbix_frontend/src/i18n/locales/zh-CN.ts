@@ -310,7 +310,7 @@ export default {
     onceAt: '运行时间',
     onceRequired: '请选择运行时间',
     cronExpression: 'Cron 表达式(分 时 日 月 周)',
-    cronHint: '5 段:分 时 日 月 星期,例如 0 9 * * 1-5 表示工作日 9:00',
+    cronHint: '5 段:分 时 日 月 星期;星期 0=周一(系统约定,非 Unix 的 0=周日),例如 0 9 * * 0-4 表示工作日 9:00',
     naturalInput: '一句话填时间(可选)',
     naturalPlaceholder: '例如:每天上午 9 点 / 每 2 小时 / 每周一三五 8:30',
     naturalApply: '识别',

@@ -311,7 +311,7 @@ export default {
     onceAt: 'Run at',
     onceRequired: 'Pick a run time',
     cronExpression: 'Cron expression (min hour day mon dow)',
-    cronHint: '5 fields: min hour day month dow — e.g. 0 9 * * 1-5 means 9:00 on workdays',
+    cronHint: '5 fields: min hour day month dow — dow 0=Monday (system convention, not Unix 0=Sunday); e.g. 0 9 * * 0-4 = 9:00 on workdays',
     naturalInput: 'Describe it in words (optional)',
     naturalPlaceholder: 'e.g. every day at 9am / every 2 hours / Mon,Wed,Fri 8:30',
     naturalApply: 'Parse',

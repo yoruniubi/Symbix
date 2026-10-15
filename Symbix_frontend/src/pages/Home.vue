@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { installTickerResilience, type TickerResilienceHandle } from '../composables/useTickerResilience'
 import { useRouter } from 'vue-router'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
@@ -197,6 +198,8 @@ function animationSpeedFor(state: PetState) {
 let app: Application | null = null
 let sprite: AnimatedSprite | null = null
 let baseSource: TextureSource | null = null
+// rAF 停摆兜底(桌宠窗被完全遮挡时 WebView2 会停投 rAF,导致动画冻住)
+let tickerGuard: TickerResilienceHandle | null = null
 let currentState: PetState = 'idle'
 let randomTimer: ReturnType<typeof setTimeout> | null = null
 let actionStartTimer: ReturnType<typeof setTimeout> | null = null
@@ -1159,6 +1162,9 @@ onMounted(async () => {
   sprite.play()
 
   app.stage.addChild(sprite)
+  // 遮挡时 WebView2 会停止投递 rAF → Pixi ticker 停摆 → 动画卡住。装一层兜底:
+  // 检测到停摆就手动按 60Hz 推进 ticker,帧回来了再交还浏览器。
+  tickerGuard = installTickerResilience(app.ticker)
   scheduleRandom()
   // 订阅后端 emit_pet_action → SSE,驱动远程动作
   void connectPetEvents()
@@ -1257,6 +1263,8 @@ onUnmounted(() => {
     window.removeEventListener('storage', onPetStorage)
     onPetStorage = null
   }
+  tickerGuard?.stop()
+  tickerGuard = null
   app?.destroy(false)
 })
 
