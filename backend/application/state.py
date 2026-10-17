@@ -1,4 +1,5 @@
 import os
+import threading
 from Symbix_sdk.client import SymbixClient
 from Symbix_sdk.providers import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
@@ -146,7 +147,8 @@ def initialize_mcp_servers():
     import time as _time
 
     servers = mcp_config.get_servers()
-    for server_id, config in servers.items():
+    # 快照迭代:get_servers() 返回的是活引用,MCP 面板可能在初始化期间增删
+    for server_id, config in list(servers.items()):
         try:
             cfg = dict(config or {})
             # 远程服务:若顶层 mcp_api_key 有该 server 的 key,注入 Authorization: Bearer
@@ -184,8 +186,15 @@ def initialize_mcp_servers():
             print(f"[MCP] Failed to start server '{server_id}': {e}")
 
 
-# 启动时初始化 MCP
-initialize_mcp_servers()
+# 启动时初始化 MCP。
+# 放后台线程:add_from_config 会 spawn 子进程并同步等 initialize 响应
+# (最长 30 秒/个),若某个 stdio server 卡住,同步执行会让整个后端
+# 连模块导入都完不成 —— 表现就是重启后一直起不来/卡死。
+threading.Thread(
+    target=initialize_mcp_servers,
+    daemon=True,
+    name="mcp-init",
+).start()
 
 # ============ 工具注册 ============
 tool_registry = ToolRegistry(mcp_manager=mcp_manager)

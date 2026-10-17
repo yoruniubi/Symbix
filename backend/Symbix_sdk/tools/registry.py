@@ -1,3 +1,4 @@
+import asyncio
 import json as _json
 from .native_tools import NativeToolkit
 from Symbix_sdk.mcp.connector import McpServerManager
@@ -61,7 +62,9 @@ class ToolRegistry:
             return await self.native.execute_tool_async(
                 tool_name, arguments, on_event=on_event, ctx=ctx
             )
-        return self.execute(tool_name, arguments)
+        # 同步分支里可能调外部 MCP server(最长 30 秒等响应),丢线程池避免
+        # 占住事件循环 —— 否则一次慢工具会把整轮对话的流式输出卡停。
+        return await asyncio.to_thread(self.execute, tool_name, arguments)
 
     def execute(self, tool_name: str, arguments) -> str:
         # 统一标准化 arguments：可能是 str(JSON) 或 dict，远端 MCP server 要 dict。

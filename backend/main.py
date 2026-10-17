@@ -146,7 +146,8 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         print(f"[job] shutdown failed: {e}")
     try:
-        mcp_manager.stop_all()
+        # 结束子进程树可能要几秒/个,丢线程池,别拖住关闭流程
+        await asyncio.to_thread(mcp_manager.stop_all)
         print("[MCP] All servers stopped")
     except Exception as e:
         print(f"[MCP] stop_all failed: {e}")

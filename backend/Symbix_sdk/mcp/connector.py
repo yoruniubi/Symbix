@@ -1,10 +1,13 @@
 import subprocess
 import json
+import sys
 import threading
 import queue
+import time
 import uuid
 import os
 import shutil
+from collections import deque
 from typing import Optional, Dict, List, Any
 
 import httpx
@@ -71,6 +74,13 @@ class McpServerClient:
 
     transport = "stdio"
 
+    #: 单次请求等待上限(秒)
+    timeout: float = 30
+    #: stderr 最多打印多少行,避免下载日志刷屏(超出部分仍留在尾部供诊断)
+    _stderr_print_limit = 50
+    #: list_tools 失败后的冷却时间(秒),期内不重试
+    _fail_cooldown = 60
+
     def __init__(self, server_id: str, command: str, args: List[str]):
         self.server_id = server_id
         self.command = command
@@ -80,12 +90,18 @@ class McpServerClient:
         self.response_map: Dict[str, queue.Queue] = {}
         self._stop_event = threading.Event()
         self._reader_thread: Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
+        #: stderr 末尾若干行,超时/异常时拼进错误信息便于定位
+        self._stderr_tail: deque = deque(maxlen=20)
+        self._stderr_printed = 0
+        self._fail_until = 0.0
+        #: stdout 读线程若异常退出,后续请求要立刻报错而不是干等超时
+        self._reader_error: Optional[str] = None
         self._tools_cache: Optional[List[dict]] = None
         self.last_error: Optional[str] = None
 
     def start(self):
         """启动 MCP server 进程"""
-        import sys
         # npx fallback → SDK 内置 bun.exe x(系统没 node 但捆绑了 bun 时生效)
         resolved_cmd, resolved_args = resolve_stdio_runner(self.command, self.args)
         effective = resolved_cmd or self.command
@@ -99,29 +115,39 @@ class McpServerClient:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                # MCP 协议固定 UTF-8。不显式指定的话 Windows 会用 locale
+                # 编码(GBK)解码,只要 server 回包里有一个非 ASCII 字符就会
+                # UnicodeDecodeError → 读线程挂掉 → 响应没人收 → tools/list 超时。
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=0,
             )
             if use_shell:
-                # Windows shlex.quote 不可靠,手动给含空格的参数加双引号
-                cmd_str = effective + " " + " ".join(
-                    f'"{a}"' if " " in a else a for a in eff_args
-                )
+                # 用 list2cmdline 按 Windows 规则转义。手写"含空格就加引号"会被
+                # 参数内部的引号/反斜杠搞坏(例如 python -c "<json>" 这种)。
+                cmd_str = subprocess.list2cmdline([effective] + eff_args)
                 self.process = subprocess.Popen(cmd_str, shell=True, **popen_kwargs)
             else:
                 self.process = subprocess.Popen(
                     [effective] + eff_args, **popen_kwargs
                 )
 
-            # 启动读取线程
+            # 启动读取线程。stderr 必须一并读走:管道缓冲区有限,npx/uvx/node
+            # 的日志写满后子进程会阻塞在 write 上,再也无法响应 JSON-RPC。
             self._reader_thread = threading.Thread(
                 target=self._read_output,
                 daemon=True
             )
             self._reader_thread.start()
+            self._stderr_thread = threading.Thread(
+                target=self._read_stderr,
+                daemon=True
+            )
+            self._stderr_thread.start()
 
-            # 发送初始化请求
-            self._send_request({
+            # 初始化握手
+            resp = self._send_request({
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
                 "method": "initialize",
@@ -137,6 +163,17 @@ class McpServerClient:
                     }
                 }
             })
+            if "error" in resp:
+                # 握手失败就别登记成"启动成功",否则用户看到添加成功、
+                # 列表却一直超时。
+                self.last_error = str(resp["error"])
+                print(f"[MCP] Server '{self.server_id}' 初始化失败: {resp['error']}")
+                self.stop()
+                return False
+
+            # MCP 规范要求:收到 initialize 响应后必须补发 initialized 通知。
+            # 基于官方 Python SDK 的 server 在收到它之前会拒绝 tools/list。
+            self._notify_initialized()
 
             print(f"[MCP] Server '{self.server_id}' started successfully")
             return True
@@ -144,8 +181,50 @@ class McpServerClient:
         except Exception as e:
             self.last_error = str(e)
             print(f"[MCP] Failed to start server '{self.server_id}': {e}")
+            self.stop()
             return False
-    
+
+    def _read_stderr(self):
+        """持续读走 stderr(保留末尾若干行用于报错诊断)。
+
+        不读的话子进程日志会写满管道缓冲区并被阻塞,这是 stdio MCP
+        "添加后 list tools 超时"的直接原因。
+        """
+        try:
+            for line in iter(self.process.stderr.readline, ""):
+                if self._stop_event.is_set():
+                    break
+                line = line.rstrip()
+                if not line:
+                    continue
+                self._stderr_tail.append(line)
+                self._stderr_printed += 1
+                if self._stderr_printed <= self._stderr_print_limit:
+                    print(f"[MCP:{self.server_id}] {line}")
+                elif self._stderr_printed == self._stderr_print_limit + 1:
+                    print(f"[MCP:{self.server_id}] ...(stderr 输出过多已省略,报错时会附末尾几行)")
+        except Exception:
+            pass
+
+    def _stderr_hint(self) -> str:
+        """把 stderr 末尾拼进错误信息,便于判断是代理、包名还是权限问题。"""
+        tail = [ln for ln in list(self._stderr_tail)[-5:] if ln]
+        if not tail:
+            return ""
+        return " | stderr: " + " / ".join(tail)
+
+    def _notify_initialized(self):
+        """补发 notifications/initialized(MCP 握手第三步,无 id 不等待响应)。"""
+        try:
+            message = json.dumps({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+            }) + "\n"
+            self.process.stdin.write(message)
+            self.process.stdin.flush()
+        except Exception as e:
+            print(f"[MCP] '{self.server_id}': 发送 initialized 通知失败: {e}")
+
     def _read_output(self):
         """从 stdout 读取 MCP server 的响应"""
         while not self._stop_event.is_set() and self.process:
@@ -153,11 +232,11 @@ class McpServerClient:
                 line = self.process.stdout.readline()
                 if not line:
                     break
-                    
+
                 line = line.strip()
                 if not line:
                     continue
-                    
+
                 try:
                     response = json.loads(line)
                     request_id = response.get("id")
@@ -165,59 +244,87 @@ class McpServerClient:
                         self.response_map[request_id].put(response)
                 except json.JSONDecodeError:
                     print(f"[MCP] Invalid JSON from server: {line}")
-                    
+
             except Exception as e:
+                # 记录下来:读线程死了的话后面所有请求都会"凭空"超时,
+                # 必须让调用方看到真实原因。
+                self._reader_error = str(e)
                 if not self._stop_event.is_set():
                     print(f"[MCP] Error reading output: {e}")
                 break
-    
+
     def _send_request(self, request: dict) -> dict:
         """发送请求并等待响应"""
         request_id = request["id"]
         response_queue = queue.Queue()
         self.response_map[request_id] = response_queue
-        
+
         try:
             # 发送请求
             message = json.dumps(request) + "\n"
             self.process.stdin.write(message)
             self.process.stdin.flush()
-            
-            # 等待响应（超时 30 秒）
-            try:
-                response = response_queue.get(timeout=30)
-                return response
-            except queue.Empty:
-                return {"error": {"code": -32603, "message": "Request timeout"}}
-                
+
+            # 分片轮询:既能等响应,又能在子进程已死时立刻失败,
+            # 而不是干等满超时(否则一次失败要卡 30 秒)。
+            deadline = time.time() + self.timeout
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return {"error": {
+                        "code": -32603,
+                        "message": "Request timeout" + self._stderr_hint(),
+                    }}
+                try:
+                    return response_queue.get(timeout=min(0.2, remaining))
+                except queue.Empty:
+                    if self._reader_error:
+                        return {"error": {
+                            "code": -32603,
+                            "message": "Response reader died: " + self._reader_error,
+                        }}
+                    code = self.process.poll()
+                    if code is not None:
+                        return {"error": {
+                            "code": -32603,
+                            "message": f"Server exited (code {code})"
+                                       + self._stderr_hint(),
+                        }}
+
         finally:
             # 清理响应映射
             self.response_map.pop(request_id, None)
-    
+
     def list_tools(self) -> List[dict]:
-        """获取工具列表"""
+        """获取工具列表(失败后冷却期内不重试)"""
         if self._tools_cache is not None:
             return self._tools_cache
-            
+
+        # 刚失败过就直接返回空:否则每一轮对话(都要列工具)都会再等一整个超时
+        if time.time() < self._fail_until:
+            return []
+
         try:
             response = self._send_request({
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
                 "method": "tools/list"
             })
-            
+
             if "error" in response:
                 print(f"[MCP] Error listing tools: {response['error']}")
+                self._fail_until = time.time() + self._fail_cooldown
                 return []
-                
+
             tools = response.get("result", {}).get("tools", [])
             self._tools_cache = tools
             return tools
-            
+
         except Exception as e:
             print(f"[MCP] Exception listing tools: {e}")
+            self._fail_until = time.time() + self._fail_cooldown
             return []
-    
+
     def call_tool(self, tool_name: str, arguments: dict) -> str:
         """调用工具"""
         # 兼容上游传入字符串（模型有时把 arguments 当字符串下）。
@@ -239,13 +346,13 @@ class McpServerClient:
                     "arguments": arguments
                 }
             })
-            
+
             if "error" in response:
                 return f"[Error] {response['error'].get('message', 'Unknown error')}"
-                
+
             result = response.get("result", {})
             content = result.get("content", [])
-            
+
             # 解析内容
             output_parts = []
             for item in content:
@@ -256,23 +363,43 @@ class McpServerClient:
                         output_parts.append(f"[Image: {item.get('data', '')[:50]}...]")
                 else:
                     output_parts.append(str(item))
-            
+
             return "\n".join(output_parts)
-            
+
         except Exception as e:
             return f"[Error] Exception calling tool: {e}"
-    
+
     def stop(self):
-        """停止 MCP server"""
+        """停止 MCP server(Windows 下连子进程树一起结束)"""
         self._stop_event.set()
-        if self.process:
+        proc = self.process
+        if not proc:
+            return
+        try:
+            if sys.platform == "win32":
+                # shell=True 时 pid 是 cmd.exe,真正的 node/npx 是它的子进程;
+                # 只 terminate 外层会留下孤儿进程(表现为后端退不干净)。
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    timeout=5,
+                )
+            else:
+                proc.terminate()
+                proc.wait(timeout=5)
+        except Exception as e:
+            print(f"[MCP] Error stopping server: {e}")
             try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
-            except Exception as e:
-                print(f"[MCP] Error stopping server: {e}")
+                proc.kill()
+            except Exception:
+                pass
+        finally:
+            self.process = None
+            # 关掉管道,让阻塞在 readline 上的读取线程退出
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
                 try:
-                    self.process.kill()
+                    if stream:
+                        stream.close()
                 except Exception:
                     pass
 
@@ -778,7 +905,7 @@ class McpServerManager:
         if server_id in self.servers:
             self.servers[server_id].stop()
             del self.servers[server_id]
-    
+
     def list_tools_as_openai_format(self) -> List[dict]:
         """获取所有服务器的工具并转换为 OpenAI 格式
 
@@ -792,7 +919,7 @@ class McpServerManager:
         """
         openai_tools = []
 
-        for server_id, client in self.servers.items():
+        for server_id, client in list(self.servers.items()):
             tools = client.list_tools()
             for tool in tools:
                 name = tool.get("name", "")
@@ -849,24 +976,24 @@ class McpServerManager:
             cleaned["required"] = [r for r in required if isinstance(r, str)]
 
         return cleaned
-    
+
     def call_tool(self, tool_name: str, arguments) -> str:
         """调用指定工具（自动查找服务器）"""
         blocked = _guard_local_path_call(tool_name, arguments)
         if blocked:
             return blocked
-        # 遍历所有服务器查找工具
-        for server_id, client in self.servers.items():
+        # 遍历所有服务器查找工具(快照迭代:面板可能并发增删)
+        for server_id, client in list(self.servers.items()):
             tools = client.list_tools()
             for tool in tools:
                 if tool.get("name") == tool_name:
                     return client.call_tool(tool_name, arguments)
-        
+
         return f"[Error] Tool '{tool_name}' not found in any MCP server"
-    
+
     def stop_all(self):
         """停止所有服务器"""
-        for client in self.servers.values():
+        for client in list(self.servers.values()):
             client.stop()
         self.servers.clear()
 
@@ -874,7 +1001,7 @@ class McpServerManager:
 # 保持向后兼容的 Connector 类（已废弃但保留）
 class Connector:
     """废弃：使用 McpServerManager 代替"""
-    
+
     def __init__(self, host: str, port: int, username: str, password: str):
         print("[MCP] Warning: Connector class is deprecated. Use McpServerManager instead.")
         self.host = host
@@ -882,7 +1009,7 @@ class Connector:
         self.username = username
         self.password = password
         self.base_url = f"http://{self.host}:{self.port}"
-    
+
     def _request(self, method: str, endpoint: str, **kwargs):
         import requests
         url = f"{self.base_url}/{endpoint}"
@@ -894,7 +1021,7 @@ class Connector:
         except requests.RequestException as e:
             print(f"Request error: {e}")
             return None
-    
+
     def list_tools_as_openai_format(self) -> list[dict]:
         print("[MCP] Warning: Using deprecated Connector. Please migrate to McpServerManager.")
         result = self._request("GET", "tools")
@@ -915,7 +1042,7 @@ class Connector:
                 },
             })
         return openai_tools
-    
+
     def call_tool(self, tool_name: str, arguments) -> str:
         print("[MCP] Warning: Using deprecated Connector. Please migrate to McpServerManager.")
         if isinstance(arguments, str):

@@ -185,9 +185,11 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             if dyn_parts:
                 user_for_llm = "\n\n".join(dyn_parts) + "\n\n" + user_for_llm
 
-            # native 工具始终可用；use_mcp 仅附带外部 MCP
+            # native 工具始终可用;use_mcp 仅附带外部 MCP
             if request.use_mcp:
-                mcp_tools = tool_registry.get_openai_tools()
+                # MCP 列工具是同步阻塞的(每个 server 最长等 30 秒),丢线程池,
+                # 否则一次卡顿会把所有会话的流式输出一起冻住
+                mcp_tools = await asyncio.to_thread(tool_registry.get_openai_tools)
             else:
                 mcp_tools = tool_registry.native.get_openai_tools()
 

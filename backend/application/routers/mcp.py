@@ -9,9 +9,25 @@ from application.state import (
     get_mcp_oauth_status,
     initialize_mcp_servers,
 )
+from starlette.concurrency import run_in_threadpool
 from Symbix_sdk.mcp.connector import McpServerManager
 
 router = APIRouter(tags=["mcp"])
+
+
+async def connect_mcp(server_id: str, config: dict) -> bool:
+    """在线程池里启动/连接 MCP server。
+
+    add_from_config 会 spawn 子进程并同步等待 initialize 响应(最长 30 秒),
+    直接在 async 路由里调用会占住事件循环 —— 表现就是整个后端卡死,
+    连取消和退出都没法响应。
+    """
+    return await run_in_threadpool(mcp_manager.add_from_config, server_id, config)
+
+
+async def stop_mcp(server_id: str) -> None:
+    """在线程池里停止 MCP server(结束进程树最长需要几秒)。"""
+    await run_in_threadpool(mcp_manager.remove_server, server_id)
 
 @router.post("/mcp/install/npm")
 async def install_npm_mcp(req: InstallNpmRequest):
@@ -22,7 +38,7 @@ async def install_npm_mcp(req: InstallNpmRequest):
         if result.get("status") == "ok":
             server_config = mcp_config.get_server(req.server_id)
             if server_config:
-                mcp_manager.add_from_config(req.server_id, server_config)
+                await connect_mcp(req.server_id, server_config)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -38,7 +54,7 @@ async def install_uvx_mcp(req: InstallNpmRequest):
         if result.get("status") == "ok":
             server_config = mcp_config.get_server(req.server_id)
             if server_config:
-                mcp_manager.add_from_config(req.server_id, server_config)
+                await connect_mcp(req.server_id, server_config)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -79,7 +95,7 @@ async def add_mcp_server(req: AddMcpServerRequest):
 
             # 判断该 URL 是否可能走 OAuth:无 API Key 时尝试连接,
             # 若 401/鉴权失败则触发浏览器授权。
-            ok = mcp_manager.add_from_config(server_id, connect_cfg)
+            ok = await connect_mcp(server_id, connect_cfg)
             if not ok:
                 # 失败的 client 不会进 mcp_manager.servers,失败原因在 manager.last_error
                 err = mcp_manager.last_error or ""
@@ -124,7 +140,7 @@ async def add_mcp_server(req: AddMcpServerRequest):
                     status_code=400, detail=result.get("message") or "安装失败"
                 )
             server_config = mcp_config.get_server(server_id) or {}
-            ok = mcp_manager.add_from_config(server_id, server_config)
+            ok = await connect_mcp(server_id, server_config)
             return {
                 "status": "ok" if ok else "saved",
                 "server_id": server_id,
@@ -138,7 +154,7 @@ async def add_mcp_server(req: AddMcpServerRequest):
         if command:
             config = {"command": command, "args": req.args or []}
             mcp_config.add_server(server_id, config)
-            ok = mcp_manager.add_from_config(server_id, config)
+            ok = await connect_mcp(server_id, config)
             return {
                 "status": "ok" if ok else "saved",
                 "server_id": server_id,
@@ -211,7 +227,7 @@ async def add_mcp_servers_raw(req: AddMcpServersRawRequest):
                 headers.setdefault("Authorization", f"Bearer {key}")
                 connect_cfg["headers"] = headers
             mcp_config.add_server(server_id, cfg_norm)
-            ok = mcp_manager.add_from_config(server_id, connect_cfg)
+            ok = await connect_mcp(server_id, connect_cfg)
             results.append({
                 "server_id": server_id,
                 "status": "ok" if ok else "saved",
@@ -231,7 +247,7 @@ async def delete_mcp_server(server_id: str):
     server_id = (server_id or "").strip()
     if not server_id:
         raise HTTPException(status_code=400, detail="server_id 不能为空")
-    mcp_manager.remove_server(server_id)
+    await stop_mcp(server_id)
     mcp_config.remove_server(server_id)
     # 级联清除 OAuth token(避免残留密钥)
     mcp_oauth_store.clear(server_id)
@@ -249,7 +265,7 @@ async def reconnect_mcp_server(server_id: str):
     config = mcp_config.get_server(server_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"MCP '{server_id}' 不存在")
-    mcp_manager.remove_server(server_id)
+    await stop_mcp(server_id)
     cfg = dict(config)
     # 远程服务:注入顶层 mcp_api_key 的 Bearer
     if cfg.get("url"):
@@ -258,7 +274,7 @@ async def reconnect_mcp_server(server_id: str):
             headers = dict(cfg.get("headers") or {})
             headers.setdefault("Authorization", f"Bearer {key}")
             cfg["headers"] = headers
-    ok = mcp_manager.add_from_config(server_id, cfg)
+    ok = await connect_mcp(server_id, cfg)
     err = mcp_manager.last_error or ("connect failed" if not ok else None)
     if not ok and cfg.get("url"):
         # 无 API Key 且鉴权失败 -> 触发 OAuth 浏览器授权
@@ -344,8 +360,9 @@ async def update_mcp_config(mcpServers: dict = None):
     if mcpServers is not None:
         mcp_config.data["mcpServers"] = mcpServers
         mcp_config.save()
-        mcp_manager.stop_all()
-        initialize_mcp_servers()
+        # 停掉全部 + 重拉:两者都会 spawn/kill 子进程,同样不能占着事件循环
+        await run_in_threadpool(mcp_manager.stop_all)
+        await run_in_threadpool(initialize_mcp_servers)
     return {"status": "ok", "config": mcp_config.data}
 
 
@@ -355,7 +372,7 @@ async def test_mcp_connection():
     servers_status = {}
     for server_id, client in mcp_manager.servers.items():
         try:
-            tools = client.list_tools()
+            tools = await run_in_threadpool(client.list_tools)
             servers_status[server_id] = {
                 "status": "connected",
                 "tools_count": len(tools),
@@ -380,7 +397,7 @@ async def test_mcp_connection():
 async def list_mcp_tools():
     """列出所有 MCP 工具（包括所有 server）"""
     try:
-        mcp_tools = mcp_manager.list_tools_as_openai_format()
+        mcp_tools = await run_in_threadpool(mcp_manager.list_tools_as_openai_format)
         return {"count": len(mcp_tools), "tools": mcp_tools}
     except Exception as e:
         return {"count": 0, "tools": [], "error": str(e)}
@@ -390,9 +407,9 @@ async def list_mcp_tools():
 async def list_mcp_tools_by_server():
     """按 server 分组列出 MCP 工具"""
     groups = []
-    for server_id, client in mcp_manager.servers.items():
+    for server_id, client in list(mcp_manager.servers.items()):
         try:
-            raw_tools = client.list_tools()
+            raw_tools = await run_in_threadpool(client.list_tools)
             tools = []
             for t in raw_tools:
                 schema = McpServerManager._sanitize_schema(t.get("inputSchema"))
