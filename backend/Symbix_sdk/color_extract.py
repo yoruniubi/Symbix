@@ -1,11 +1,4 @@
-"""参考图主色提取(供 chat 流无视觉降级 / skill 生成参考色使用)。
-
-只依赖 Pillow(中位切分 quantize),无其他大依赖。
-
-所有函数都保证**: 失败返回 None,绝不向调用方抛异常,避免影响聊天主流程。
-"""
 from __future__ import annotations
-
 import base64
 import io
 from typing import Optional

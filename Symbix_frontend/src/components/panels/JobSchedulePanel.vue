@@ -27,7 +27,22 @@
       <div class="side-panel-body">
         <div v-if="editing" class="job-form">
           <div class="job-field"><span>{{ $t('jobPanel.name') }}</span><n-input v-model:value="form.name" size="small" /></div>
-          <div class="job-field"><span>{{ $t('jobPanel.prompt') }}</span><n-input v-model:value="form.prompt" type="textarea" :rows="4" size="small" /></div>
+          <div class="job-field">
+            <span>{{ $t('jobPanel.prompt') }}</span>
+            <n-input v-model:value="form.prompt" type="textarea" :rows="4" size="small" />
+            <!-- 提示词不用自己琢磨:Agent 自带建定时任务的 tool,去聊天里说一句就行 -->
+            <div class="job-agent-tip">
+              <n-button size="medium" type="primary" class="add-entry-btn" @click="askAgent">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>
+                  </svg>
+                </template>
+                {{ $t('jobPanel.askAgent') }}
+              </n-button>
+              <div class="job-hint">{{ $t('jobPanel.agentTip') }}</div>
+            </div>
+          </div>
 
           <!-- 重复方式 -->
           <div class="job-field"><span>{{ $t('jobPanel.freq') }}</span><n-select v-model:value="mode" size="small" :options="modeOptions" /></div>
@@ -223,7 +238,14 @@ type Job = { id: string; name: string; prompt: string; trigger_type: TriggerType
 type History = { job_id: string; run_time: string; status: 'ok' | 'error' | 'skipped'; output_snippet: string; error: string }
 
 const props = defineProps<{ activePanel: Panel | null }>()
-const emit = defineEmits<{ (e: 'update:activePanel', value: Panel | null): void }>()
+const emit = defineEmits<{
+  (e: 'update:activePanel', value: Panel | null): void
+  /**
+   * 请求把「建任务」交给聊天里的 Agent。
+   * 面板只递出一句模板话,关面板与预填输入框由父组件负责(见 chat_window 的同名处理)。
+   */
+  (e: 'askAgent', draft: string): void
+}>()
 const { t } = useI18n()
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000'
 const { width: panelWidth, isResizing, startResize } = useResizablePanel({ storageKey: 'symbix-panel-width-jobs' })
@@ -277,6 +299,11 @@ const intervalUnitOptions = computed(() => [
 // 星期下标语义必须与后端 cron day_of_week 一致:0=周一 … 6=周日
 // (APScheduler 用 0=周一,和 JS Date.getDay() 的 0=周日**不同**,别混用)
 const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
+
+/** 把「建任务」交给 Agent:只发一句模板话,用户自己补完再发,不替用户拍板 */
+function askAgent() {
+  emit('askAgent', t('jobPanel.agentDraft'))
+}
 
 async function request(path: string, options?: RequestInit): Promise<any> {
   const res = await fetch(`${BACKEND_URL}${path}`, options)
@@ -821,6 +848,15 @@ defineExpose({ refresh: loadJobs })
   font-size:10px;
   line-height:1.4;
   color:var(--text-muted);
+}
+.job-agent-tip {
+  margin-top:6px;
+}
+.job-agent-tip .add-entry-btn {
+  width:100%;
+}
+.job-agent-tip .job-hint {
+  margin-top:6px;
 }
 .job-preview {
   display:flex;

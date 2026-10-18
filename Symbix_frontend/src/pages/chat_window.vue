@@ -66,6 +66,7 @@
       <JobSchedulePanel
         :active-panel="activePanel"
         @update:active-panel="activePanel = $event"
+        @ask-agent="handleAskAgent"
       />
 
       <!-- Session List (underneath, always present) -->
@@ -125,6 +126,7 @@
 
       <!-- Chat Input -->
       <ChatInput
+        ref="chatInputRef"
         :loading="loading"
         :model-options="modelOptions"
         :current-model="currentModel"
@@ -222,6 +224,8 @@ const mcpToolList = ref<{ type: string; function: { name: string; description: s
 const mcpServerGroups = ref<{ server_id: string; tool_count: number; tools: any[]; error?: string; url?: string }[]>([])
 const expandedMcpServers = ref<Set<string>>(new Set())
 const nativeToolList = ref<{ type: string; function: { name: string; description: string; parameters: any } }[]>([])
+// 用于给聊天输入框预填内容(定时任务面板的「让 Agent 帮我建」)
+const chatInputRef = ref<any>(null)
 
 // ── token 用量(后端 done 事件带的估算值;仅展示,不参与业务)──
 interface TokenUsage {
@@ -335,6 +339,15 @@ const mcpForm = ref({
   headersText: '',
   rawJson: '',
 })
+
+/**
+ * 定时任务面板的「让 Agent 帮我建」:关掉面板、把模板话预填进聊天输入框。
+ * 只填不发 —— 用户自己补完再按发送。
+ */
+function handleAskAgent(draft: string) {
+  activePanel.value = null
+  nextTick(() => chatInputRef.value?.fillText?.(draft))
+}
 
 function openAddChooser(kind: 'skill' | 'mcp') {
   if (kind === 'skill') {

@@ -1,14 +1,3 @@
-"""上游调用重试策略(流式对话 / 子 Agent / 非流式聚合共用)。
-
-上游中转网关不稳时有三类故障,以前只有第一类有重试:
-
-1. 流中途断掉(`RemoteProtocolError` / `ReadError` / `ReadTimeout` / `ConnectError`)—— `client.py` 原有 2 次重试;
-2. 直接回 429 / 5xx(限流、网关过载、瞬时 502)—— **以前直接判失败**,子 Agent 一次 429 就整路废;
-3. Anthropic / Gemini 两条 SSE 管道 —— **以前完全没有重试**(只有 OpenAI 兼容那条有)。
-
-本模块只放「要不要重试 / 等多久」的纯函数,不做任何 IO,方便单测。
-"""
-
 import random
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime

@@ -134,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 
@@ -565,6 +565,18 @@ function handleInputKeydown(e: KeyboardEvent) {
     handleSend()
   }
 }
+
+/**
+ * 外部入口把一段话预填进输入框(目前用于定时任务面板的「让 Agent 帮我建」)。
+ * 只填、不发:焦点交给用户,由用户自己补完确认后再按发送。
+ */
+function fillText(text: string) {
+  if (!text) return
+  inputValue.value = text
+  nextTick(() => inputRef.value?.focus?.())
+}
+
+defineExpose({ fillText })
 
 // 组件卸载时释放所有 blob URL
 onBeforeUnmount(() => {

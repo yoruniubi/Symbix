@@ -1,11 +1,4 @@
-"""行级 diff:把 file_op 的 before/after 文本切成 git 风格的行列表。
-
-前端只负责按 type 着色渲染,不在浏览器里算 diff——省一个前端依赖,
-且 difflib 的结果可以直接在后端单测。
-"""
-
 from __future__ import annotations
-
 import difflib
 from typing import Any
 
