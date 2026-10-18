@@ -29,15 +29,7 @@
           <div class="job-field"><span>{{ $t('jobPanel.name') }}</span><n-input v-model:value="form.name" size="small" /></div>
           <div class="job-field"><span>{{ $t('jobPanel.prompt') }}</span><n-input v-model:value="form.prompt" type="textarea" :rows="4" size="small" /></div>
 
-          <!-- 一句话填时间:交给后端 humanize 解析,省得用户自己拼 cron -->
-          <div class="job-field">
-            <span>{{ $t('jobPanel.naturalInput') }}</span>
-            <div class="job-natural">
-              <n-input v-model:value="naturalText" size="small" :placeholder="$t('jobPanel.naturalPlaceholder')" @keyup.enter="applyNatural" />
-              <n-button size="small" :loading="naturalLoading" @click="applyNatural">{{ $t('jobPanel.naturalApply') }}</n-button>
-            </div>
-          </div>
-
+          <!-- 重复方式 -->
           <div class="job-field"><span>{{ $t('jobPanel.freq') }}</span><n-select v-model:value="mode" size="small" :options="modeOptions" /></div>
 
           <!-- 每隔 N 分钟/小时/天/周 -->
@@ -128,8 +120,6 @@
             </template>
           </div>
 
-          <div class="job-switch"><span>{{ $t('jobPanel.enabled') }}</span><n-switch v-model:value="form.enabled" size="small" /></div>
-          <div class="job-switch"><span>{{ $t('jobPanel.autoSafe') }}</span><n-switch v-model:value="form.auto_safe" size="small" /></div>
           <div class="job-form-actions">
             <n-button size="small" type="primary" :loading="saving" @click="saveJob">{{ $t('jobPanel.save') }}</n-button>
             <n-button size="small" @click="editing = false">{{ $t('jobPanel.cancel') }}</n-button>
@@ -252,8 +242,6 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 // ── 表单状态 ──
 const form = ref({ name: '', prompt: '', enabled: true, auto_safe: true })
 const mode = ref<Mode>('daily')
-const naturalText = ref('')
-const naturalLoading = ref(false)
 const intervalCount = ref(1)
 const intervalUnit = ref<IntervalUnit>('hours')
 const dailyTime = ref('09:00')
@@ -510,35 +498,11 @@ function schedulePreview(delay = 250) {
   previewTimer = setTimeout(runPreview, delay)
 }
 
-async function applyNatural() {
-  const text = naturalText.value.trim()
-  if (!text) return
-  naturalLoading.value = true
-  try {
-    const data = await request('/jobs/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedule: text, count: 3 }),
-    })
-    applyTrigger(data.trigger_type, data.trigger_config || {})
-    previewLabel.value = data.label || ''
-    previewRuns.value = data.next_runs || []
-    previewError.value = ''
-  } catch (e: any) {
-    previewError.value = e.message
-    previewLabel.value = ''
-    previewRuns.value = []
-  } finally {
-    naturalLoading.value = false
-  }
-}
-
 // ── 新建 / 编辑 / 保存 ──
 
 function startCreate() {
   editingId.value = null
   form.value = { name: '', prompt: '', enabled: true, auto_safe: true }
-  naturalText.value = ''
   mode.value = 'daily'
   intervalCount.value = 1
   intervalUnit.value = 'hours'
@@ -560,7 +524,6 @@ function startCreate() {
 function startEdit(job: Job) {
   editingId.value = job.id
   form.value = { name: job.name, prompt: job.prompt, enabled: job.enabled, auto_safe: job.auto_safe }
-  naturalText.value = ''
   applyTrigger(job.trigger_type, job.trigger_config || {})
   previewLabel.value = ''
   previewRuns.value = []
@@ -804,7 +767,7 @@ defineExpose({ refresh: loadJobs })
 .job-field {
   margin-bottom:10px;
 }
-.job-field > span, .job-switch > span {
+.job-field > span {
   display:block;
   margin-bottom:5px;
   font-size:11px;
@@ -843,7 +806,7 @@ defineExpose({ refresh: loadJobs })
 .link-btn:hover {
   text-decoration:underline;
 }
-.job-inline, .job-natural {
+.job-inline {
   display:flex;
   align-items:center;
   gap:6px;
@@ -893,15 +856,6 @@ defineExpose({ refresh: loadJobs })
 }
 .job-preview-error {
   color:var(--error,#f87171);
-}
-.job-switch {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin:10px 0;
-}
-.job-switch > span {
-  margin:0;
 }
 .job-form-actions {
   display:flex;

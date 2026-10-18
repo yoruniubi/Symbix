@@ -100,7 +100,6 @@ class JobRunner:
 
         job_id = job["id"]
         sid = job.get("session_id")
-        auto_safe = job.get("auto_safe", True)
         run_time = datetime.now()
 
         # 无 session → 自动建一个固定「定时任务」session（每个 job 长期复用，攒上下文）
@@ -222,7 +221,8 @@ class JobRunner:
                                       "content": skip_msg})
                         continue
 
-                    # auto_safe:非 SAFE 跳过；否则非 SAFE 也跳过（后台无人审批，一律不执行写操作）
+                    # 后台无人审批策略:定时任务一律只跑 SAFE 工具,
+                    # MEDIUM/HIGH 跳过并在 memory 里留痕(用户下次开聊可手动重跑)
                     if risk_level != ToolRiskLevel.SAFE:
                         skip_msg = (
                             f"[需人工处理] 定时任务自动跳过工具 {fn['name']}（风险等级 {risk_level}）：{risk_reason}。"

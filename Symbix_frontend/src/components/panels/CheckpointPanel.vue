@@ -131,19 +131,29 @@
             <span class="diff-size" v-if="diffData.size_before != null && diffData.size_after != null">
               {{ formatBytes(diffData.size_before!) }} → {{ formatBytes(diffData.size_after!) }}
             </span>
+            <span class="diff-stat" v-if="diffData.diff">
+              <span class="diff-stat-add">+{{ diffData.diff.add_count }}</span>
+              <span class="diff-stat-del">-{{ diffData.diff.del_count }}</span>
+            </span>
           </div>
-          <div class="diff-columns" v-if="diffData.content_before != null || diffData.content_after != null">
-            <div class="diff-col">
-              <div class="diff-col-header">{{ $t('checkpointPanel.diffBefore') }}</div>
-              <pre class="diff-content">{{ diffData.content_before ?? '(empty)' }}</pre>
-            </div>
-            <div class="diff-col">
-              <div class="diff-col-header">{{ $t('checkpointPanel.diffAfter') }}</div>
-              <pre class="diff-content">{{ diffData.content_after ?? '(empty)' }}</pre>
+          <div class="diff-body" v-if="diffLines.length">
+            <div v-for="(ln, li) in diffLines" :key="li" class="diff-line" :class="`dl-${ln.type}`">
+              <span v-if="ln.type === 'gap'" class="diff-gap">
+                {{ $t('checkpointPanel.diffHiddenLines', { n: ln.count }) }}
+              </span>
+              <template v-else>
+                <span class="diff-no">{{ ln.old_no ?? '' }}</span>
+                <span class="diff-no">{{ ln.new_no ?? '' }}</span>
+                <span class="diff-sign">{{ ln.type === 'add' ? '+' : ln.type === 'del' ? '-' : '' }}</span>
+                <span class="diff-text">{{ ln.text || ' ' }}</span>
+              </template>
             </div>
           </div>
           <div v-else class="diff-no-blob">
             {{ $t('checkpointPanel.diffNoBlob') }}
+          </div>
+          <div class="diff-truncated" v-if="diffData.diff?.truncated">
+            {{ $t('checkpointPanel.diffTruncated', { n: diffLines.length }) }}
           </div>
           <div class="diff-restore" v-if="canRestore">
             <n-button type="warning" size="small" @click="handleRestore" :loading="restoring">
@@ -187,6 +197,8 @@ const expanded = ref<Set<string>>(new Set())
 // Diff dialog
 const diffVisible = ref(false)
 const diffData = ref<any>(null)
+// 后端已算好的 git 风格行列表,前端只做着色
+const diffLines = computed<any[]>(() => diffData.value?.diff?.lines ?? [])
 
 // —— 回溯按钮语义按 op 区分:
 //   create   → 撤销新建(删除该文件)
@@ -915,40 +927,79 @@ function handleClose() {
   font-size: 11px;
   color: var(--text-secondary);
 }
-.diff-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  min-height: 120px;
-}
-.diff-col {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
-  overflow: hidden;
+/* 增删统计(+N / -M) */
+.diff-stat {
   display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.diff-col-header {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 6px 10px;
-  background: var(--accent-soft);
-  border-bottom: 1px solid var(--border);
-  color: var(--text-primary);
-}
-.diff-content {
-  flex: 1;
-  margin: 0;
-  padding: 10px;
+  gap: 6px;
+  margin-left: auto;
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 320px;
+}
+.diff-stat-add {
+  color: var(--success, #4E9A6E);
+}
+.diff-stat-del {
+  color: var(--error, #D3555A);
+}
+/* 统一 diff(commit 风格:新增绿底、删除红底) */
+.diff-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel-bg);
   overflow: auto;
+  max-height: 420px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.diff-line {
+  display: flex;
+  align-items: flex-start;
+  white-space: pre;
+  width: max-content;
+  min-width: 100%;
+  min-height: 17px;
+}
+.diff-line.dl-add {
+  background: color-mix(in srgb, var(--success, #4E9A6E) 15%, transparent);
+}
+.diff-line.dl-del {
+  background: color-mix(in srgb, var(--error, #D3555A) 15%, transparent);
+}
+.diff-no {
+  flex: 0 0 38px;
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+.diff-sign {
+  flex: 0 0 14px;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+}
+.diff-line.dl-add .diff-sign {
+  color: var(--success, #4E9A6E);
+}
+.diff-line.dl-del .diff-sign {
+  color: var(--error, #D3555A);
+}
+.diff-text {
+  flex: 1;
+  padding-right: 10px;
   color: var(--text-primary);
+}
+.diff-gap {
+  padding: 2px 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.diff-truncated {
+  font-size: 11px;
+  color: var(--warning, #D89B3C);
+  text-align: center;
 }
 .diff-no-blob {
   padding: 20px 12px;

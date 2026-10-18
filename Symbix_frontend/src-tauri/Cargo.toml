@@ -27,3 +27,10 @@ tauri-plugin-notification = "2.3.3"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-os = "2.3.2"
+
+# 只用到 SetWindowPos / HWND_TOPMOST,与 tauri 自身的 windows 依赖同版本,可直接复用
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }

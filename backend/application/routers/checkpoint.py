@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+from application.services.line_diff import build_line_diff
 from application.state import checkpoint_recorder
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed
 
@@ -77,6 +78,7 @@ async def file_op_diff(session_id: str, record_id: str):
             "content_after": None,
             "size_before": payload.get("size_before"),
             "size_after": payload.get("size_after"),
+            "diff": None,
             "note": "该文件未存储可回退内容(可能是二进制文件或超出大小限制)",
         }
 
@@ -98,6 +100,8 @@ async def file_op_diff(session_id: str, record_id: str):
         "size_delta": payload.get("size_delta"),
         "op": payload.get("op"),
         "blob_stored": True,
+        # git 风格行级 diff,前端按增删着色(新增绿 / 删除红)
+        "diff": build_line_diff(content_before, content_after),
     }
 
 

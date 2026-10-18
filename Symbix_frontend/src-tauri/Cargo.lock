@@ -3694,6 +3694,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-os",
+ "windows",
 ]
 
 [[package]]

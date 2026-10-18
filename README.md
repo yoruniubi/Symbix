@@ -152,6 +152,7 @@ Excel 表格 ─┘                                       └─→ PDF 终稿
 Agent 干活最怕的是「它到底改了什么」。所以每一步都留痕:
 
 - 🕐 **行为时间线** —— 每一次操作、每一轮的结论都记下来,随时回看「它刚才都干了啥」
+- 🔍 **改动看得懂** —— 点开就是一份 commit 风格的 diff:新增绿、删除红,带行号与增删统计,一眼看清它到底动了哪几行
 - ↩️ **改错了一键还原** —— 能回到历史上任意一步,不只是回到开头
 - 🧹 **连新建的文件也能撤** —— 不只是恢复旧内容,它新造出来的文件也能一并清掉
 - 📚 **聊天、记忆、手账都在本地** —— 关掉再开不丢,数据不出你的机器
@@ -188,7 +189,7 @@ Agent 干活最怕的是「它到底改了什么」。所以每一步都留痕:
 ┌───────────────────────────────▼────────────────────────────────────────┐
 │                     Symbix Agent SDK(Symbix_sdk/)                      │
 │  client(Agent 循环 / 流式 / 系统提示)   tools(注册表 · 风险分级 · 并行)   │
-│  act_mode(reactive / plan_solve)       checkpoint(行为回溯 · 文件还原)   │
+│  act_mode(reactive / plan_solve)       checkpoint(回溯 · diff · 还原)  │
 │  memory(SQLite · RAG · 压缩)           job_schedule(APScheduler · 人话时间)│
 │  skill(技能加载 / 安装 / 生成)          mcp(stdio + remote / OAuth)      │
 │  stt(SenseVoice · OpenAI 兼容)          tts(Edge / OpenAI / 自建)       │
