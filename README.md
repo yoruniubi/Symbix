@@ -225,14 +225,14 @@ Symbix/
 
 ```bash
 cd backend
-# 需要 Python 3.10+;推荐 conda 虚拟环境
-pip install fastapi uvicorn httpx pydantic apscheduler pillow markitdown \
-  python-docx openpyxl python-pptx pypdf fpdf2 edge-tts jieba rank-bm25 \
-  jsonschema markdown-it-py mcp ddgs cairosvg pyyaml
+# 需要 Python 3.10+(实测 3.13);推荐 conda / venv 虚拟环境
+pip install -r requirements.txt
 python main.py           # 默认 http://127.0.0.1:8000
 ```
 
-> 仓库暂未附带 `requirements.txt`,按上面的列表安装即可(缺什么补什么)。
+> `requirements.txt` 是按「从 `main.py` 顺 import 图做可达性分析」实测出来的,只列真正用到的包。
+> 第一部分是运行必需(12 个,含传递共 45 个),第二部分是功能插件(不装也能启动,只影响对应工具)。
+> 每个包的注释里写了它为什么需要;`markitdown` 这类单价最贵的可选包也标明了取舍。
 
 ### 前端
 

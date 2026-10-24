@@ -1,0 +1,286 @@
+{
+  "$comment": "pet-forge 烘焙 keyframes 数值表。states.json 只给动画名/时长/缓动/次数,这里是各动画的具体变换段(烘焙成 spritesheet 时逐帧采样)。像素对齐守则:位移取整数 px;scale 会破坏网格对齐,默认禁用(仅 frameSwap 闭眼用 0.08 压扁)。preset.scope:\"rig\"=角色整体动(作用到 rig 全部部件,用于 breathe/breathe-slow/bounce/lean-in;若只动 states 里那一组就会头动脸不动);\"part\"=只作用于 states 写明的部件(默认)。preset.parts 仅在 states 未指定部件时作兜底,不再覆盖 states。preset.must_hit=true:该事件类动画(眨眼)必须在该行帧里真的出现一次——窄窗口按帧数均匀采样会被整段跳过。",
+  "default_loop_duration": 2.4,
+  "presets": {
+    "breathe": {
+      "kind": "translateY",
+      "scope": "rig",
+      "segments": [
+        {
+          "t": 0.0,
+          "dy": 0
+        },
+        {
+          "t": 0.25,
+          "dy": -2
+        },
+        {
+          "t": 0.5,
+          "dy": 0
+        },
+        {
+          "t": 0.75,
+          "dy": 1
+        },
+        {
+          "t": 1.0,
+          "dy": 0
+        }
+      ]
+    },
+    "breathe-slow": {
+      "kind": "translateY",
+      "scope": "rig",
+      "segments": [
+        {
+          "t": 0.0,
+          "dy": 0
+        },
+        {
+          "t": 0.25,
+          "dy": -3
+        },
+        {
+          "t": 0.5,
+          "dy": 0
+        },
+        {
+          "t": 1.0,
+          "dy": 0
+        }
+      ]
+    },
+    "blink": {
+      "kind": "frameSwap",
+      "frame": "blink",
+      "must_hit": true,
+      "segments": [
+        {
+          "t": 0.0,
+          "swap": false
+        },
+        {
+          "t": 0.4,
+          "swap": false
+        },
+        {
+          "t": 0.5,
+          "swap": true
+        },
+        {
+          "t": 0.6,
+          "swap": false
+        },
+        {
+          "t": 1.0,
+          "swap": false
+        }
+      ]
+    },
+    "close": {
+      "kind": "frameSwap",
+      "frame": "closed",
+      "segments": [
+        {
+          "t": 0.0,
+          "swap": false
+        },
+        {
+          "t": 0.6,
+          "swap": false
+        },
+        {
+          "t": 0.75,
+          "swap": true
+        },
+        {
+          "t": 1.0,
+          "swap": true
+        }
+      ]
+    },
+    "open-startled": {
+      "kind": "frameSwap",
+      "frame": "open",
+      "segments": [
+        {
+          "t": 0.0,
+          "swap": true
+        },
+        {
+          "t": 0.4,
+          "swap": false
+        },
+        {
+          "t": 1.0,
+          "swap": false
+        }
+      ]
+    },
+    "bounce": {
+      "kind": "translateY",
+      "scope": "rig",
+      "segments": [
+        {
+          "t": 0.0,
+          "dy": 0
+        },
+        {
+          "t": 0.2,
+          "dy": -10
+        },
+        {
+          "t": 0.4,
+          "dy": -12
+        },
+        {
+          "t": 0.6,
+          "dy": -8
+        },
+        {
+          "t": 0.8,
+          "dy": 0
+        },
+        {
+          "t": 1.0,
+          "dy": 0
+        }
+      ]
+    },
+    "wave": {
+      "kind": "rotateZ",
+      "segments": [
+        {
+          "t": 0.0,
+          "deg": 0
+        },
+        {
+          "t": 0.25,
+          "deg": 12
+        },
+        {
+          "t": 0.5,
+          "deg": -8
+        },
+        {
+          "t": 0.75,
+          "deg": 12
+        },
+        {
+          "t": 1.0,
+          "deg": 0
+        }
+      ]
+    },
+    "frown": {
+      "kind": "translateY",
+      "segments": [
+        {
+          "t": 0.0,
+          "dy": 0
+        },
+        {
+          "t": 0.4,
+          "dy": 2
+        },
+        {
+          "t": 0.6,
+          "dy": 2
+        },
+        {
+          "t": 1.0,
+          "dy": 0
+        }
+      ]
+    },
+    "lean-in": {
+      "kind": "translateX",
+      "scope": "rig",
+      "segments": [
+        {
+          "t": 0.0,
+          "dx": 0
+        },
+        {
+          "t": 0.3,
+          "dx": 4
+        },
+        {
+          "t": 0.7,
+          "dx": 4
+        },
+        {
+          "t": 1.0,
+          "dx": 0
+        }
+      ]
+    },
+    "perk": {
+      "kind": "translateY",
+      "segments": [
+        {
+          "t": 0.0,
+          "dy": 0
+        },
+        {
+          "t": 0.4,
+          "dy": -3
+        },
+        {
+          "t": 0.6,
+          "dy": -3
+        },
+        {
+          "t": 1.0,
+          "dy": 0
+        }
+      ]
+    },
+    "sway-slow": {
+      "kind": "rotateZ",
+      "segments": [
+        {
+          "t": 0.0,
+          "deg": 0
+        },
+        {
+          "t": 0.25,
+          "deg": 10
+        },
+        {
+          "t": 0.5,
+          "deg": 0
+        },
+        {
+          "t": 0.75,
+          "deg": -10
+        },
+        {
+          "t": 1.0,
+          "deg": 0
+        }
+      ]
+    }
+  },
+  "mappings": {
+    "translateY": [
+      "breathe",
+      "breathe-slow",
+      "bounce",
+      "frown",
+      "perk"
+    ],
+    "translateX": [
+      "lean-in"
+    ],
+    "rotateZ": [
+      "wave",
+      "sway-slow"
+    ],
+    "frameSwap": [
+      "blink",
+      "close",
+      "open-startled"
+    ]
+  }
+}

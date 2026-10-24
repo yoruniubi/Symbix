@@ -1,0 +1,133 @@
+# 发版主线:push tag v* 触发,四平台 matrix 从源码全量构建(PyInstaller + vite + cargo + tauri bundle),
+# 产物作为 artifact 汇总后自动建 draft Release。
+# 大型运行时资产不进 git:构建前由 backend/release_assets.py fetch 从「资产 Release」
+# (tag assets-v1,含 gguf / stt-native zip)与 bun/uv 官方 Release 补齐源码树。
+# 注意:资产 Release 与本 workflow 产出的「发版 Release」是两个不同的东西。
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:          # 手动触发,调 workflow 时不必打 tag
+
+permissions:
+  contents: write             # softprops 建 Release 需要
+
+jobs:
+  build:
+    name: build (${{ matrix.plat }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false        # 一个平台失败不连坐,其余产物照出
+      matrix:
+        include:
+          - { os: windows-latest, plat: windows-x64, bundles: nsis }
+          - { os: ubuntu-22.04,   plat: linux-x64,   bundles: deb }
+          - { os: macos-latest,   plat: macos-arm64, bundles: dmg }   # Apple Silicon
+          # Intel Mac(macos-13)已移除:STT 原生栈没有 x64 产物(无 Intel Mac 可构建,
+          # fork CI 也出不了),assets-v1 里没有 stt-native-macos-x64.zip,fetch 步骤必挂。
+          # 将来若弄到 x64 产物,上传资产后把这行加回来即可:
+          # - { os: macos-13, plat: macos-x64, bundles: dmg }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend deps
+        run: pip install -r backend/requirements.txt
+
+      # gguf + stt-native zip 来自本仓库的资产 Release(公开仓库匿名可下);
+      # bun/uv 取官方 Release 的 pin 版本(版本号定在 release_assets.py 顶部,
+      # 要升级改常量或加 --bun-version/--uv-version;不用 latest —— 不可复现)。
+      - name: Fetch runtime assets (gguf / stt-native / bun / uv)
+        run: python backend/release_assets.py fetch --repo "${{ github.repository }}" --tag assets-v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Symbix_frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: Symbix_frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Symbix_frontend/src-tauri
+
+      - name: Install Tauri system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Build backend (PyInstaller onedir)
+        working-directory: backend
+        run: pyinstaller Symbix_backend.spec --noconfirm --clean
+
+      # 冻结后端冒烟:真起进程、真发 HTTP(GET /,不是 TCP 探活),30s 内起不来算失败。
+      - name: Smoke test frozen backend
+        shell: bash
+        run: |
+          EXE=backend/dist/SymbixBackend/SymbixBackend
+          [ -f "$EXE.exe" ] && EXE="$EXE.exe"
+          SYMBIX_PORT=18912 "$EXE" > backend_smoke.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do
+            if curl -fsS --noproxy '*' http://127.0.0.1:18912/ > /dev/null 2>&1; then
+              echo "frozen backend OK after ${i}s"
+              kill $PID 2>/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::frozen backend did not come up in 30s"
+          tail -50 backend_smoke.log
+          exit 1
+
+      - name: Build app (Tauri bundle)
+        working-directory: Symbix_frontend
+        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+
+      - name: Collect bundles
+        shell: bash
+        run: |
+          mkdir -p out
+          find Symbix_frontend/src-tauri/target/release/bundle -type f \
+            \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
+            -exec cp {} out/ \;
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbix-${{ matrix.plat }}
+          path: out/*
+          retention-days: 7
+
+  release:
+    name: publish draft release
+    if: startsWith(github.ref, 'refs/tags/v')   # 手动 workflow_dispatch 只构建不发版
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true               # 先出草稿,人工确认后再 publish
+          generate_release_notes: true
+          files: dist/*

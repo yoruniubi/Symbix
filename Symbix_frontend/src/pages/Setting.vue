@@ -329,6 +329,21 @@
           <span class="hint-text">{{ t('setting.readAloudHint') }}</span>
           <n-switch :value="readAloud" @update:value="setReadAloud" />
         </n-space>
+        <!-- edge-tts 自愈:微软换令牌代次后旧版一律 403,开着就自动升库并重试一次 -->
+        <template v-if="edgeInUse">
+          <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
+            <span class="hint-text">{{ t('setting.edgeAutoUpdateHint') }}</span>
+            <n-switch :value="ttsForm.edge_auto_update" :disabled="!ttsForm.enabled" @update:value="setEdgeAutoUpdate" />
+          </n-space>
+          <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
+            <span class="hint-text">
+              {{ t('setting.edgeVersion') }} {{ edgeVersion || t('setting.edgeVersionUnknown') }}
+            </span>
+            <n-button size="small" :loading="edgeUpgrading" :disabled="!ttsForm.enabled" @click="upgradeEdge">
+              {{ t('setting.edgeUpgrade') }}
+            </n-button>
+          </n-space>
+        </template>
         <n-form :model="ttsForm" label-placement="top" size="small" :disabled="!ttsForm.enabled">
           <n-form-item :label="t('setting.voicePrimary')">
             <n-select
@@ -427,6 +442,8 @@ import {
   updateVoiceConfig,
   listSttDevices,
   previewTts as previewTtsApi,
+  upgradeEdgeTts,
+  setEdgeAutoUpdate as setEdgeAutoUpdateApi,
   type VoiceConfigResp,
 } from '@/utils/backend'
 
@@ -515,6 +532,7 @@ interface TtsSettings {
   openai_api_key: string
   openai_model: string
   custom_servers: string
+  edge_auto_update: boolean
 }
 
 // 后端 /voice/config 返回的引擎可用状态
@@ -574,7 +592,7 @@ function defaultStt(): SttSettings {
   }
 }
 function defaultTts(): TtsSettings {
-  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1', custom_servers: '' }
+  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1', custom_servers: '', edge_auto_update: true }
 }
 
 const sttForm = ref<SttSettings>(defaultStt())
@@ -583,6 +601,44 @@ const notifyForm = ref<NotifySettings>({ ...defaultSettings })
 const sttSaving = ref(false)
 const ttsSaving = ref(false)
 const ttsPreviewing = ref(false)
+
+// ---- edge-tts(云端)版本 + 手动升级 ----
+// 微软会周期性轮换 Sec-MS-GEC 令牌代次,旧版 edge-tts 一律 403。引擎侧能自愈,
+// 这里给用户一个「看版本 + 一键升级」的兜底入口。
+const edgeVersion = ref('')
+const edgeUpgrading = ref(false)
+/** 主/备引擎里有 edge 时才显示上面两个入口 */
+const edgeInUse = computed(() => [ttsForm.value.priority0, ttsForm.value.priority1].includes('edge'))
+
+/** 「自动更新 edge-tts」开关:改动立即落盘,不必再点「保存 TTS 设置」;失败回滚。 */
+async function setEdgeAutoUpdate(next: boolean) {
+  const prev = ttsForm.value.edge_auto_update
+  ttsForm.value.edge_auto_update = next
+  try {
+    ttsForm.value.edge_auto_update = await setEdgeAutoUpdateApi(next)
+  } catch (e) {
+    ttsForm.value.edge_auto_update = prev
+    message.error(t('setting.edgeAutoUpdateFail', { detail: String((e as Error)?.message || e) }))
+  }
+}
+
+async function upgradeEdge() {
+  edgeUpgrading.value = true
+  try {
+    const r = await upgradeEdgeTts()
+    if (r.ok) {
+      edgeVersion.value = r.installed || edgeVersion.value
+      message.success(t('setting.edgeUpgradeOk', { ver: r.installed || '?' }))
+      await loadVoiceConfig()
+    } else {
+      message.error(t('setting.edgeUpgradeFail', { detail: r.detail }))
+    }
+  } catch (e) {
+    message.error(String((e as Error)?.message || e))
+  } finally {
+    edgeUpgrading.value = false
+  }
+}
 
 // STT 语言下拉(对齐 SenseVoice: zh/en/yue/ja/ko + auto)
 const sttLanguageOptions = computed(() => [
@@ -648,6 +704,7 @@ async function loadVoiceConfig() {
     const cfg: VoiceConfigResp = await getVoiceConfig()
     ttsStatus.value = cfg.status?.tts || {}
     sttStatus.value = cfg.status?.stt || {}
+    edgeVersion.value = cfg.status?.edgeVersion || ''
     const stt = cfg.stt || {}
     sttForm.value = {
       enabled: stt.enabled ?? true,
@@ -681,6 +738,7 @@ async function loadVoiceConfig() {
       openai_api_key: (tts as any).openai_api_key || '',
       openai_model: (tts as any).openai_model || 'tts-1',
       custom_servers: (tts as any).custom_servers || '',
+      edge_auto_update: (tts as any).edge_auto_update ?? true,
     }
     fixTtsVoice()
   } catch {
@@ -790,6 +848,7 @@ function buildTtsPatch() {
   patch.openai_api_key = f.openai_api_key
   patch.openai_model = f.openai_model
   patch.custom_servers = f.custom_servers
+  patch.edge_auto_update = f.edge_auto_update
   return patch
 }
 
@@ -843,7 +902,11 @@ async function previewTts() {
     ttsAudio.onended = () => { URL.revokeObjectURL(url) }
     await ttsAudio.play()
   } catch (e) {
-    message.error(t('setting.voicePreviewFail'))
+    // 后端把引擎失败原因放在 detail 里(可能很长,如 edge 403 的处置建议),用弹窗完整展示
+    ;(window as any).$dialog?.error?.({
+      title: t('setting.voicePreviewFail'),
+      content: String((e as Error)?.message || e),
+    })
   } finally {
     ttsPreviewing.value = false
   }

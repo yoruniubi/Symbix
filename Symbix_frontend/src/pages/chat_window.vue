@@ -118,10 +118,14 @@
         {{ $t('chat.noApiKey') }}
       </n-alert>
 
-      <!-- token 用量:最近一轮 + 本会话累计,hover 看明细 -->
-      <div v-if="usageLine" class="usage-line" :title="usageDetail">
+      <!-- token 用量:最近一轮 + 本会话累计,hover 看明细;点按钮看日/周/月汇总 -->
+      <!-- 注意:末轮明细(lastUsage)与累计(sessionUsage)任一存在就显示,切回老会话只有累计也不至于整行消失 -->
+      <div v-if="usageLine || usageSessionLine" class="usage-line" :title="usageDetail">
         <span class="usage-main">{{ usageLine }}</span>
         <span v-if="usageSessionLine" class="usage-session">{{ usageSessionLine }}</span>
+        <button class="usage-detail-btn" @click="showUsageModal = true">
+          {{ $t('chat.usageDetailBtn') }}
+        </button>
       </div>
 
       <!-- Chat Input -->
@@ -148,6 +152,7 @@
       @update:mode="skillAddMode = $event"
       @submit="submitCreateSkill"
     />
+    <UsageDetailModal v-model:show="showUsageModal" />
 
     <!-- 添加 MCP 弹窗:远程 URL / 本地 npm -->
     <AddMcpModal
@@ -181,6 +186,7 @@ import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import ChatWelcome from '@/components/ChatWelcome.vue'
 import AddSkillModal from '@/components/AddSkillModal.vue'
+import UsageDetailModal from '@/components/UsageDetailModal.vue'
 import AddMcpModal from '@/components/AddMcpModal.vue'
 import { useSettings } from '@/composables/useSettings'
 import { useApiClient } from '@/composables/useApiClient'
@@ -282,6 +288,31 @@ const usageDetail = computed(() => {
   return lines.join('\n')
 })
 
+/**
+ * 切回会话时从后端 usage 库还原 usage 行(末轮明细 + 会话累计)。
+ * 后端没记录(功能上线前的老会话)则静默保持空 —— usage 行不显示。
+ */
+async function restoreUsage(sessionId: string): Promise<void> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/usage/session?session_id=${encodeURIComponent(sessionId)}`)
+    if (!res.ok) return
+    // 响应回来时用户可能已切走,只认当前会话的数据
+    if (activeSessionId.value !== sessionId) return
+    const data = await res.json()
+    const last = data?.last as TokenUsage | null
+    const total = data?.total as { prompt: number; output: number; calls: number } | null
+    if (last && typeof last.total === 'number' && last.total > 0) lastUsage.value = last
+    if (total && total.calls > 0) {
+      sessionUsage.value = {
+        prompt: total.prompt || 0,
+        output: total.output || 0,
+        tools: (last?.tools as number) || 0,
+        calls: total.calls || 0,
+      }
+    }
+  } catch { /* 静默:恢复失败只影响展示 */ }
+}
+
 /** 记一轮用量:最近一轮明细 + 会话累计(切换会话时清零) */
 function recordUsage(usage?: TokenUsage | null) {
   if (!usage) return
@@ -305,6 +336,8 @@ const hasApiKey = computed(() => !!settings.value.apiKey)
 
 // 添加 Skill / MCP 弹窗
 const showAddSkillModal = ref(false)
+// token 用量弹窗
+const showUsageModal = ref(false)
 const showAddMcpModal = ref(false)
 /** OAuth 浏览器授权等待中(弹窗内显示提示) */
 const oauthWaiting = ref(false)
@@ -697,6 +730,7 @@ function loadSession(id: string) {
   activeSessionId.value = id
   messages.value = [...session.messages]
   resetUsage()
+  restoreUsage(id)
   // 历史消息里可能残留早已失效的 approval_id(后端重启后挂起态就没了),
   // 先和后端对账,把过期卡片标成「已失效」,别留一个点了必然报错的按钮。
   void syncPendingApprovals(id)
@@ -1812,6 +1846,25 @@ function scrollToBottom(instant: boolean = false) {
 }
 .usage-line .usage-session {
   opacity: 0.7;
+}
+.usage-detail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+.usage-detail-btn:hover {
+  border-color: var(--accent-500);
+  color: var(--accent-500);
+  background: var(--accent-50);
 }
 
 

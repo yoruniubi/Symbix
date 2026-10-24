@@ -43,6 +43,7 @@ export default {
     usageDetailOutput: 'Output {n}',
     usageDetailTotal: 'Total {n} (approx, no tiktoken) · session total ↑{up} ↓{down} / {calls} turns',
     usageDetailUpstream: 'Upstream actual: prompt {p} / completion {c} / total {t}',
+    usageDetailBtn: 'Details',
     newChat: 'New Chat',
     newChatTitle: 'New Chat',
     stopGenerate: 'Generation paused',
@@ -654,6 +655,14 @@ export default {
     ttsSaved: 'TTS settings saved',
     ttsReset: 'Reset',
     ttsResetInfo: 'TTS settings reset',
+    // edge-tts (Microsoft free endpoint): version display + one-click upgrade
+    edgeAutoUpdateHint: 'Auto-update edge-tts (upgrade & retry when the service rotates tokens and returns 403)',
+    edgeVersion: 'edge-tts version',
+    edgeVersionUnknown: 'unknown',
+    edgeUpgrade: 'Upgrade edge-tts',
+    edgeUpgradeOk: 'Upgraded to {ver}',
+    edgeUpgradeFail: 'Upgrade failed: {detail}',
+    edgeAutoUpdateFail: 'Failed to save switch: {detail}',
     // Language options
     langAuto: 'Auto detect',
     langZhCN: 'Chinese (Simplified)',
@@ -764,6 +773,20 @@ export default {
     needName: 'Please enter the Skill name',
   },
 
+  // ===== Usage Detail Modal =====
+  usageModal: {
+    title: 'Token Usage',
+    today: 'Today',
+    week: 'This Week',
+    month: 'This Month',
+    recent: 'Last 30 Days',
+    loading: 'Loading...',
+    empty: 'No records yet — chat a little first',
+    hint: 'Numbers are estimates (no tiktoken); tracking starts when this feature ships',
+    dayTip: '{date}: ↑{up} ↓{down} · {calls} turns',
+    range: '{start} ~ {end}',
+  },
+
   // ===== Add MCP Modal =====
   addMcpModal: {
     title: 'Add MCP Server',
@@ -832,5 +855,8 @@ export default {
     sectionTips: "AI's little notes",
     sectionHighlights: 'Conversation highlights',
     empty: 'Nothing recorded on this day yet~',
+  },
+  backend: {
+    failed: 'Backend failed to start',
   },
 }

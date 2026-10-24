@@ -1,7 +1,7 @@
 # ── Private docs (personal notes, never commit) ──
 Agents.md
 关于在此项目开发过程中学习感悟.md
-
+打包与分发指南.md
 # ── Secrets & local runtime data (never commit) ──
 .env
 .env.*
@@ -19,6 +19,14 @@ backend/Symbix_sdk/config/mcp_config.json
 backend/Symbix_sdk/tts/model
 backend/Symbix_sdk/stt/bin
 backend/Symbix_sdk/stt/model
+# SDK 内置运行时 bun/uv(官方预编译,git 不收;Windows 是 .exe 被下面的通配规则挡住,
+# macOS/Linux 是无扩展名的 bun/uv,必须显式列出)
+backend/Symbix_sdk/bun
+backend/Symbix_sdk/uv
+# SenseVoice 多平台编译产物(平台专属二进制,由 CI 产出;见目录内 README.md)
+# 只放行 README(来源/ref/编译参数/sha256 记录),二进制一律不入库
+backend/Symbix_sdk/stt/multi-platform/*
+!backend/Symbix_sdk/stt/multi-platform/README.md
 # sense-voice exe 运行时自动生成的特征缓存(缺失会自动重建)
 backend/Symbix_sdk/stt/fbank_lfr_cmvn_feature.json
 fbank_lfr_cmvn_feature.json
@@ -36,8 +44,19 @@ backend/Symbix_sdk/config/risk_trust.json
 # Checkpoint blob snapshots (user file content, never commit)
 backend/Symbix_sdk/checkpoint_blobs/
 
+# 用户自己装的 skill(运行时产物,不入库)
+backend/Symbix_sdk/skill/installed_skills/*
+# 例外:三个**内置**技能都是打包输入(spec 缺了直接构建失败),必须入库:
+#   pet-forge        自研作品(22 文件/224K)
+#   frontend-design  Anthropic 官方 skill 拷贝(2/24K,自带 MIT LICENSE.txt)
+#   skill-creator    Anthropic 官方 skill 拷贝(19/272K,同上)
+# 入库 = CI checkout 即有、可复现构建;官方 skill 更新时手动同步一次。
+# 注:目录内的 __pycache__/ 由上面的全局规则继续忽略。
+!backend/Symbix_sdk/skill/installed_skills/pet-forge/
+!backend/Symbix_sdk/skill/installed_skills/frontend-design/
+!backend/Symbix_sdk/skill/installed_skills/skill-creator/
+
 # Chat exports & uploads
-backend/Symbix_sdk/skill/installed_skills/
 backend/Symbix_sdk/config/history_list/
 backend/uploads/
 backend/Symbix_sdk/memory/checkpoint_blobs/
@@ -80,3 +99,11 @@ Thumbs.db
 
 # binary exe
 *.exe
+
+# PyInstaller 打包产物(体积巨大,几百 MB,绝不入库)
+backend/build/
+backend/dist/
+# release_assets.py pack 的产物(资产 zip + manifest,上传资产 Release 后可删)
+backend/dist-assets/
+
+*.spec

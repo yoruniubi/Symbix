@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 from ..color_extract import extract_palette_bytes
+from .ocr_fallback import _ocr_image_bytes, ocr_available
 
 # ── 配置 ──────────────────────────────────────────────
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -378,7 +379,7 @@ def save_upload(
 def _image_reference_summary(resolved: str, filename: str, size: int, mime: str, data: bytes = b"") -> str:
     """图片的「文字替身」:尺寸 + 主色(纯 Pillow,复用 color_extract)。
 
-    与 pet-forge 的 palette_hint.py 同一套取色代码;有了它,即使图片没被
+    取色统一由 `Symbix_sdk/color_extract.py` 提供(纯 Pillow);有了它,即使图片没被
     内嵌(模型无视觉 / 压缩后仍超限)或已经过了当轮,模型手上也不会只剩一个文件名。
     """
     dims = ""
@@ -521,7 +522,7 @@ def parse_file_path(
                 "不要用 parse_file/read_file 反复读图片,也不要给 browser_navigate 传本地路径或 file:// 地址。)"
             )
         # 所有分支都补一份「文字替身」:没有视觉能力的模型、以及后续轮次(如「请继续」)
-        # 都只能靠它拿到参考图信息。与 pet-forge 的 palette_hint.py 同源(纯 Pillow 取色)。
+        # 都只能靠它拿到参考图信息。取色实现见 `Symbix_sdk/color_extract.py`(纯 Pillow)。
         summary = _image_reference_summary(resolved, filename, size, mime, data)
         result["image_summary"] = summary
         result["text"] = f"{result.get('text', '')}\n{summary}".strip()
@@ -660,6 +661,11 @@ def _parse_pdf_bytes(data: bytes, max_chars: int) -> str:
                     break
             text = "\n\n".join(parts).strip()
             if not text:
+                # 扫描件兑底:文字层近空时逐页渲染成图,交给 OCR(可缺省,
+                # rapidocr 未装/失败则维持原提示)。页数上限防大书卡死。
+                ocr_text = _ocr_scanned_pdf(data, max_chars, pages=len(reader.pages))
+                if ocr_text:
+                    return ocr_text
                 return "[PDF 无可提取文本（可能是扫描件）]"
             if len(text) > max_chars:
                 text = text[:max_chars] + f"\n… [PDF 截断 {max_chars} chars]"
@@ -672,6 +678,45 @@ def _parse_pdf_bytes(data: bytes, max_chars: int) -> str:
         "[PDF 解析需要安装 pypdf: pip install pypdf。"
         "当前仅保存了文件路径，可用 read_file 无法读二进制 PDF。]"
     )
+
+
+# 扫描件 OCR:最多处理的页数(单页热跑约 0.5~3.5s,页数上限防一次对话卡死)
+_OCR_MAX_PAGES = 20
+
+
+def _ocr_scanned_pdf(data: bytes, max_chars: int, pages: int) -> Optional[str]:
+    """扫描件 PDF → 逐页渲染(scale 2.0 ≈ 144dpi)→ RapidOCR。失败返回 None。"""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return None
+    if not ocr_available():
+        return None
+    try:
+        pdf = pdfium.PdfDocument(io.BytesIO(data))
+        n = min(len(pdf), _OCR_MAX_PAGES)
+        parts = []
+        for i in range(n):
+            bitmap = pdf[i].render(scale=2.0)
+            pil = bitmap.to_pil()
+            buf = io.BytesIO()
+            pil.convert("RGB").save(buf, format="PNG")
+            t = _ocr_image_bytes(buf.getvalue())
+            if t:
+                parts.append(f"--- page {i + 1} (OCR) ---\n{t}")
+            if sum(len(p) for p in parts) > max_chars:
+                break
+        if not parts:
+            return None
+        text = "\n\n".join(parts)
+        note = f"[本 PDF 为扫描件,文字由 OCR 提取,形近字可能有误]"
+        if len(pdf) > n:
+            note += f"(仅处理前 {n}/{len(pdf)} 页)"
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n… [OCR 截断 {max_chars} chars]"
+        return f"{note}\n{text}"
+    except Exception:
+        return None
 
 
 def _unescape_xml(s: str) -> str:

@@ -1,5 +1,121 @@
 
-export const BACKEND_URL = 'http://127.0.0.1:8000'
+export let BACKEND_URL = 'http://127.0.0.1:8000'
+
+/** 源码里还留着二十多处写死的 8000,统一在 fetch 改写里兜住(见 installLegacyUrlRewrite) */
+const LEGACY_BASES = ['http://127.0.0.1:8000', 'http://localhost:8000']
+
+/** 换掉当前 base(唯一入口:状态里的 url 是权威值) */
+export function setBackendUrl(url: string) {
+  const clean = (url || '').replace(/\/+$/, '')
+  if (clean && clean !== BACKEND_URL) {
+    console.log('[backend] API base ->', clean)
+    BACKEND_URL = clean
+  }
+}
+
+/** 把后端状态里的地址应用进来。url 为空 = Rust 侧还没选好端口,保持默认 */
+export function applyBackendStatus(status: BackendStatus | null) {
+  if (status?.url) setBackendUrl(status.url)
+}
+
+/**
+ * 启动时确定后端地址。
+ *
+ * 端口在 Rust 侧「拉起后端之前」就定了,所以一般问一次就够;万一早于 setup
+ * 完成(拿到空 url),短暂重试几次再放弃 —— 拿不到就用默认值,不影响启动。
+ */
+export async function resolveBackendUrl(tries = 8): Promise<string> {
+  for (let i = 0; i < tries; i++) {
+    const status = await fetchBackendStatus()
+    if (status?.url) {
+      applyBackendStatus(status)
+      return BACKEND_URL
+    }
+    // null = 不在 Tauri 里(纯浏览器 npm run dev),不用等,直接用默认值
+    if (status === null) break
+    await new Promise((r) => setTimeout(r, 120))
+  }
+  return BACKEND_URL
+}
+
+/** 把请求地址里的旧常量换成当前 base;不是自家地址的原样返回 */
+export function rewriteLegacyUrl(url: string): string {
+  for (const base of LEGACY_BASES) {
+    if (url === base || url.startsWith(base + '/') || url.startsWith(base + '?')) {
+      return BACKEND_URL + url.slice(base.length)
+    }
+  }
+  return url
+}
+
+/**
+ * 让写死 8000 的老代码也跟上动态端口:包一层 fetch,把第一个参数里的旧地址
+ * 改写成当前 base。只在这一处施展魔法,好过改六十多个调用点(而且以后新代码
+ * 写回字面量也不会隐性失效)。
+ *
+ * `EventSource` 不走 fetch,那两处已改成用 BACKEND_URL(见 ChatInput.vue /
+ * DanmakuWindow.vue),以后新增 SSE 也请直接用它。
+ */
+export function installLegacyUrlRewrite() {
+  const w = window as unknown as { __symbixFetchPatched?: boolean }
+  if (w.__symbixFetchPatched) return
+  w.__symbixFetchPatched = true
+  const original = window.fetch.bind(window)
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof input === 'string') {
+      input = rewriteLegacyUrl(input)
+    } else if (input instanceof URL) {
+      input = new URL(rewriteLegacyUrl(input.href))
+    } else if (input instanceof Request) {
+      const url = rewriteLegacyUrl(input.url)
+      if (url !== input.url) {
+        try {
+          input = new Request(url, input)
+        } catch {
+          // 极少见(body 已被消费的 Request):保底用原请求
+        }
+      }
+    }
+    return original(input as RequestInfo, init)
+  }) as typeof window.fetch
+}
+/** 后端进程状态,字段与 src-tauri/src/backend.rs 的 BackendStatus 一一对应 */
+export interface BackendStatus {
+  state: 'external' | 'starting' | 'ready' | 'exited' | 'failed' | 'missing'
+  /** true = 后端是 Tauri 拉起来的,应用退出时由 Tauri 收掉 */
+  managed: boolean
+  url: string
+  detail: string | null
+}
+
+/**
+ * 主动查一次后端状态。
+ *
+ * 状态事件(`backend-status`)在 webview 加载完成之前就可能发过了,只订阅会漏掉
+ * 第一条,所以挂载时先拉一次。返回 null = 当前不在 Tauri 里(纯浏览器跑
+ * `npm run dev` 时没有这个命令),调用方直接忽略即可。
+ */
+export async function fetchBackendStatus(): Promise<BackendStatus | null> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return await invoke<BackendStatus>('backend_status')
+  } catch {
+    return null
+  }
+}
+
+/** 订阅后端状态变化;非 Tauri 环境静默降级(返回一个空函数) */
+export async function onBackendStatus(
+  cb: (status: BackendStatus) => void,
+): Promise<() => void> {
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    const unlisten = await listen<BackendStatus>('backend-status', (e) => cb(e.payload))
+    return unlisten
+  } catch {
+    return () => {}
+  }
+}
 
 export interface VoiceConfigResp {
   tts: {
@@ -13,6 +129,7 @@ export interface VoiceConfigResp {
     openai_base_url: string
     openai_api_key: string
     openai_model: string
+    edge_auto_update: boolean
   }
   stt: {
     enabled: boolean
@@ -35,6 +152,7 @@ export interface VoiceConfigResp {
   status: {
     tts: Record<string, { available: boolean; voices: { value: string; label: string }[] }>
     stt: Record<string, { available: boolean; cloud: boolean }>
+    edgeVersion: string
   }
 }
 
@@ -71,9 +189,44 @@ export async function previewTts(text: string, speed?: number, engine?: string):
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`POST /voice/tts ${res.status}`)
+  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/tts'))
   const blob = await res.blob()
   return URL.createObjectURL(blob)
+}
+
+/**
+ * 读出后端错误体里的 detail。后端会把「哪个引擎为什么失败」拼成长文案
+ * (例如 edge 403 的「升级 edge-tts」建议),不能解析时退回「路径 + 状态码」。
+ */
+export async function readErrorDetail(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json()
+    const detail = (data as { detail?: unknown })?.detail
+    if (typeof detail === 'string' && detail) return detail
+    if (detail) return JSON.stringify(detail)
+  } catch {
+    // 非 JSON 响应(如 502 HTML)走 fallback
+  }
+  return `${fallback} ${res.status}`
+}
+
+/** 立即升级 edge-tts。ok=false 时 detail 是 pip 的输出摘要。 */
+export async function upgradeEdgeTts(): Promise<{ ok: boolean; detail: string; installed: string }> {
+  const res = await fetch(`${BACKEND_URL}/voice/tts/edge/upgrade`, { method: 'POST' })
+  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/tts/edge/upgrade'))
+  return res.json()
+}
+
+/** 「自动更新 edge-tts」开关:只改这一个字段,改动立即落盘(不必再点保存)。 */
+export async function setEdgeAutoUpdate(enabled: boolean): Promise<boolean> {
+  const res = await fetch(`${BACKEND_URL}/voice/config/edge-auto-update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/config/edge-auto-update'))
+  const data = await res.json()
+  return !!data.edge_auto_update
 }
 
 /** 剥离 markdown 语法,返回纯文本(用于 TTS 朗读) */

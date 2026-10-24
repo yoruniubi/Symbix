@@ -212,14 +212,15 @@ def install_skill_via_cli(
         raise ValueError("package 不能为空")
     skill_name = (skill_name or "").strip()
 
-    # 运行器:优先 npx,未装则降级 SDK 内置 bun.exe
+    # 运行器:优先 npx,未装则降级 SDK 内置 bun(平台后缀由 sdk_binary 处理)
     npx = _resolve_cli_executable("npx", "npx.cmd", "npx.exe")
     bun = None
     if not npx:
         try:
-            bun = str(resource("Symbix_sdk/bun.exe"))
-            if not os.path.exists(bun):
-                bun = None
+            from Symbix_sdk.resource_path import sdk_binary
+            bun_path = sdk_binary("Symbix_sdk/bun")
+            if os.path.exists(str(bun_path)):
+                bun = str(bun_path)
         except Exception:
             bun = None
 
@@ -232,7 +233,7 @@ def install_skill_via_cli(
         if skill_name:
             base += ["--skill", skill_name]
     else:
-        return {"ok": False, "error": "未检测到 npx 且无 SDK 内置 bun.exe,无法运行 skills CLI", "run_type": None}
+        return {"ok": False, "error": "未检测到 npx 且无 SDK 内置 bun,无法运行 skills CLI", "run_type": None}
 
     use_shell = bool(npx)  # npx 是 .cmd 脚本需 shell;bun.exe 是原生二进制走参数列表
     tmp_root = tempfile.mkdtemp(prefix="symbix-skill-cli-")

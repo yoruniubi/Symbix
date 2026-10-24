@@ -11,11 +11,14 @@
 <script setup lang="ts">
 import { onMounted, defineComponent, h } from 'vue'
 import { useMessage, useDialog } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { RouterView } from 'vue-router'
 import { useTheme } from '@/composables/useTheme'
+import { fetchBackendStatus, onBackendStatus, applyBackendStatus, type BackendStatus } from '@/utils/backend'
 import type { MessageApi } from 'naive-ui'
 
 const { naiveTheme, themeOverrides, initTheme } = useTheme()
+const { t } = useI18n()
 
 // 把 Naive message/dialog 暴露到全局,供各 panel(ToolsRisk / JobPanel / Checkpoint)用
 // window.$message / window.$dialog。这样与 useMessage()/useDialog() 同源、可被组件树外层
@@ -30,9 +33,31 @@ const ProviderBridge = defineComponent({
   },
 })
 
+// 后端进程由 Tauri 侧托管(src-tauri/src/backend.rs:资源目录里找不到就自己拉起,
+// 已在跑则不插手,应用退出时收尸);前端只负责把「起不来」告诉用户。
+// 后端不可用时几乎所有请求都会失败,所以这类提示不自动消失(duration: 0)。
+function handleBackendStatus(status: BackendStatus) {
+  console.log('[backend]', status.state, status.managed, status.detail ?? '')
+  // 端口是 Rust 侧动态选的,状态里的地址才是权威值(main.ts 已问过一次,
+  // 这里覆盖「状态晚于挂载才定下来」的情况)
+  applyBackendStatus(status)
+  const broken = status.state === 'failed' || status.state === 'missing' || status.state === 'exited'
+  if (!broken) return
+  const message = (window as any).$message
+  if (!message) return
+  const text = status.detail ? `${t('backend.failed')}:${status.detail}` : t('backend.failed')
+  message.error(text, { duration: 0 })
+}
+
 onMounted(() => {
   // Re-apply persisted mode so CSS vars + Naive stay in sync
   initTheme()
+  // 先主动拉一次再订阅:启动阶段的状态事件早于本组件挂载,只订阅会漏掉
+  void (async () => {
+    const initial = await fetchBackendStatus()
+    if (initial) handleBackendStatus(initial)
+    await onBackendStatus(handleBackendStatus)
+  })()
 })
 </script>
 

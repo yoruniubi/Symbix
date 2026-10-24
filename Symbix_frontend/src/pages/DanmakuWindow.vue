@@ -19,6 +19,8 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+// 后端端口是动态的,SSE(EventSource)不走 fetch 改写,必须直接引用
+import { BACKEND_URL } from '@/utils/backend'
 
 // 全屏透明弹幕窗口:鼠标点击穿透(依赖后端已启用 setIgnoreCursorEvents)
 interface DanmakuItem {
@@ -35,8 +37,6 @@ let unlistenSSE: UnlistenFn | null = null
 let eventSourceConnected = false
 
 // ---- SSE 连接:订阅后端 /pet/events,收到 type=danmaku 即飘字 ----
-const BACKEND_URL = 'http://127.0.0.1:8000'
-
 function connectSSE() {
   if (eventSourceConnected) return
   eventSourceConnected = true

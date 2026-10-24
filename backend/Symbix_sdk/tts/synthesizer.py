@@ -1,7 +1,9 @@
 from __future__ import annotations
+import asyncio
 import re
 import time
 from dataclasses import dataclass, field
+from Symbix_sdk.tts import edge_update
 
 # 朗读前需要剔除的 emoji/装饰符号区间(保留普通文本与 CJK 标点)。
 # 覆盖:emoji 主体、杂项符号、交通/几何/箭头扩展、旗标、变体选择符 VS16、
@@ -67,6 +69,40 @@ class TTSProvider:
 
 
 # ---------------- Edge(云端辅) ----------------
+
+def _is_sec_token_403(e: Exception) -> bool:
+    """判定是否「微软轮换了 Sec-MS-GEC 令牌代次」导致的 403(升库就能解)。
+
+    靠 URL 里的 Sec-MS-GEC 字样把这类 403 和普通的鉴权/封 IP 区分开。
+    """
+    msg = str(e)
+    return "403" in msg and "Sec-MS-GEC" in msg
+
+
+def _edge_error_hint(e: Exception) -> str:
+    """把 edge-tts 的报错翻译成用户能动手解决的话。
+
+    最常见的一种:微软周期性轮换 Sec-MS-GEC token 方案(如 2025-10 把 v1 的纯
+    SHA256 换成 v2 的 CS64+SHA256),旧版 edge-tts 一律在 WSS 握手阶段被 403 拒。
+    此时不是网络/代理/配置问题,唯一解法是升级库 —— 直接把话说到位。
+    """
+    msg = str(e)
+    if "403" not in msg:
+        return f"Edge 合成失败: {msg}"
+
+    ver = "未知"
+    try:
+        import edge_tts
+        ver = getattr(edge_tts, "__version__", "未知")
+    except Exception:
+        pass
+    return (
+        f"Edge 合成失败: 403 —— 微软拒绝了 Sec-MS-GEC 令牌校验。"
+        f"当前 edge-tts {ver},通常是版本过旧(微软会周期性更换令牌代次)。"
+        f"升级即可恢复:pip install -U edge-tts 并重启后端。"
+        f"原始报错: {msg}"
+    )
+
 
 class EdgeProvider(TTSProvider):
     """edge-tts:微软免费接口,输出 mp3。voice 形如 zh-CN-XiaoxiaoNeural。"""
@@ -183,7 +219,7 @@ class EdgeProvider(TTSProvider):
                 if chunk["type"] == "audio":
                     chunks.append(chunk["data"])
         except Exception as e:
-            raise TTSProviderError(f"Edge 合成失败: {e}") from e
+            raise TTSProviderError(_edge_error_hint(e)) from e
 
         audio = b"".join(chunks)
         if not audio:
@@ -361,6 +397,8 @@ class TTSConfig:
     # 自定义 HTTP GET 服务(GPT-SoVITS / Bert-VITS2 …)
     voice_custom: str = ""        # speaker 名;空 = 不传该参数
     custom_servers: str = ""      # 多行文本,每行一个地址;按调用次数轮询
+    # edge 遇到 403(微软换令牌代次)时自动升级 edge-tts 并重试一次
+    edge_auto_update: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -374,6 +412,7 @@ class TTSConfig:
             "openai_model": self.openai_model,
             "voice_custom": self.voice_custom,
             "custom_servers": self.custom_servers,
+            "edge_auto_update": self.edge_auto_update,
         }
 
 
@@ -428,6 +467,7 @@ class TTSEngine:
         # 指定试听引擎:只用这一个,不降级
         order = [engine] if engine else list(cfg.priority)
         for name in order:
+            voice = ""
             try:
                 p = self._provider(name)
                 if not p.available():
@@ -436,7 +476,37 @@ class TTSEngine:
                 voice = getattr(cfg, f"voice_{name}", "") or ""
                 return await p.synthesize(text, voice=voice, speed=cfg.speed)
             except TTSProviderError as e:
-                errors.append(f"{name}: {e}")
+                healed = await self._edge_selfheal(name, text, voice, e)
+                if isinstance(healed, TTSResult):
+                    return healed
+                errors.append(healed or f"{name}: {e}")
         raise TTSProviderError("所有 TTS 引擎均失败 → " + "; ".join(errors))
+
+    async def _edge_selfheal(
+        self, name: str, text: str, voice: str, err: TTSProviderError
+    ) -> TTSResult | str | None:
+        """edge 的 403 自愈:升库 → 清模块缓存 → 重试一次。
+
+        返回 `TTSResult` = 自愈成功;返回 `str` = 自愈过但仍失败(当作错误文案);
+        返回 `None` = 不该自愈,交给上层用原报错。
+        """
+        if name != EdgeProvider.name or not self.config.edge_auto_update:
+            return None
+        if not _is_sec_token_403(err):
+            return None
+
+        # pip 可能跑几十秒,丢线程池,别堵事件循环
+        ok, detail = await asyncio.to_thread(edge_update.upgrade)
+        if not ok:
+            return f"{name}: {err}(自动升级 edge-tts 失败:{detail})"
+
+        # 必须清缓存:edge_tts 是 lazy import,不清的话进程里还是旧代码
+        edge_update.reload_modules()
+        self.reload()
+        try:
+            p = self._provider(name)
+            return await p.synthesize(text, voice=voice, speed=self.config.speed)
+        except TTSProviderError as e2:
+            return f"{name}: 已自动升级 edge-tts({detail}),但仍失败 → {e2}"
 
 tts_engine = TTSEngine()

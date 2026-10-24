@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from Symbix_sdk.config.voice_config import VoiceConfigManager
 from Symbix_sdk.tts.synthesizer import tts_engine, TTSProviderError
+from Symbix_sdk.tts import edge_update
 from Symbix_sdk.stt.transcriber import (
     stt_engine,
     STTProviderError,
@@ -36,6 +37,8 @@ async def get_voice_config():
         "status": {
             "tts": await tts_engine.status(),
             "stt": stt_engine.status(),
+            # edge-tts 版本:设置页展示,也方便一眼看出是不是被微软的令牌换代打中了
+            "edgeVersion": edge_update.installed_version(),
         },
     }
 
@@ -57,6 +60,22 @@ async def update_voice_config(patch: VoiceConfigPatch):
         voice_cfg.apply_stt_patch(patch.stt)
         stt_engine.config = voice_cfg.stt
     return {"status": "ok"}
+
+
+class EdgeAutoUpdatePatch(BaseModel):
+    enabled: bool
+
+
+@router.post("/voice/config/edge-auto-update")
+async def set_edge_auto_update(patch: EdgeAutoUpdatePatch):
+    """设置页的「自动更新 edge-tts」开关。
+
+    单独给一个接口而不是走 POST /voice/config:开关改一下就要立刻生效,没必要把
+    表单里其它未保存的字段一并提交。`tts_engine.config` 与 `voice_cfg.tts` 是同一个
+    对象(见文件顶部),所以 apply_tts_patch 会直接热更新到引擎。
+    """
+    voice_cfg.apply_tts_patch({"edge_auto_update": bool(patch.enabled)})
+    return {"status": "ok", "edge_auto_update": voice_cfg.tts.edge_auto_update}
 
 
 # ---------------- TTS ----------------
@@ -90,6 +109,20 @@ async def synthesize(req: TTSRequest):
         media_type=result.mime,
         headers={"X-Voice-Engine": result.engine},
     )
+
+
+# ---------------- edge-tts 手动升级 ----------------
+#
+# 微软会周期性轮换 Sec-MS-GEC 令牌代次,旧版 edge-tts 一律 403。引擎侧已有
+# 「遇 403 自动升库并重试」的自愈(见 synthesizer.TTSEngine._edge_selfheal),
+# 这个接口是给用户的兜底:一键升级,升级后会清模块缓存,下次合成直接用新版。
+# 当前版本号随风 /voice/config 的 status.edgeVersion 返回。
+
+@router.post("/voice/tts/edge/upgrade")
+async def edge_tts_upgrade():
+    """立即升级 edge-tts。返回 {ok, detail, installed}。"""
+    ok, detail = await asyncio.to_thread(edge_update.ensure_updated)
+    return {"ok": ok, "detail": detail, "installed": edge_update.installed_version()}
 
 
 # ---------------- STT(实时流式,SSE 推送) ----------------

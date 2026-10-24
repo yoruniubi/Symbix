@@ -63,5 +63,6 @@ declare module 'vue' {
     SkillPanel: typeof import('./src/components/panels/SkillPanel.vue')['default']
     TitleBar: typeof import('./src/components/TitleBar.vue')['default']
     ToolsRiskPanel: typeof import('./src/components/panels/ToolsRiskPanel.vue')['default']
+    UsageDetailModal: typeof import('./src/components/UsageDetailModal.vue')['default']
   }
 }

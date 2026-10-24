@@ -1,5 +1,6 @@
 """审批续跑路由:/chat/approve。"""
 import asyncio
+import time as _time
 import uuid
 import json as _json
 
@@ -12,6 +13,7 @@ from application.state import (
     skill_registry,
     symbix_client,
     tool_registry,
+    usage_store,
     _pending_approvals,
     _processing_approvals,
     _pending_questions,
@@ -262,6 +264,30 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
         # 追加到 messages，然后用流式 SSE 输出，避免前端干等。
         async def _stream_approve():
             nonlocal last_reasoning
+            # token 用量收口:多个 done 出口共用,整轮只记一次(与 stream.py 同一套路)
+            _usage_recorded = False
+
+            def _usage_payload() -> dict:
+                nonlocal _usage_recorded
+                payload = build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage)
+                if not _usage_recorded:
+                    _usage_recorded = True
+                    try:
+                        up = payload.get("upstream") or {}
+                        usage_store.record(
+                            ts=int(_time.time()), session_id=session_id,
+                            model=provider_registry.get_active().model,
+                            prompt=payload["prompt"], output=payload["output"],
+                            tools=payload["tools"], total=payload["total"],
+                            up_prompt=up.get("prompt_tokens"),
+                            up_completion=up.get("completion_tokens"),
+                            up_total=up.get("total_tokens"),
+                            payload=_json.dumps(payload, ensure_ascii=False),
+                        )
+                    except Exception as e:  # 记录失败不影响对话
+                        print(f"[usage] record failed: {e}")
+                return payload
+
             # checkpoint 计数袭用外层 chat_approve 的局部变量:嵌套函数内对它们做 += 必须显式 nonlocal,
             # 否则 Python 会按本函数局部赋值导致 UnboundLocalError("cannot access local variable ...").
             nonlocal ckpt_tool_count, ckpt_failed, ckpt_start_ts
@@ -496,7 +522,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 yield format_sse({
                                     "type": "done",
                                     "content": full_text,
-                                    "usage": build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage),
+                                    "usage": _usage_payload(),
                                 })
                                 return
 
@@ -553,7 +579,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             yield format_sse({
                                 "type": "done",
                                 "content": full_text,
-                                "usage": build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage),
+                                "usage": _usage_payload(),
                             })
                             return
 
@@ -639,7 +665,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     "content": full_text,
                     "act_mode": act_mode,
                     "act_plan": act_plan,
-                    "usage": build_usage_payload(running_msgs, mcp_tools, full_text, upstream=last_usage),
+                    "usage": _usage_payload(),
                 })
                 # — checkpoint: approve-stream 本轮完成 → 记 round 总结点
                 _emit_round_summary(

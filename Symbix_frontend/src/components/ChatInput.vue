@@ -137,6 +137,8 @@
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+// 后端端口是动态的,SSE(EventSource)不走 fetch 改写,必须直接引用
+import { BACKEND_URL } from '@/utils/backend'
 
 export interface AttachmentItem {
   name: string
@@ -180,8 +182,6 @@ const showModelPopover = ref(false)
 const reservedSessionId = ref<string>('')
 
 const { t } = useI18n()
-
-const BACKEND_URL = 'http://127.0.0.1:8000'
 
 /** 图片扩展名集合 */
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']

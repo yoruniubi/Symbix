@@ -19,8 +19,8 @@ class McpInstaller:
         if shutil.which("npx"):
             return "npx", "npx"
         try:
-            from Symbix_sdk.resource_path import resource
-            bun_exe = resource("Symbix_sdk/bun.exe")
+            from Symbix_sdk.resource_path import sdk_binary
+            bun_exe = sdk_binary("Symbix_sdk/bun")
         except Exception:
             bun_exe = None
         if bun_exe and os.path.exists(str(bun_exe)):
@@ -41,7 +41,7 @@ class McpInstaller:
         """
         runner, mode = self._resolve_pkg_runner()
         if not runner:
-            return {"status": "error", "message": "未检测到 Node.js/npx,且 SDK 内未捆绑 bun.exe,请先安装 Node.js 或 bun"}
+            return {"status": "error", "message": "未检测到 Node.js/npx,且 SDK 内未捆绑 bun,请先安装 Node.js 或 bun"}
 
         # 用 npx -y / bun x 直接跑,自动处理首次下载
         # 这里只做"预热"验证包能正常拉取,不需要真的 npm install 到全局
@@ -108,7 +108,7 @@ class McpInstaller:
         """
         runner, mode = self._resolve_uvx_runner()
         if not runner:
-            return {"status": "error", "message": "未检测到 uvx,且 SDK 内未捆绑 uv.exe,请先安装 uv 或补齐 SDK"}
+            return {"status": "error", "message": "未检测到 uvx,且 SDK 内未捆绑 uv,请先安装 uv 或补齐 SDK"}
 
         # 预热验证包能否拉取(uvx 语义 = uv tool run <pkg>)
         try:
@@ -147,8 +147,8 @@ class McpInstaller:
         if shutil.which("uvx"):
             return "uvx", "uvx"
         try:
-            from Symbix_sdk.resource_path import resource
-            uv_exe = resource("Symbix_sdk/uv.exe")
+            from Symbix_sdk.resource_path import sdk_binary
+            uv_exe = sdk_binary("Symbix_sdk/uv")
         except Exception:
             uv_exe = None
         if uv_exe and os.path.exists(str(uv_exe)):

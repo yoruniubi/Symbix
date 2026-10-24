@@ -1,0 +1,84 @@
+{
+  "$comment": "pet-forge SVG 主题 → Home.vue spritesheet 的显式映射契约(勿随意改动,Home.vue ROWS 硬编码)。rows 顺序 = spritesheet 行序(row 0..8),frames = Home.vue ROWS 每行帧数,source = pet-forge 状态来源。mode 定义烘焙方式:direct=直采;mirror+scroll-x / mirror-back+scroll-x=PNG 层镜像+水平往复(running 系);amplify-bounce=复用 source 的 bounce 曲线并放大 amplitude_factor;cycle=把行内帧映射到 cycles 个虚拟循环的相位上(让与同一 source 的另一行观感不同);head-frames=只取 source 前 head_frames 帧缓动,其余帧复用最后一帧。",
+  "frame_width": 192,
+  "frame_height": 208,
+  "rows": [
+    {
+      "home": "idle",
+      "frames": 6,
+      "source": "idle",
+      "mode": "direct"
+    },
+    {
+      "home": "runningRight",
+      "frames": 8,
+      "source": "idle",
+      "mode": "mirror+scroll-x"
+    },
+    {
+      "home": "runningLeft",
+      "frames": 8,
+      "source": "idle",
+      "mode": "mirror-back+scroll-x"
+    },
+    {
+      "home": "waving",
+      "frames": 4,
+      "source": "happy",
+      "mode": "direct"
+    },
+    {
+      "home": "jumping",
+      "frames": 5,
+      "source": "happy",
+      "mode": "amplify-bounce"
+    },
+    {
+      "home": "failed",
+      "frames": 7,
+      "source": "concerned",
+      "mode": "direct"
+    },
+    {
+      "home": "waiting",
+      "frames": 6,
+      "source": "listening",
+      "mode": "direct"
+    },
+    {
+      "home": "running",
+      "frames": 6,
+      "source": "listening",
+      "mode": "cycle"
+    },
+    {
+      "home": "review",
+      "frames": 6,
+      "source": "sleeping",
+      "mode": "head-frames"
+    }
+  ],
+  "variants": {
+    "jumping": {
+      "amplitude_factor": 1.8,
+      "comment": "复用 happy 的 bounce 曲线,位移幅度放大 1.8x(模拟跳跃)。"
+    },
+    "runningRight": {
+      "scroll_dx": 28,
+      "comment": "无对应状态:idle 静态帧上合成 translateX 循环(向右滚动→朝右跑)。"
+    },
+    "runningLeft": {
+      "scroll_dx": 28,
+      "mirror": true,
+      "comment": "同上,镜像后向左滚动。"
+    },
+    "running": {
+      "cycles": 2,
+      "comment": "无对应状态:复用 listening,但用 cycle(2 个虚拟循环)与 waiting 区分开(否则两行逐帧一样)。"
+    },
+    "review": {
+      "head_frames": 4,
+      "comment": "取 sleeping 前 4 帧缓动,表示思考待机(agent thinking 时循环)。"
+    }
+  }
+}

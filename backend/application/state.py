@@ -13,6 +13,7 @@ from Symbix_sdk.checkpoint import init_recorder as _init_checkpoint_recorder
 from Symbix_sdk.job_schedule import JobManager
 from Symbix_sdk.mcp.installer import McpInstaller
 from Symbix_sdk.act_mode import ActModeController
+from application.services.usage_store import UsageStore
 
 # ============ 路径 ============
 # backend/ 目录（application 的上一级）
@@ -46,6 +47,11 @@ checkpoint_recorder = _init_checkpoint_recorder(
 # build() 会在 main.py lifespan startup 时注入业务依赖。
 job_manager = JobManager(
     db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "jobs.db"),
+)
+
+# Token 用量库:同 memory.db 同级目录,每轮 done 记一行
+usage_store = UsageStore(
+    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "token_usage.db"),
 )
 
 skill_registry = SkillRegistry(

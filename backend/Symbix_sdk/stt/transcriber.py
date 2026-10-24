@@ -148,11 +148,14 @@ class SenseVoiceProvider(STTProvider):
 
     # ---- 路径解析:bin/model 目录里自动找 exe 和 gguf ----
     def _resolve_binary(self) -> Optional[str]:
+        """只认 sense-voice-stream:本应用只实现了流式(参数 --use-vad/-mmc/-mnc
+        只有 stream 版认识,main 是收文件名的文件模式)。
+        以前把 main 也当候补,导致 mac 上只有 main 时 available() 误报可用。
+        """
         d = stt_bin_dir()
         if not d.exists():
             return None
-        for cand in ("sense-voice-stream", "sense-voice-stream.exe",
-                     "sense-voice-main.exe", "sense-voice-main"):
+        for cand in ("sense-voice-stream", "sense-voice-stream.exe"):
             p = d / cand
             if p.exists():
                 return str(p)

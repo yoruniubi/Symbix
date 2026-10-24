@@ -18,7 +18,7 @@ from application.state import (
 )
 import sys
 import os
-from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku
+from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku, usage
 
 
 def _ensure_bundled_runtime_on_path() -> None:
@@ -44,7 +44,36 @@ def _ensure_bundled_runtime_on_path() -> None:
     print(f"[runtime] SDK 运行时目录已加入 PATH: {sdk_dir}")
 
 
+def _ensure_first_run_files() -> None:
+    """首次运行补齐可自建的配置文件。
+
+    打包后 _MEIPASS 里只带了模板(providers.json.example),其它配置由代码自建;
+    exec 白名单是唯一一个「写了生成函数但没人调用」的,这里补上 ——
+    否则缺文件时白名单为空,auto 模式下所有命令都被拦。
+    """
+    try:
+        from application.services.risk_context import ensure_exec_whitelist_exists
+        ensure_exec_whitelist_exists()
+    except Exception as e:
+        print(f"[runtime] exec 白名单初始化失败: {e}")
+
+
+def _log_frozen_paths() -> None:
+    """冻结后把「数据落到哪」打出来,方便第一时间发现路径问题(开发态不打扰)。"""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        from application.state import BASE_DIR
+        from Symbix_sdk.resource_path import resource_root
+        print(f"[runtime] frozen BASE_DIR = {BASE_DIR}")
+        print(f"[runtime] resource_root() = {resource_root()}")
+    except Exception as e:
+        print(f"[runtime] 路径自检失败: {e}")
+
+
 _ensure_bundled_runtime_on_path()
+_ensure_first_run_files()
+_log_frozen_paths()
 
 
 def _force_close_sse(reason: str = "") -> None:
@@ -179,6 +208,7 @@ app.include_router(jobs.router)
 app.include_router(voice.router)
 app.include_router(journal.router)
 app.include_router(danmaku.router)
+app.include_router(usage.router)
 
 
 @app.get("/")
@@ -193,18 +223,27 @@ async def root():
 
 # ============ 启动入口 ============
 if __name__ == "__main__":
-    use_reload = "--reload" in sys.argv
-    uvicorn.run(
-        "main:app",
+    # 端口:默认 8000;Tauri 侧会先挑一个空闲端口再用 SYMBIX_PORT 传进来
+    # (传 0 = 让系统随便分一个,uvicorn 会把实际端口打进日志)。
+    _port = int(os.environ.get("SYMBIX_PORT") or 8000)
+    _uvicorn_kwargs = dict(
         host="127.0.0.1",
-        port=8000,
-        reload=use_reload,
+        port=_port,
         log_level="info",
         # Windows + reload 下 uvicorn 默认强制 SelectorEventLoop,会导致
         # STT(SenseVoice 子进程)启动失败(create_subprocess_exec 不支持)。
         # 用自定义 loop factory 强制 ProactorEventLoop,让热重载与 STT 共存。
-        loop="loop_proactor:force_proactor",
+        # 仅 win32:ProactorEventLoop 是 Windows 专有的,posix 上连这个属性都没有。
+        **({"loop": "loop_proactor:force_proactor"} if sys.platform == "win32" else {}),
         # 即使仍有顽固连接,最多等 1s 后强制结束,避免卡死开发流程
         timeout_graceful_shutdown=1,
         timeout_keep_alive=5,
     )
+    if getattr(sys, "frozen", False):
+        # 打包(PyInstaller)后入口脚本不以 "main" 为模块名注册,`"main:app"` 这种
+        # 字符串导入会报 No module named 'main';而把 main 加进 hiddenimports 又会
+        # 让 state.py 二次执行(双份 DB 句柄 / 双份 MCP 线程)。所以冻结时直接传
+        # app 对象,并关掉 reload(它要重启 exe,冻结后不适用)。
+        uvicorn.run(app, **_uvicorn_kwargs)
+    else:
+        uvicorn.run("main:app", reload="--reload" in sys.argv, **_uvicorn_kwargs)

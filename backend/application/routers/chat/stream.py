@@ -1,5 +1,6 @@
 """流式对话路由:/chat/stream, /history。"""
 import asyncio
+import time as _time
 import uuid
 import json as _json
 
@@ -13,6 +14,7 @@ from application.state import (
     symbix_client,
     act_mode_controller,
     tool_registry,
+    usage_store,
     _pending_approvals,
     _pending_questions,
     register_session_task,
@@ -287,7 +289,28 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             usage_msgs = running_msgs
 
             def _usage_payload() -> dict:
-                return build_usage_payload(usage_msgs, mcp_tools, full_text, upstream=last_usage)
+                payload = build_usage_payload(usage_msgs, mcp_tools, full_text, upstream=last_usage)
+                # 记入 token_usage.db:一个请求可能有多个 done 出口(await_input/提前返回/
+                # 轮次用尽),用 _recorded 保证整轮只记一次
+                nonlocal _usage_recorded
+                if not _usage_recorded:
+                    _usage_recorded = True
+                    try:
+                        up = payload.get("upstream") or {}
+                        usage_store.record(
+                            ts=int(_time.time()), session_id=request.session_id, model=model,
+                            prompt=payload["prompt"], output=payload["output"],
+                            tools=payload["tools"], total=payload["total"],
+                            up_prompt=up.get("prompt_tokens"),
+                            up_completion=up.get("completion_tokens"),
+                            up_total=up.get("total_tokens"),
+                            payload=_json.dumps(payload, ensure_ascii=False),
+                        )
+                    except Exception as e:  # 记录失败不影响对话
+                        print(f"[usage] record failed: {e}")
+                return payload
+
+            _usage_recorded = False
 
             # 子 Agent 委派所需的请求级模型参数(不同模型/网关时与主 Agent 保持一致)
             # 子 Agent 可单独配置模型(model_setting 页「子 Agent 模型」),未配置则沿用主模型;

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://symbix.local/schemas/pet-theme.json",
+  "title": "Pet Forge Theme",
+  "type": "object",
+  "required": ["name", "version", "rig", "states_file", "capabilities"],
+  "additionalProperties": true,
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "slug": { "type": "string" },
+    "version": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "rig": { "type": "string", "const": "base.svg" },
+    "states_file": { "type": "string", "const": "states.json" },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "parts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

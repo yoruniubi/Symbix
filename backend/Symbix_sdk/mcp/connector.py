@@ -15,7 +15,7 @@ import httpx
 _RUNNER_FALLBACKS = [
     {
         "names": ("npx", "npx.cmd", "npx.exe"),
-        "bin": "Symbix_sdk/bun.exe",
+        "bin": "Symbix_sdk/bun",      # 平台后缀由 sdk_binary() 处理
         "prefix": ["x"],
         "strip": ["-y"],
         "check": "npx",
@@ -23,7 +23,7 @@ _RUNNER_FALLBACKS = [
     {
         # uvx 语义 = `uv tool run`:未装 uvx 时用 SDK 内置 uv.exe 模拟
         "names": ("uvx", "uvx.cmd", "uvx.exe"),
-        "bin": "Symbix_sdk/uv.exe",
+        "bin": "Symbix_sdk/uv",       # 同上
         "prefix": ["tool", "run"],
         "strip": [],
         "check": "uvx",
@@ -32,10 +32,13 @@ _RUNNER_FALLBACKS = [
 
 
 def _resolve_sdk_exe(rel_path: str) -> Optional[str]:
-    """定位 SDK 内置可执行文件(不在 PATH,用 resource 解析绝对路径)。"""
+    """定位 SDK 内置可执行文件(不在 PATH,用 resource 解析绝对路径)。
+
+    rel_path 不带 .exe 后缀(Windows 由 sdk_binary 补,见 resource_path.sdk_binary)。
+    """
     try:
-        from Symbix_sdk.resource_path import resource
-        p = resource(rel_path)
+        from Symbix_sdk.resource_path import sdk_binary
+        p = sdk_binary(rel_path)
     except Exception:
         return None
     if os.path.exists(str(p)):

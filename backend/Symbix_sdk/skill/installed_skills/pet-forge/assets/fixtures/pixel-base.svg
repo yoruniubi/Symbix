@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 208" style="--pet-primary:#7C9EFF;--pet-secondary:#B8C9FF;--pet-accent:#FFB4A2;--pet-eye:#FFFFFF;--pet-pupil:#2A2A2A;--pet-line:#1A1A1A">
+  <!-- 像素画板模板:viewBox 192x208 = 帧 cell 本身,1 格 = 1 帧像素(零重采样)。
+       只使用整数坐标 + 矩形/折线,没有曲线与半透明。兜底宠物用它,保证「丑但能动」且仍是像素风。 -->
+  <g id="body" transform-origin="96px 135px">
+    <path d="M72 99 L120 99 L128 107 L128 175 L64 175 L64 107 Z" fill="var(--pet-primary)"/>
+    <rect x="80" y="133" width="32" height="42" fill="var(--pet-secondary)"/>
+  </g>
+  <g id="ear-left" transform-origin="70px 95px">
+    <path d="M66 99 L62 67 L90 95 Z" fill="var(--pet-secondary)"/>
+  </g>
+  <g id="ear-right" transform-origin="122px 95px">
+    <path d="M126 99 L130 67 L102 95 Z" fill="var(--pet-secondary)"/>
+  </g>
+  <g id="eye-left" transform-origin="87px 122px">
+    <rect x="80" y="115" width="14" height="14" fill="var(--pet-eye)"/>
+  </g>
+  <g id="eye-right" transform-origin="105px 122px">
+    <rect x="98" y="115" width="14" height="14" fill="var(--pet-eye)"/>
+  </g>
+  <g id="pupil-left" transform-origin="87px 122px">
+    <rect x="84" y="119" width="6" height="6" fill="var(--pet-pupil)"/>
+  </g>
+  <g id="pupil-right" transform-origin="105px 122px">
+    <rect x="102" y="119" width="6" height="6" fill="var(--pet-pupil)"/>
+  </g>
+  <g id="mouth" transform-origin="96px 141px">
+    <path d="M88 139 L92 143 L100 143 L104 139" fill="none" stroke="var(--pet-line)" stroke-width="4"/>
+  </g>
+  <g id="tail" transform-origin="146px 147px">
+    <path d="M132 163 L148 163 L148 147 L162 147 L162 129" fill="none" stroke="var(--pet-accent)" stroke-width="8"/>
+  </g>
+</svg>

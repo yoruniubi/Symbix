@@ -43,6 +43,7 @@ export default {
     usageDetailOutput: '输出 {n}',
     usageDetailTotal: '合计 {n}（约,无 tiktoken） · 已累计 ↑{up} ↓{down} / {calls} 轮',
     usageDetailUpstream: '上游真实: prompt {p} / completion {c} / total {t}',
+    usageDetailBtn: '详情',
     newChat: '新对话',
     newChatTitle: '新对话',
     stopGenerate: '已暂停',
@@ -653,6 +654,14 @@ export default {
     ttsSaved: 'TTS 设置已保存',
     ttsReset: '重置',
     ttsResetInfo: 'TTS 设置已重置',
+    // edge-tts(微软免费接口):版本查看 + 一键升级
+    edgeAutoUpdateHint: 'edge-tts 自动更新(服务端换令牌导致 403 时自动升库并重试)',
+    edgeVersion: 'edge-tts 版本',
+    edgeVersionUnknown: '未知',
+    edgeUpgrade: '升级 edge-tts',
+    edgeUpgradeOk: '已升级到 {ver}',
+    edgeUpgradeFail: '升级失败:{detail}',
+    edgeAutoUpdateFail: '保存开关失败:{detail}',
     // Language options
     langAuto: '自动检测',
     langZhCN: '中文(简体)',
@@ -763,6 +772,20 @@ export default {
     needName: '请填写 Skill 名称',
   },
 
+  // ===== Usage Detail Modal =====
+  usageModal: {
+    title: 'Token 用量统计',
+    today: '今日',
+    week: '本周',
+    month: '本月',
+    recent: '最近 30 天',
+    loading: '加载中...',
+    empty: '暂无记录,聊几句就有了',
+    hint: '数字为估算值(无 tiktoken);记录始于本功能上线',
+    dayTip: '{date}: ↑{up} ↓{down} · {calls} 轮',
+    range: '{start} ~ {end}',
+  },
+
   // ===== Add MCP Modal =====
   addMcpModal: {
     title: '添加 MCP Server',
@@ -830,5 +853,8 @@ export default {
     sectionTips: 'AI 的小巧思',
     sectionHighlights: '对话亮点',
     empty: '这一天还没有记录~',
+  },
+  backend: {
+    failed: '后端启动失败',
   },
 }

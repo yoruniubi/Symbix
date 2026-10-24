@@ -4,6 +4,8 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+mod backend;
+
 use tauri::{Manager, menu::{MenuBuilder, MenuItemBuilder}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton}};
 
 /// 让本机回环地址绕过系统代理。
@@ -93,8 +95,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .manage(backend::BackendState::default())
+        .invoke_handler(tauri::generate_handler![greet, backend::backend_status])
         .setup(|app| {
+            // 接管后端生命周期:已在跑就只观察,否则自己拉起并等它就绪。
+            // 放最前面是为了让第一条 backend-status 事件(至少 starting)早于
+            // 前端挂载,前端拿到的状态不会是空字符串。
+            backend::launch(app.handle().clone());
+
             // 确保 Windows 上透明窗口生效
             #[cfg(target_os = "windows")]
             {
@@ -155,6 +163,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // 只有走到退出(托盘「退出」、或系统关进程)才收后端;
+            // 关窗口只是 hide,后端要继续活着
+            if let tauri::RunEvent::Exit = event {
+                backend::shutdown(app);
+            }
+        });
 }
