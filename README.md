@@ -75,7 +75,7 @@ Symbix 把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己�
 | 聊天界面 | 弹幕窗口 |
 | --- | --- |
 | <img src="docs/screenshots/chat.png" width="440"> | <img src="docs/screenshots/danmaku.png" width="440"> |
-| <img src="docs/screenshots/journal.png" width="440"> | |
+
 
 <details>
 <summary><b>更多截图（设置 / 侧栏面板）</b></summary>
