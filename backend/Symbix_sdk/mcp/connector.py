@@ -7,10 +7,57 @@ import time
 import uuid
 import os
 import shutil
+from pathlib import Path
 from collections import deque
 from typing import Optional, Dict, List, Any
 
 import httpx
+
+from Symbix_sdk.resource_path import resource
+
+# MCP 图片内容落盘目录(Symbix_sdk/mcp/previews/)。
+# 和 memory.db 一样跟着 SDK 目录走:源码态在 backend/ 下,冻结态在
+# _internal/Symbix_sdk/mcp/ 下,都可写。
+_PREVIEW_DIR = Path(__file__).resolve().parent / "previews"
+_PREVIEW_KEEP = 50                    # 最多留多少张,超出按 mtime 清最旧
+_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+}
+
+
+def _save_image_preview(data_b64: str, mime: str) -> Optional[str]:
+    """把 MCP 返回的 image content(base64)落盘,返回绝对路径;失败返回 None。
+
+    MCP 的图片内容原来被截成 `[Image: <50字符>...]` —— 模型看不到图、
+    前端也没法渲染。落盘后:
+    - 模型拿到路径,可以在回复里告诉用户「预览已存到 xxx」;
+    - 前端从工具输出里抽出路径,经 /api/files/raw 渲染成真图。
+    """
+    import base64
+    import time as _time
+    try:
+        raw = base64.b64decode(str(data_b64 or ""), validate=False)
+        if not raw:
+            return None
+        _PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        ext = _MIME_EXT.get(str(mime or "image/png").lower(), ".png")
+        path = _PREVIEW_DIR / f"mcpimg_{int(_time.time() * 1000)}_{uuid.uuid4().hex[:6]}{ext}"
+        path.write_bytes(raw)
+        # 只留最近 _PREVIEW_KEEP 张,防无限增长
+        try:
+            olds = sorted(_PREVIEW_DIR.glob("mcpimg_*"), key=lambda p: p.stat().st_mtime)
+            for old in olds[:-_PREVIEW_KEEP]:
+                old.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return str(path)
+    except Exception:
+        return None
+
 
 _RUNNER_FALLBACKS = [
     {
@@ -37,7 +84,7 @@ def _resolve_sdk_exe(rel_path: str) -> Optional[str]:
     rel_path 不带 .exe 后缀(Windows 由 sdk_binary 补,见 resource_path.sdk_binary)。
     """
     try:
-        from Symbix_sdk.resource_path import sdk_binary
+        from Symbix_sdk.resource_path import resource, sdk_binary
         p = sdk_binary(rel_path)
     except Exception:
         return None
@@ -49,6 +96,9 @@ def _resolve_sdk_exe(rel_path: str) -> Optional[str]:
 def resolve_stdio_runner(command: str, args: Optional[List[str]] = None) -> tuple[str, List[str]]:
     """解析 stdio MCP 的启动命令(统一运行时降级)。
 
+    - 相对路径可执行文件(如 `pixeldraw.exe`):依次在系统 PATH、
+      资源目录 `pixeldraw/`(内置 MCP 工具的约定位置)里找,找到则
+      替换为绝对路径 —— 子进程 cwd 不一定是资源目录,裸命令名会找不到;
     - `npx`(含 .cmd/.exe 变体):系统无 npx 时降级 SDK 内置
       bun.exe 的 bunx 语义(`bun x <pkg>`,并剥掉 npx 专属 -y);
     - `uvx`(含变体):系统无 uvx 时降级 SDK 内置 uv.exe 的
@@ -59,6 +109,15 @@ def resolve_stdio_runner(command: str, args: Optional[List[str]] = None) -> tupl
     """
     base = os.path.basename((command or "").strip()).lower()
     args = list(args or [])
+    # 内置相对路径可执行文件 → 解析为绝对路径(优先 PATH,再资源目录)
+    raw = (command or "").strip()
+    if base.endswith(".exe") and not os.path.isabs(raw) and os.sep not in raw and "/" not in raw:
+        if not shutil.which(raw):
+            bundled = resource("pixeldraw") / base
+            if bundled.exists():
+                return str(bundled), args
+        # PATH 没有且资源目录也没有 → 原样返回,让报错自然暴露
+        return command, args
     for spec in _RUNNER_FALLBACKS:
         if base not in spec["names"]:
             continue
@@ -109,7 +168,7 @@ class McpServerClient:
         resolved_cmd, resolved_args = resolve_stdio_runner(self.command, self.args)
         effective = resolved_cmd or self.command
         eff_args = resolved_args if resolved_cmd != self.command else self.args
-        if effective != self.command:
+        if effective != self.command and not effective.endswith(".exe"):
             print(f"[MCP] '{self.server_id}': 未检测到 npx,使用 '{effective}' 替代")
         try:
             # Windows 下 npx/npm 等是 .cmd 脚本，需要 shell=True 才能找到
@@ -363,7 +422,8 @@ class McpServerClient:
                     if "text" in item:
                         output_parts.append(item["text"])
                     elif "type" in item and item["type"] == "image":
-                        output_parts.append(f"[Image: {item.get('data', '')[:50]}...]")
+                        saved = _save_image_preview(item.get("data", ""), item.get("mimeType", ""))
+                        output_parts.append(f"[Image saved: {saved}]" if saved else "[Image: <保存失败>]")
                 else:
                     output_parts.append(str(item))
 
@@ -752,7 +812,8 @@ class McpRemoteClient:
                     if "text" in item:
                         output_parts.append(item["text"])
                     elif item.get("type") == "image":
-                        output_parts.append(f"[Image: {str(item.get('data', ''))[:50]}...]")
+                        saved = _save_image_preview(item.get("data", ""), item.get("mimeType", ""))
+                        output_parts.append(f"[Image saved: {saved}]" if saved else "[Image: <保存失败>]")
                     else:
                         output_parts.append(json.dumps(item, ensure_ascii=False))
                 else:

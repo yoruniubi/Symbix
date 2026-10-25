@@ -90,6 +90,16 @@ async function testDanmaku(): Promise<boolean> {
   }
 }
 
+/** 触发一条测试主动搭话(可点击气泡;无视频控,两种形态随机) */
+async function testProactive(): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(`${BACKEND_URL}/companion/proactive/test`, { method: 'POST' })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export function useCompanion() {
   return {
     companionSettings: readonly(settings),
@@ -97,6 +107,7 @@ export function useCompanion() {
     saveCompanionSettings,
     resetCompanionSettings,
     testDanmaku,
+    testProactive,
     defaultSettings,
   }
 }

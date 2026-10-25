@@ -40,6 +40,9 @@ backend/Symbix_sdk/config/risk_trust.json
 **/*.db-shm
 **/*.db-wal
 **/*.sqlite
+
+# MCP 图片预览落盘(connector 运行时自动生成,不入库)
+backend/Symbix_sdk/mcp/previews/
 **/*.sqlite3
 # Checkpoint blob snapshots (user file content, never commit)
 backend/Symbix_sdk/checkpoint_blobs/

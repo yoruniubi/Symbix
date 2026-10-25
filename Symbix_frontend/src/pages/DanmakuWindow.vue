@@ -8,8 +8,11 @@
         class="danmaku-item"
         :class="kindClass(d.kind)"
         :style="itemStyle(d)"
+        @click="onDanmakuClick(d)"
       >
         {{ d.text }}
+        <!-- 主动搭话气泡带「点击开聊」提示 -->
+        <span v-if="d.kind === 'proactive'" class="dm-hint">💬</span>
       </div>
     </div>
   </div>
@@ -29,6 +32,7 @@ interface DanmakuItem {
   kind: string
   top: number
   duration: number
+  memory?: string
 }
 
 const activeDanmaku = ref<DanmakuItem[]>([])
@@ -50,6 +54,15 @@ function connectSSE() {
       }
     } catch { /* ignore */ }
   })
+  // 主动搭话:可点击气泡,点击后打开聊天窗并带入上下文
+  es.addEventListener('proactive', (ev) => {
+    try {
+      const data = JSON.parse((ev as MessageEvent).data)
+      if (data.text) {
+        spawnDanmaku(String(data.text), 'proactive', data.memory ? String(data.memory) : undefined)
+      }
+    } catch { /* ignore */ }
+  })
   // onmessage 兜底:兼容不带 event 字段的默认消息
   es.onmessage = (ev) => {
     try {
@@ -66,27 +79,54 @@ function connectSSE() {
   }
 }
 
-function spawnDanmaku(text: string, kind = 'idle') {
+function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
   const id = nextId++
   const item: DanmakuItem = {
     id,
     text,
     kind,
+    memory,
     top: 12 + Math.random() * 60, // 12%~72% 高度
-    duration: 8000 + Math.random() * 4000, // 8~12s 飘完
+    duration: kind === 'proactive' ? 16000 : 8000 + Math.random() * 4000, // 主动搭话停留更久,留出点击时间
   }
   activeDanmaku.value.push(item)
+  // 主动搭话气泡存在期间解除鼠标穿透(否则点不到);消失后恢复
+  if (kind === 'proactive') void setClickThrough(false)
   // 动画结束后移除
   setTimeout(() => {
     activeDanmaku.value = activeDanmaku.value.filter((d) => d.id !== id)
+    if (kind === 'proactive' && !activeDanmaku.value.some((d) => d.kind === 'proactive')) {
+      void setClickThrough(true)
+    }
   }, item.duration + 200)
 }
 
-/** kind → 样式类:完成 / 出错 / 时段问候 各有强调色,其余走默认柔和 */
+/** 切换弹幕窗鼠标穿透(true = 穿透) */
+async function setClickThrough(through: boolean) {
+  try {
+    await getCurrentWindow().setIgnoreCursorEvents(through)
+  } catch (e) {
+    console.warn('[danmaku] setIgnoreCursorEvents failed:', e)
+  }
+}
+
+/** 点击主动搭话气泡 → 广播给 Home 窗打开聊天窗并带入上下文 */
+function onDanmakuClick(d: DanmakuItem) {
+  if (d.kind !== 'proactive') return
+  import('@tauri-apps/api/event').then(({ emit }) => {
+    emit('proactive-open-chat', { text: d.text, memory: d.memory || '' })
+  })
+  // 立即收掉气泡并恢复穿透
+  activeDanmaku.value = activeDanmaku.value.filter((x) => x.id !== d.id)
+  void setClickThrough(true)
+}
+
+/** kind → 样式类:完成 / 出错 / 时段问候 各有强调色,主动搭话强调+可点,其余走默认柔和 */
 function kindClass(kind: string): string {
   if (kind === 'complete') return 'dm-complete'
   if (kind === 'error') return 'dm-error'
   if (['morning', 'afternoon', 'evening', 'night'].includes(kind)) return 'dm-greeting'
+  if (kind === 'proactive') return 'dm-proactive'
   return 'dm-idle'
 }
 
@@ -199,6 +239,41 @@ onUnmounted(() => {
   border-color: var(--success, #4e9a6e);
 }
 
+/* 主动搭话:强调色 + 可点击(点击打开聊天窗) */
+.dm-proactive {
+  cursor: pointer;
+  pointer-events: auto; /* 父层 none,气泡自身可点 */
+  border-color: var(--accent-500);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(255, 214, 224, 0.86)
+  );
+  animation: danmaku-move var(--dur, 16s) linear forwards,
+    proactive-pulse 2.4s ease-in-out infinite;
+}
+.dm-proactive::before {
+  background: var(--accent-500);
+}
+.dm-proactive:hover {
+  filter: brightness(1.05);
+}
+.dm-hint {
+  font-size: 15px;
+  opacity: 0.75;
+}
+@keyframes proactive-pulse {
+  0%,
+  100% {
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px var(--accent-glow, rgba(239, 107, 110, 0.14)),
+      var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+  }
+}
+
 /* 暗色模式:深色暖炭气泡,保证可读 */
 [data-theme='dark'] .danmaku-item {
   background: rgba(30, 25, 22, 0.8);
@@ -220,6 +295,13 @@ onUnmounted(() => {
 }
 [data-theme='dark'] .dm-greeting {
   background: rgba(42, 34, 30, 0.85);
+}
+[data-theme='dark'] .dm-proactive {
+  background: linear-gradient(
+    135deg,
+    rgba(42, 34, 30, 0.88),
+    rgba(233, 92, 122, 0.3)
+  );
 }
 
 @keyframes danmaku-move {

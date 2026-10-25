@@ -114,6 +114,39 @@ async def list_directory(path: str = "."):
     return {"path": _relative(directory), "entries": entries}
 
 
+@router.get("/raw")
+async def read_raw_file(path: str):
+    """按原始字节读文件(图片预览用),带 Content-Type 返回。
+
+    ChatMessage 把工具输出里的 `[Image saved: <路径>]`(MCP 返回的图片内容
+    由 connector 落盘)渲染成真图,走这个端点拿字节。只允许图片后缀,
+    且命中系统保护目录直接拒绝。
+    """
+    from fastapi import Response
+    file_path = _resolve(path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    for forbidden in forbidden_roots():
+        prefix = str(forbidden).rstrip("\\/")
+        if str(file_path).lower().startswith(prefix.lower()):
+            raise HTTPException(status_code=403, detail="系统保护目录不可读")
+    if file_path.stat().st_size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件过大")
+    ext = file_path.suffix.lower()
+    media = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+        ".svg": "image/svg+xml",
+    }
+    if ext not in media:
+        raise HTTPException(status_code=415, detail="仅支持图片文件")
+    return Response(
+        content=file_path.read_bytes(),
+        media_type=media[ext],
+        headers={"Cache-Control": "max-age=3600"},
+    )
+
+
 @router.get("/read")
 async def read_workspace_file(path: str):
     candidates = _read_candidates(path)

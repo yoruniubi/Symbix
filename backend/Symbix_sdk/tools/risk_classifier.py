@@ -268,6 +268,19 @@ def _classify_default(tool_name: str, arguments: dict, server_id: str = "builtin
                     confidence="hint",
                     server_id=server_id,
                 )
+        if server_trust == "trusted":
+            # 用户已显式信任的 server:没有 annotation 时按名字启发分类
+            # (工具名来自 tools/list,server 本身已被用户信任,名字可采信);
+            # 猜不出 → write(MEDIUM),auto-pilot 下可放行,而不是 network 永远弹审批。
+            # (pixeldraw 这类不带 annotation 的本地绘图 server 曾因此每次都被拦)
+            ch = _heuristic_channel(tool_name) or "write"
+            return ClassifyResult(
+                level=CHANNEL_LEVEL.get(ch, ToolRiskLevel.MEDIUM),
+                reason=(f"按名字推测: {ch}" if ch != "write" else "受信 server,未声明注解,按写入处理"),
+                channel=ch,
+                confidence="guess" if ch != "write" else "fallback",
+                server_id=server_id,
+            )
         # 未知 server:不采信名字启发(名字可伪造),保底 network —— 每次问,不给会话信任
         return ClassifyResult(
             level=CHANNEL_LEVEL["network"],

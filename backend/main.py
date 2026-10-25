@@ -124,6 +124,9 @@ async def lifespan(_app: FastAPI):
                 # 空闲提醒:间隔取配置(danmaku_config.json idle_interval_s)
                 from application.services.danmaku_service import danmaku_cfg as _dm_cfg
                 emit_idle_danmaku_if_quiet(min_interval_s=float(_dm_cfg.cfg.idle_interval_s or 600))
+                # 主动搭话:空闲 + 抖动 + 频控,可能携带记忆回访(详见 companion_proactive.py)
+                from application.services.companion_proactive import _maybe_probe
+                _maybe_probe()
             except Exception:
                 pass
             await asyncio.sleep(60)

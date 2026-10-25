@@ -4,6 +4,36 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// 托盘菜单文案国际化:前端语言切换时调用,用对应语言的文案重建菜单。
+/// locale 只认 "en" / 其它一律按中文(与前端 AppLocale 对齐)。
+#[tauri::command]
+fn set_tray_locale(app: tauri::AppHandle, locale: String) -> Result<(), String> {
+    let en = locale == "en";
+    let (hide, show, quit) = if en {
+        ("Hide", "Show", "Quit")
+    } else {
+        ("隐藏", "显示", "退出")
+    };
+    let hide_item = MenuItemBuilder::with_id("hide", hide)
+        .build(&app)
+        .map_err(|e| e.to_string())?;
+    let show_item = MenuItemBuilder::with_id("show", show)
+        .build(&app)
+        .map_err(|e| e.to_string())?;
+    let quit_item = MenuItemBuilder::with_id("quit", quit)
+        .build(&app)
+        .map_err(|e| e.to_string())?;
+    let menu = MenuBuilder::new(&app)
+        .item(&hide_item)
+        .item(&show_item)
+        .separator()
+        .item(&quit_item)
+        .build()
+        .map_err(|e| e.to_string())?;
+    app.tray_by_id("main").ok_or("tray not found")?.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 mod backend;
 
 use tauri::{Manager, menu::{MenuBuilder, MenuItemBuilder}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton}};
@@ -96,7 +126,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .manage(backend::BackendState::default())
-        .invoke_handler(tauri::generate_handler![greet, backend::backend_status])
+        .invoke_handler(tauri::generate_handler![greet, backend::backend_status, set_tray_locale])
         .setup(|app| {
             // 接管后端生命周期:已在跑就只观察,否则自己拉起并等它就绪。
             // 放最前面是为了让第一条 backend-status 事件(至少 starting)早于
@@ -125,8 +155,8 @@ pub fn run() {
                 .item(&quit_item)
                 .build()?;
 
-            // 创建系统托盘
-            let _tray = TrayIconBuilder::new()
+            // 创建系统托盘(带 id,便于 set_tray_locale 里 tray_by_id 找到后重建菜单)
+            let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| {

@@ -92,7 +92,7 @@ class SessionTrust:
       通道级会话授权:仅 write 通道,用户批准一次后**永久记住**(直到面板手动清除),
       重启进程后仍生效 —— 无 TTL,授权即信任。
       write 的 grant 限 scope="workspace"(防 prompt injection 借早期信任写任意路径)。
-      exec 靠 auto 模式白名单放行,delete / network 每次都问,均不记 grant。
+      exec/delete/network 不记 grant:normal 下每次问,auto-pilot 下全放行,grant 无意义。
     """
 
     _MODES = ("normal", "auto")
@@ -332,8 +332,9 @@ def classify_for_chat(tool_name: str, arguments, mcp_tools: Optional[list],
 
     决策链:
       1. 查工具元数据(server_id / annotations)→ risk_classifier 分类
-      2. 会话级信任:read 直接放行;auto-pilot(会话开关)放行 write + exec 白名单命令;
-         已有通道 grant(永久记住)放行;delete / network 永不 auto(每次问)
+      2. 会话级信任:read 直接放行;auto-pilot(会话开关)开启即**全通道放行**
+         (含 exec / delete / network,用户显式授权本会话不再询问);
+         normal 下已有通道 grant(永久记住)放行,其余首次审批
 
     Returns:
         (risk: ClassifyResult, needs_approval: bool, auto_passed: bool)
@@ -358,26 +359,21 @@ def classify_for_chat(tool_name: str, arguments, mcp_tools: Optional[list],
     st = get_session_trust(session_id)
     auto = st.mode == "auto"
 
-    # delete / network:永不 auto 放行(含 auto-pilot),每次问
-    if risk.channel in ("delete", "network"):
-        return risk, True, False
+    # auto-pilot:会话级显式授权,开启即全权放行(所有通道,含 exec/delete/network)。
+    # 这是用户主动开的开关,语义就是「本轮会话别再问我」;有疑虑时关掉即可。
+    if auto:
+        return risk, False, True
 
-    # exec 通道:auto 模式仅放行白名单命令;normal 一律审批
+    # ---- 以下为 normal 模式 ----
+    # exec 通道:一律审批
     if risk.channel == "exec":
-        if auto:
-            args_dict = arguments if isinstance(arguments, dict) else {}
-            cmd = str(args_dict.get("command", "") or args_dict.get("cmd", "") or "")
-            if is_exec_whitelisted(cmd):
-                return risk, False, True
         return risk, True, False
 
-    # write 等:已有该通道的会话 grant(永久)→ 放行;auto-pilot 下 write 直接放行
+    # write 等:已有该通道的会话 grant(永久)→ 放行
     if st.check(risk.channel, server_id=server_id, scope=scope):
         return risk, False, True
-    if auto and risk.channel == "write":
-        return risk, False, True
 
-    # 其余(auto-pilot 下也审批;delete/network/exec 已在上方拦截)
+    # 其余(normal 下 delete/network/exec/write 首次)审批
     return risk, True, False
 
 

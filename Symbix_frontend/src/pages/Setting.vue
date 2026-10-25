@@ -206,6 +206,9 @@
             <n-button secondary :disabled="companionLoading" @click="testCompanion">
               {{ t('setting.companionTest') }}
             </n-button>
+            <n-button secondary :disabled="companionLoading" @click="testProactive">
+              {{ t('setting.companionProactiveTest') }}
+            </n-button>
             <n-button secondary :disabled="companionLoading" @click="resetCompanion">
               {{ t('setting.companionReset') }}
             </n-button>
@@ -491,6 +494,15 @@ async function testCompanion() {
   const ok = await companion.testDanmaku()
   if (ok) {
     message.success(t('setting.companionTestTriggered'))
+  } else {
+    message.error(t('setting.companionTestFailed'))
+  }
+}
+
+async function testProactive() {
+  const ok = await companion.testProactive()
+  if (ok) {
+    message.success(t('setting.companionProactiveTriggered'))
   } else {
     message.error(t('setting.companionTestFailed'))
   }

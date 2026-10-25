@@ -143,6 +143,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             if att_note:
                 mem_msg = (mem_msg + "\n" if mem_msg else "") + att_note
             memory.add(request.session_id, "user", mem_msg)
+            # 主动搭话用:记录用户仍在交互,重置空闲计时
+            try:
+                from application.services.companion_proactive import note_user_interaction
+                note_user_interaction()
+            except Exception:
+                pass
             history = memory.get_compressed_history(request.session_id, recent_limit=20)
             act_decision = act_mode_controller.decide(mem_msg, history[:-1])
             act_mode = act_decision.judgment.mode.value

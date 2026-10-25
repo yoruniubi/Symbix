@@ -28,6 +28,29 @@ CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(ts);
 _SUM_COLS = "COALESCE(SUM(prompt),0), COALESCE(SUM(output),0), COALESCE(SUM(tools),0), COALESCE(SUM(total),0), COUNT(*)"
 
 
+def _top_models(models: dict, top_n: int = 3) -> list[dict]:
+    """把 {model: [total, calls]} 压成前端气泡用的列表。
+
+    按用量降序取前 top_n 个,剩余合并进「其他」(含无模型名的旧行);
+    全部为空时返回空列表,前端不渲染模型明细。
+    """
+    if not models:
+        return []
+    ranked = sorted(models.items(), key=lambda kv: kv[1][0], reverse=True)
+    out: list[dict] = []
+    rest_total = 0
+    rest_calls = 0
+    for i, (name, (total, calls)) in enumerate(ranked):
+        if name == "__other__" or i >= top_n:
+            rest_total += total
+            rest_calls += calls
+            continue
+        out.append({"name": name, "total": total, "calls": calls})
+    if rest_total > 0:
+        out.append({"name": "__other__", "total": rest_total, "calls": rest_calls})
+    return out
+
+
 class UsageStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -128,22 +151,29 @@ class UsageStore:
                 "days": [],
             }
             rows = c.execute(
-                "SELECT ts, prompt, output, tools, total FROM token_usage WHERE ts >= ?",
+                "SELECT ts, model, prompt, output, tools, total FROM token_usage WHERE ts >= ?",
                 (horizon_start,),
             ).fetchall()
         # 数据量小(30 天),取回 Python 按本地日期聚合,避开 SQL 时区换算坑
+        # 每天额外按 model 分组,供前端 hover 气泡展示「当天哪个模型用了多少」
         agg: dict = {}
         for r in rows:
             d = datetime.fromtimestamp(r[0]).date().isoformat()
-            a = agg.setdefault(d, [0, 0, 0, 0, 0])
-            a[0] += r[1]; a[1] += r[2]; a[2] += r[3]; a[3] += r[4]; a[4] += 1
+            a = agg.setdefault(d, [0, 0, 0, 0, 0, {}])
+            a[0] += r[2]; a[1] += r[3]; a[2] += r[4]; a[3] += r[5]; a[4] += 1
+            name = (r[1] or "").strip()
+            if not name:
+                name = "__other__"  # 无模型名的旧行归入「其他」
+            m = a[5].setdefault(name, [0, 0])
+            m[0] += r[5]; m[1] += 1
         d0 = date.fromtimestamp(horizon_start)
         for i in range(days):
             day = (d0 + timedelta(days=i)).isoformat()
-            a = agg.get(day, [0, 0, 0, 0, 0])
+            a = agg.get(day, [0, 0, 0, 0, 0, {}])
             out["days"].append({
                 "date": day,
                 "prompt": a[0], "output": a[1], "tools": a[2],
                 "total": a[3], "calls": a[4],
+                "models": _top_models(a[5]),
             })
         return out

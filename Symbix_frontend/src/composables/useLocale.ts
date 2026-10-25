@@ -7,6 +7,7 @@ import {
 } from '@/i18n'
 import { locale as getSystemLocaleTag } from '@tauri-apps/plugin-os'
 import { emit } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 export type { AppLocale }
 
 const STORAGE_KEY = 'symbix_locale'
@@ -14,6 +15,9 @@ const supportedLocales: AppLocale[] = ['zh-CN', 'en']
 /** Module-level state so all windows / components share the same locale */
 const localeRef = ref<AppLocale>(normalizeLocale(getInitialLocale()))
 let storageListenerBound = false
+
+// 启动时把初始语言同步给托盘(Rust 侧菜单默认中文,英文用户启动即换文案)
+void syncTrayLocale(localeRef.value)
 
 
 async function getSystemLocale(): Promise<AppLocale> {
@@ -29,6 +33,13 @@ function normalizeLocale(value: unknown): AppLocale {
   return 'zh-CN'
 }
 
+/** 把当前语言同步给 Rust 侧(托盘菜单文案)。失败静默:仅影响托盘三行字。 */
+async function syncTrayLocale(next: AppLocale): Promise<void> {
+  try {
+    await invoke('set_tray_locale', { locale: next })
+  } catch { /* 非 Tauri 环境(浏览器 dev)或托盘不存在,忽略 */ }
+}
+
 function applyLocaleChange(next: AppLocale, persist = true) {
   localeRef.value = next
   applyI18nLocale(next)
@@ -38,6 +49,7 @@ function applyLocaleChange(next: AppLocale, persist = true) {
     } catch {}
     emit('locale-changed', next) // 广播给所有窗口，不再依赖 storage 事件
   }
+  void syncTrayLocale(next)
 }
 
 /** Listen for locale changes from other Tauri windows */

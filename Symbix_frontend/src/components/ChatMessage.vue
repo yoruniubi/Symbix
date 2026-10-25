@@ -101,6 +101,19 @@
           <div class="rig-preview-path" :title="rigPath">{{ rigPath }}</div>
         </div>
 
+        <!-- MCP 图片预览:pixeldraw 这类绘图工具的返回图,直接看效果 -->
+        <div v-if="mcpImgPath" class="rig-preview">
+          <div class="rig-preview-head">
+            <span class="rig-preview-title">{{ t('chat.mcpImagePreview') }}</span>
+          </div>
+          <div class="rig-preview-body">
+            <img v-if="mcpImgUrl" class="rig-preview-img" :src="mcpImgUrl" :alt="t('chat.mcpImagePreview')" />
+            <div v-else-if="mcpImgLoading" class="rig-preview-hint">
+              {{ t('chat.mcpImageLoading') }}
+            </div>
+          </div>
+        </div>
+
         <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续。kind=plan 时为待办清单确认卡 -->
         <div v-if="msg.pending_question" class="question-block"
           :class="{ 'plan-block': msg.pending_question.kind === 'plan', 'question-block-expired': msg.approval_expired === true }">
@@ -216,6 +229,11 @@
           </svg>
           <span>{{ t('chat.retrying') }}</span>
           <span class="retry-hint-reason">{{ msg.retryHint }}</span>
+        </div>
+
+        <!-- 主动搭话开场气泡:不是对用户的回复,加角标区分 -->
+        <div v-if="msg.proactive" class="act-mode-row">
+          <span class="act-mode-badge proactive">{{ t('chat.proactiveBadge') }}</span>
         </div>
 
         <!-- 执行模式角标:后端自动判决的 act_mode(reactive / plan_solve) -->
@@ -470,9 +488,62 @@ watch(
   { immediate: true },
 )
 
+// ---- MCP 图片预览 ----
+// 工具输出里的 `[Image saved: <绝对路径>]`:connector 把 MCP 返回的图片内容(pixeldraw
+// 这类绘图工具每次都返回 8x 预览 PNG)落盘后打的标记。从「完成」步骤里倒序找最新一张,
+// 经 /api/files/raw 拉字节渲染 —— 草稿迭代时每画一笔都能直接看到当前画面。
+const mcpImgPath = computed(() => {
+  const steps = props.msg?.steps || []
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const st: any = steps[i]
+    if (st?.status !== 'done') continue
+    const m = /\[Image saved: ([^\]\r\n]+?)\]/.exec(String(st.result || ''))
+    if (m) return m[1].trim()
+  }
+  return ''
+})
+const mcpImgUrl = ref('')
+const mcpImgLoading = ref(false)
+let mcpImgToken = 0
+
+function releaseMcpImg() {
+  if (mcpImgUrl.value) {
+    URL.revokeObjectURL(mcpImgUrl.value)
+    mcpImgUrl.value = ''
+  }
+}
+
+async function loadMcpImg(path: string) {
+  const token = ++mcpImgToken
+  if (!path) {
+    releaseMcpImg()
+    mcpImgLoading.value = false
+    return
+  }
+  mcpImgLoading.value = true
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/files/raw?path=${encodeURIComponent(path)}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    if (token !== mcpImgToken) return
+    const next = URL.createObjectURL(blob)
+    if (mcpImgUrl.value) URL.revokeObjectURL(mcpImgUrl.value)
+    mcpImgUrl.value = next
+  } catch {
+    // 读取失败就静默不显示(路径被清理/后端重启都是正常情况)
+    if (token === mcpImgToken) releaseMcpImg()
+  } finally {
+    if (token === mcpImgToken) mcpImgLoading.value = false
+  }
+}
+
+watch(mcpImgPath, (p) => { void loadMcpImg(p) }, { immediate: true })
+
 onUnmounted(() => {
   rigToken++
   releaseRig()
+  mcpImgToken++
+  releaseMcpImg()
 })
 
 /** 提问卡选项:优先用后端给的 options(带描述/动作),旧消息回退到 suggestions 纯文本。 */
@@ -932,6 +1003,10 @@ onMounted(() => {
   color: var(--text-muted);
   opacity: 0.85;
   cursor: default;
+}
+.act-mode-badge.proactive {
+  border-color: rgba(233, 150, 199, 0.5);
+  background: rgba(233, 150, 199, 0.1);
 }
 .act-mode-badge.plan_solve {
   border-color: rgba(246, 173, 85, 0.45);

@@ -1028,6 +1028,23 @@ async function closeDanmakuWindow() {
 }
 
 let unlistenDanmakuCfg: UnlistenFn | null = null
+let unlistenProactiveChat: UnlistenFn | null = null
+
+// 点击弹幕窗里的主动搭话气泡 → 打开聊天窗,并把搭话内容作为开场上下文
+async function openChatFromProactive(payload: { text?: string; memory?: string }) {
+  await openChatWindow()
+  // 等窗口就绪后把上下文发给聊天窗(简要重试,窗口初始化期间可能还没监听)
+  const seed = {
+    text: payload.text || '',
+    memory: payload.memory || '',
+    ts: Date.now(),
+  }
+  const { emit } = await import('@tauri-apps/api/event')
+  for (const delay of [300, 900, 1800]) {
+    await new Promise((r) => setTimeout(r, delay))
+    await emit('proactive-chat-seed', seed)
+  }
+}
 
 // ---- 皮肤切换 ----
 let unlistenPetSwitched: UnlistenFn | null = null
@@ -1188,6 +1205,16 @@ onMounted(async () => {
     console.warn('[danmaku] config listen failed:', e)
   }
 
+  // 主动搭话气泡被点击 → 打开聊天窗并带入上下文
+  try {
+    unlistenProactiveChat = await listen<{ text?: string; memory?: string }>(
+      'proactive-open-chat',
+      (event) => void openChatFromProactive(event.payload || {}),
+    )
+  } catch (e) {
+    console.warn('[proactive] open-chat listen failed:', e)
+  }
+
   // 聊天窗口通过 Tauri event 广播 Agent 生命周期,避免 thinking 动作只播放一遍。
   try {
     unlistenAgentStatus = await listen<{ status?: AgentStatus; bubble?: string }>(
@@ -1254,6 +1281,10 @@ onUnmounted(() => {
   if (unlistenDanmakuCfg) {
     unlistenDanmakuCfg()
     unlistenDanmakuCfg = null
+  }
+  if (unlistenProactiveChat) {
+    unlistenProactiveChat()
+    unlistenProactiveChat = null
   }
   if (unlistenAgentStatus) {
     unlistenAgentStatus()

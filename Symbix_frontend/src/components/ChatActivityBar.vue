@@ -49,6 +49,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 
@@ -59,7 +60,8 @@ defineProps<{ activePanel: Panel | null }>()
 const emit = defineEmits<{ (e: 'toggle', panel: Panel): void }>()
 const router = useRouter()
 const { t } = useI18n()
-const panelItems: { panel: Panel; label: string }[] = [
+// 用 computed 包裹:label 依赖 i18n locale,切语言时自动重算(否则只在 setup 时求值一次,切语言不刷新)
+const panelItems = computed<{ panel: Panel; label: string }[]>(() => [
   { panel: 'files', label: t('activityBar.files') },
   { panel: 'skill', label: t('activityBar.skill') },
   { panel: 'mcp', label: t('activityBar.mcp') },
@@ -67,7 +69,7 @@ const panelItems: { panel: Panel; label: string }[] = [
   { panel: 'checkpoint', label: t('activityBar.checkpoint') },
   { panel: 'risk', label: t('activityBar.risk') },
   { panel: 'jobs', label: t('activityBar.jobs') },
-]
+])
 </script>
 
 <style scoped>

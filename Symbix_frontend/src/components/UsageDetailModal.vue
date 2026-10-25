@@ -3,7 +3,7 @@
     :show="show"
     preset="card"
     :title="$t('usageModal.title')"
-    style="width: 520px; max-width: 94vw;"
+    style="width: 640px; max-width: 94vw;"
     :bordered="false"
     class="usage-modal"
     @update:show="emit('update:show', $event)"
@@ -12,9 +12,9 @@
     <div class="stat-row">
       <div v-for="card in cards" :key="card.key" class="stat-card">
         <div class="stat-label">{{ $t(`usageModal.${card.key}`) }}</div>
-        <div class="stat-total">{{ fmt(card.data.total) }}</div>
+        <div class="stat-total">{{ fmtTokens(card.data.total) }}</div>
         <div class="stat-sub">
-          ↑{{ fmt(card.data.prompt) }} ↓{{ fmt(card.data.output) }} · {{ card.data.calls }}
+          ↑{{ fmtTokens(card.data.prompt) }} ↓{{ fmtTokens(card.data.output) }} · {{ card.data.calls }}
         </div>
       </div>
     </div>
@@ -24,22 +24,27 @@
     <div v-if="!loaded" class="empty">{{ $t('usageModal.loading') }}</div>
     <div v-else-if="maxDayTotal === 0" class="empty">{{ $t('usageModal.empty') }}</div>
     <template v-else>
-      <div class="chart">
+      <div class="chart" @mouseleave="hoverIdx = -1">
         <div
-          v-for="d in days"
+          v-for="(d, i) in days"
           :key="d.date"
           class="bar-slot"
+          @mouseenter="hoverIdx = i"
         >
-          <!-- 悬浮数值气泡(替代原生 title,样式可控) -->
-          <span v-if="d.total" class="bar-tip" :style="{ '--h': `${barHeight(d)}%` }">
-            {{ fmt(d.total) }} · {{ d.calls }}
-          </span>
           <div class="bar-track">
             <div
               class="bar"
               :style="{ height: `${barHeight(d)}%` }"
             />
           </div>
+        </div>
+        <!-- 图表级共享气泡:固定悬浮在图表顶部,内容跟随 hover 的柱子,
+             高度稳定不随模型数暴涨,也不会顶出图表区 -->
+        <div v-if="hoverDay" class="chart-tip" :style="{ left: tipLeft }">
+          <span class="tip-line strong">{{ $t('usageModal.dayTip', { date: hoverDay.date.slice(5), up: fmtTokens(hoverDay.prompt), down: fmtTokens(hoverDay.output), calls: hoverDay.calls }) }}</span>
+          <span v-for="m in hoverDay.models" :key="m.name" class="tip-line">
+            {{ m.name === '__other__' ? $t('usageModal.other') : shortModel(m.name) }} · {{ fmtTokens(m.total) }} ×{{ m.calls }}
+          </span>
         </div>
       </div>
       <!-- 时间轴:稀疏标注,首/末必标,中间每 5 天一个 -->
@@ -62,6 +67,7 @@
 import { computed, ref, watch } from 'vue'
 import { NModal } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { fmtTokens } from '../utils/tokenFmt'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
@@ -69,29 +75,39 @@ const { t } = useI18n()
 
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000'
 
-interface DayStat { date: string; prompt: number; output: number; total: number; calls: number }
+interface DayStat { date: string; prompt: number; output: number; total: number; calls: number; models?: DayModel[] }
+interface DayModel { name: string; total: number; calls: number }
 interface PeriodStat { prompt: number; output: number; tools: number; total: number; calls: number }
 interface Summary { today: PeriodStat; week: PeriodStat; month: PeriodStat; days: DayStat[] }
 
 const loaded = ref(false)
 const summary = ref<Summary | null>(null)
+const hoverIdx = ref(-1)
 
 const cards = computed(() => [
   { key: 'today', data: summary.value?.today ?? zero() },
   { key: 'week', data: summary.value?.week ?? zero() },
   { key: 'month', data: summary.value?.month ?? zero() },
 ])
-const days = computed(() => summary.value?.days ?? [])
+const days = computed(() => (summary.value?.days ?? []).filter(d => d.total > 0))
 const maxDayTotal = computed(() => Math.max(0, ...days.value.map(d => d.total)))
+const hoverDay = computed(() => days.value[hoverIdx.value] ?? null)
+/** 气泡水平位置:对准 hover 柱的中心;贴边时往内收,避免溢出弹窗 */
+const tipLeft = computed(() => {
+  const n = days.value.length
+  if (!n || hoverIdx.value < 0) return '50%'
+  const pct = ((hoverIdx.value + 0.5) / n) * 100
+  return `${Math.min(88, Math.max(12, pct))}%`
+})
 
 function zero(): PeriodStat {
   return { prompt: 0, output: 0, tools: 0, total: 0, calls: 0 }
 }
 
-function fmt(n: number): string {
-  const v = n || 0
-  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`
-  return String(v)
+/** 模型名缩短:openai/gpt-4o-mini → gpt-4o-mini,超长截尾 */
+function shortModel(name: string): string {
+  const tail = name.split('/').pop() || name
+  return tail.length > 18 ? `${tail.slice(0, 17)}…` : tail
 }
 
 function barHeight(d: DayStat): number {
@@ -100,9 +116,10 @@ function barHeight(d: DayStat): number {
   return Math.max(4, (d.total / maxDayTotal.value) * 100)
 }
 
-/** 时间轴稀疏标注:首/末必标,中间每 5 天一个 */
+/** 时间轴稀疏标注:柱数少(≤15)时每根都标,多了才隔 5 天抽稀 */
 function showTick(i: number): boolean {
   const n = days.value.length
+  if (n <= 15) return true
   return i === 0 || i === n - 1 || i % 5 === 0
 }
 
@@ -160,8 +177,8 @@ watch(() => props.show, (v) => { if (v) load() })
 .chart {
     display: flex;
     align-items: flex-end;
-    gap: 5px;
-    height: 170px;
+    gap: 3px;
+    height: 190px;
     padding: 18px 2px 0;
 }
 .bar-slot {
@@ -179,8 +196,8 @@ watch(() => props.show, (v) => { if (v) load() })
     justify-content: center;
 }
 .bar {
-    width: 70%;
-    max-width: 22px;
+    width: 86%;
+    max-width: 34px;
     min-height: 3px;
     border-radius: 3px 3px 0 0;
     background: var(--symbix-gradient-soft);
@@ -189,30 +206,40 @@ watch(() => props.show, (v) => { if (v) load() })
 .bar-slot:hover .bar {
     background: var(--accent-600);
 }
-/* 悬浮数值气泡:常隐,hover 柱顶上方浮现 */
-.bar-tip {
+/* 图表级共享气泡:固定悬浮在图表顶部,内容跟随 hover 的柱子 */
+.chart {
+    position: relative;
+}
+.chart-tip {
     position: absolute;
-    bottom: calc(18px + var(--h) * 1.7);
-    left: 50%;
+    top: 0;
     transform: translateX(-50%);
-    padding: 2px 7px;
+    padding: 5px 9px;
     border-radius: var(--radius-sm);
     background: var(--gray-800);
     color: #fff;
     font-size: 10px;
-    line-height: 1.5;
+    line-height: 1.6;
     white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
     pointer-events: none;
     z-index: 2;
-    opacity: 0;
-    transition: opacity var(--duration-fast) var(--ease-standard);
+    box-shadow: var(--shadow-md);
 }
-.bar-slot:hover .bar-tip {
-    opacity: 1;
+.tip-line {
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.82);
+}
+.tip-line.strong {
+    color: #fff;
+    font-weight: 600;
+    margin-bottom: 2px;
 }
 .axis {
     display: flex;
-    gap: 5px;
+    gap: 3px;
     margin-top: 6px;
     border-top: 1px solid var(--border);
     padding-top: 4px;

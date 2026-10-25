@@ -184,6 +184,7 @@ import TitleBar from '@/components/TitleBar.vue'
 import SessionList from '@/components/SessionList.vue'
 import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import { fmtTokens } from '@/utils/tokenFmt'
 import ChatWelcome from '@/components/ChatWelcome.vue'
 import AddSkillModal from '@/components/AddSkillModal.vue'
 import UsageDetailModal from '@/components/UsageDetailModal.vue'
@@ -248,12 +249,6 @@ interface TokenUsage {
 }
 const lastUsage = ref<TokenUsage | null>(null)
 const sessionUsage = ref({ prompt: 0, output: 0, calls: 0, tools: 0 })
-
-function fmtTokens(n: number | undefined): string {
-  const v = n || 0
-  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`
-  return String(v)
-}
 
 const usageLine = computed(() => {
   const u = lastUsage.value
@@ -521,6 +516,41 @@ onMounted(async () => {
     unlistenSkinGen = un
   }).catch(() => {})
 
+  // 主动搭话气泡点击 → Home 打开本窗口并补发种子:把搭话内容作为「它先开口」的
+  // assistant 气泡进会话,输入框留空由用户自己接话(那是它说的话,不该替用户开口)
+  listenTauri<any>('proactive-chat-seed', (event: any) => {
+    const seed = event.payload || {}
+    const line = String(seed.text || '').trim()
+    if (!line) return
+    // 无活跃会话时先建一个,保证气泡有落点且后续用户发言归入同一会话
+    if (!activeSessionId.value) {
+      const newId = crypto.randomUUID()
+      pendingSessionId.value = ''
+      sessions.value.unshift({
+        id: newId,
+        title: line.slice(0, 20).replace(/[\\/:*?"<>|]/g, '') || t('chat.newChatTitle'),
+        messages: [],
+        titleGenerated: false,
+      })
+      activeSessionId.value = newId
+    }
+    messages.value.push({
+      role: 'assistant',
+      content: line,
+      proactive: true,   // 标记为搭话气泡(非回复),前端可按需区分样式
+    })
+    persistSessions()
+    void nextTick(() => scrollToBottom())
+    // 同步写进后端会话记忆:否则用户接话时模型不知道它刚说过这句
+    fetch(`${BACKEND_URL}/companion/proactive/seed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: activeSessionId.value, text: line }),
+    }).catch(() => {})
+  }).then((un) => {
+    unlistenProactiveSeed = un
+  }).catch(() => {})
+
   // 启动 MCP 连接状态周期检测（5 分钟一次，静默刷新）
   refreshMcpStatus(true)
   mcpCheckTimer = setInterval(() => refreshMcpStatus(true), MCP_CHECK_INTERVAL)
@@ -534,6 +564,10 @@ onBeforeUnmount(() => {
   if (unlistenSkinGen) {
     unlistenSkinGen()
     unlistenSkinGen = null
+  }
+  if (unlistenProactiveSeed) {
+    unlistenProactiveSeed()
+    unlistenProactiveSeed = null
   }
 })
 async function refreshSkillList() {
@@ -818,6 +852,7 @@ async function uploadRefImage(ref: { dataUrl: string; name: string; mime: string
 
 // 用于跨窗口事件取消订阅
 let unlistenSkinGen: (() => void) | null = null
+let unlistenProactiveSeed: (() => void) | null = null
 
 
 /** 处理 SkinWindow 传过来的皮肤生成请求 payload（发一条预设消息给 AI） */
@@ -1864,7 +1899,7 @@ function scrollToBottom(instant: boolean = false) {
 .usage-detail-btn:hover {
   border-color: var(--accent-500);
   color: var(--accent-500);
-  background: var(--accent-50);
+  background: var(--accent-soft);
 }
 
 

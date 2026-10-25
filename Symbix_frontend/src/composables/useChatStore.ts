@@ -22,6 +22,8 @@ export interface Message {
   retryHint?: string
   /** 本轮后端自动判决的执行模式(reactive / plan_solve):聊天页据此显示角标 */
   act_mode?: string
+  /** 主动搭话开场气泡(宠物先说的话,点击弹幕气泡后进入会话的那条) */
+  proactive?: boolean
 }
 
 export interface Session {

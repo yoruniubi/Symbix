@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Symbix — 陪你聊天的 AI 桌宠,替你干活的智能体</title>
+<script>
+// 防闪烁:CSS 渲染前先落定主题(记忆的选择 > 系统偏好 > 亮色默认,与 theme.ts 默认一致)
+(function () {
+    try {
+        var m = localStorage.getItem('symbix-landing-theme');
+        if (!m && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) m = 'dark';
+        if (m) document.documentElement.setAttribute('data-theme', m);
+    } catch (e) {}
+})();
+</script>
+<meta name="description" content="Symbix 是一只会干活的 AI 桌宠:丢给它论文与报告,它自己检索、精读、归纳,交给你排版好的成品文件;全程本地运行,对话与记忆不出你的电脑。">
+<style>
+/* 颜色全部取自 Symbix_frontend/src/theme.ts(单源 token),不引入外部位 */
+:root {
+    color-scheme: light;
+    --bg: #FBFAF9;              /* light.bgApp 暖白纸底 */
+    --bg-alt: #F6F4F2;          /* gray-50 暖沙分层 */
+    --card: #FFFFFF;            /* light.bgSurface 卡片 */
+    --sand: #FFF3E9;            /* accent-50 图标衬底 */
+    --border: #DCD7D2;          /* light.border 暖色发丝线 */
+    --hairline: #EDEAE7;        /* gray-100 更浅的分隔 */
+    --text: #262220;            /* light.textPrimary 深褐,不用纯黑 */
+    --text-2: #6F675F;          /* gray-500 正文辅色 */
+    --text-3: #968D86;          /* gray-400 弱化 */
+    --accent: #EF6B6E;          /* accent-500 珊瑚主强调 */
+    --accent-hover: #E2515F;    /* accent-600 悬停 */
+    --accent-deep: #C43F5C;     /* accent-700 高对比强调文字 */
+    --amber: #F7A85B;           /* accent-300 琥珀二级强调 */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --shadow-sm: 0 1px 2px rgba(38, 34, 32, 0.06);
+    --shadow-md: 0 4px 12px rgba(38, 34, 32, 0.08);
+    --shadow-lg: 0 8px 24px rgba(38, 34, 32, 0.10);
+    --font-sans: "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 暗色:与 theme.ts dark token 一致(暖炭 + 琥珀余温,珊瑚光晕加强) */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #161210;              /* dark.bgApp 深暖炭 */
+    --bg-alt: #1E1916;          /* dark.bgSurface 抬升面板 */
+    --card: #1E1916;            /* dark.bgSurface 卡片 */
+    --sand: rgba(239, 107, 110, 0.16);   /* dark accentSoft 图标衬底 */
+    --border: #3D322C;          /* dark.border 暖棕边线 */
+    --hairline: #2E2622;        /* 比 border 更贴近底色的分隔 */
+    --text: #F7F0EA;            /* dark.textPrimary 暖白 */
+    --text-2: #B8A99C;          /* dark.textSecondary */
+    --text-3: #8A7B70;          /* dark.textMuted */
+    --accent: #EF6B6E;
+    --accent-hover: #E2515F;
+    --accent-deep: #F7A85B;     /* 暗色下高对比强调文字改用琥珀(对应 dark accentBorder) */
+    --amber: #F7A85B;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.36);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.40);
+}
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+html {
+    scroll-behavior: smooth;
+}
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.7;
+}
+a {
+    color: inherit;
+    text-decoration: none;
+}
+a:focus-visible,
+.btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+.wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+/* ---- 有机圆点分隔:主题里最小单位的装饰,替代花哨渐变 ---- */
+.dots {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 0 auto;
+}
+.dots i {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--amber);
+    opacity: 0.7;
+}
+.dots i:nth-child(2) {
+    background: var(--accent);
+}
+
+/* ---- 导航:实底暖纸,不用毛玻璃 ---- */
+nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--hairline);
+}
+.nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+}
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+}
+.brand img {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+}
+.nav-links {
+    display: flex;
+    gap: 24px;
+    font-size: 14px;
+    color: var(--text-2);
+}
+.nav-links a:hover {
+    color: var(--accent-deep);
+}
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.theme-toggle {
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: border-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+.theme-toggle:hover {
+    border-color: var(--accent);
+    color: var(--accent-deep);
+}
+.theme-toggle svg {
+    width: 18px;
+    height: 18px;
+}
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    font-weight: 600;
+    transition: background 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.btn svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+.btn-primary {
+    background: var(--accent);
+    color: #FFFFFF;
+}
+.btn-primary:hover {
+    background: var(--accent-hover);
+    box-shadow: var(--shadow-md);
+}
+.btn-primary.grad {
+    background: linear-gradient(135deg, #F7A85B 0%, #F2657A 55%, #E85C93 100%);
+}
+.btn-primary.grad:hover {
+    background: linear-gradient(135deg, #F09A4C 0%, #E2515F 55%, #D64E85 100%);
+}
+.btn-ghost {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+.btn-ghost:hover {
+    border-color: var(--accent);
+}
+
+/* ---- Hero:暖纸上的排版,不用发光背景 ---- */
+.hero {
+    text-align: center;
+    padding: 88px 0 64px;
+}
+.hero h1 {
+    font-size: clamp(32px, 5.6vw, 50px);
+    line-height: 1.28;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.hero h1 em {
+    font-style: normal;
+    color: var(--accent-deep);
+}
+.hero p.sub {
+    max-width: 620px;
+    margin: 20px auto 0;
+    font-size: 16.5px;
+    color: var(--text-2);
+}
+.hero .cta {
+    margin-top: 32px;
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.hero .dots {
+    margin-top: 40px;
+}
+.hero .badges {
+    margin-top: 16px;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-2);
+}
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--card);
+}
+.badge::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--amber);
+}
+
+/* ---- 分区通用 ---- */
+section {
+    padding: 64px 0;
+}
+.sec-title {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.sec-sub {
+    text-align: center;
+    color: var(--text-2);
+    margin-top: 10px;
+    font-size: 15px;
+}
+
+/* ---- 流水线:一条散步小径,圆点是它走过的脚印 ---- */
+.pipeline {
+    margin-top: 56px;
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+}
+.pipeline::before {
+    content: "";
+    position: absolute;
+    top: 44px;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: var(--border);
+}
+.step {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 56px 14px 20px;
+    text-align: center;
+    transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.step:hover {
+    border-color: var(--amber);
+    box-shadow: var(--shadow-md);
+}
+.step .paw {
+    position: absolute;
+    top: 36px;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: var(--amber);
+    border: 3px solid var(--bg);
+}
+.step:nth-child(2n) .paw {
+    background: var(--accent);
+}
+.step .icon {
+    line-height: 0;
+}
+.step .icon svg {
+    width: 24px;
+    height: 24px;
+    color: var(--accent-deep);
+}
+.step .name {
+    margin-top: 8px;
+    font-weight: 700;
+}
+.step .desc {
+    margin-top: 6px;
+    font-size: 12.5px;
+    color: var(--text-2);
+}
+
+/* ---- 亮点网格:白卡片 + 暖边 + 沙底图标圆 ---- */
+.grid {
+    margin-top: 48px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+}
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 24px;
+    transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-md);
+}
+.card .icon {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--sand);
+}
+.card .icon svg {
+    width: 20px;
+    height: 20px;
+    color: var(--accent-deep);
+}
+.card h3 {
+    margin-top: 14px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+.card p {
+    margin-top: 7px;
+    font-size: 13.5px;
+    color: var(--text-2);
+}
+
+/* ---- 界面预览:白卡相框 + 暖边,截图当照片挂 ---- */
+.shots {
+    margin-top: 48px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+.shot {
+    margin: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 12px 12px 0;
+    overflow: hidden;
+    transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.shot:hover {
+    border-color: var(--amber);
+    box-shadow: var(--shadow-md);
+}
+.shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--hairline);
+}
+.shot figcaption {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-2);
+    padding: 10px 6px 12px;
+}
+.shot.lead {
+    grid-column: 1 / -1;
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+}
+/* 竖长面板截图(时间线/风险/手账):在卡内限高,不按原比例撑开整个网格 */
+.shot img.tall {
+    max-height: 480px;
+    width: auto;
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+/* ---- 平台表:白卡 + 暖发丝线 ---- */
+.platforms {
+    margin: 44px auto 0;
+    max-width: 640px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+.platforms table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14.5px;
+}
+.platforms th, .platforms td {
+    padding: 13px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--hairline);
+}
+.platforms th {
+    color: var(--text-2);
+    font-weight: 600;
+    background: var(--bg-alt);
+}
+.platforms tr:last-child td {
+    border-bottom: none;
+}
+.ok {
+    color: #4E9A6E;             /* theme.ts semantic.success */
+    font-weight: 600;
+}
+.no {
+    color: var(--text-3);
+}
+
+/* ---- 架构:沙底分层,技术名词用等宽字体 ---- */
+.arch {
+    margin-top: 44px;
+    display: grid;
+    gap: 12px;
+    font-size: 14px;
+}
+.arch .layer {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px 18px;
+    background: var(--bg-alt);
+    transition: border-color 0.2s var(--ease);
+}
+.arch .layer:hover {
+    border-color: var(--amber);
+}
+.arch .layer b {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--accent-deep);
+    font-weight: 600;
+}
+.arch .layer span {
+    color: var(--text-2);
+}
+
+/* ---- 底部 CTA:暖沙底色收尾 ---- */
+.cta-final {
+    text-align: center;
+    padding: 80px 0;
+    background: var(--bg-alt);
+    border-top: 1px solid var(--hairline);
+}
+.cta-final h2 {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.cta-final p {
+    color: var(--text-2);
+    margin-top: 10px;
+}
+.cta-final .cta {
+    margin-top: 28px;
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.cta-final .dots {
+    margin-bottom: 28px;
+}
+
+footer {
+    border-top: 1px solid var(--hairline);
+    padding: 28px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-3);
+}
+footer a:hover {
+    color: var(--accent-deep);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+    * {
+        transition: none !important;
+    }
+}
+
+@media (max-width: 800px) {
+    .grid {
+        grid-template-columns: 1fr 1fr;
+    }
+    .shots {
+        grid-template-columns: 1fr;
+    }
+    .pipeline {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+    .pipeline::before {
+        display: none;
+    }
+    .step {
+        padding-top: 48px;
+    }
+    .nav-links {
+        display: none;
+    }
+}
+@media (max-width: 520px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+    section {
+        padding: 48px 0;
+    }
+    .hero {
+        padding: 56px 0 48px;
+    }
+}
+</style>
+</head>
+<body>
+
+<nav>
+    <div class="wrap nav-inner">
+        <a class="brand" href="#">
+            <img src="./logo.png" alt="Symbix logo">
+            Symbix
+        </a>
+        <div class="nav-links">
+            <a href="#pipeline">怎么干活</a>
+            <a href="#features">核心亮点</a>
+            <a href="#preview">界面预览</a>
+            <a href="#download">下载</a>
+            <a href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener">GitHub</a>
+        </div>
+        <div class="nav-actions">
+            <button class="theme-toggle" id="theme-toggle" type="button" aria-label="切换亮暗模式">
+                <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/></svg>
+            </button>
+            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">下载</a>
+        </div>
+    </div>
+</nav>
+
+<header class="hero">
+    <div class="wrap">
+        <h1>陪你聊天的 <em>桌宠</em><br>替你干活的<em>智能体</em></h1>
+        <p class="sub">丢给它一堆论文、报告、表格 —— 它自己检索、精读、归纳,交给你一份排版好的成品文件。全程自然对话驱动,每一步留痕、可回溯、可撤销。</p>
+        <div class="cta">
+            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>免费下载</a>
+            <a class="btn btn-ghost" href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>GitHub 仓库</a>
+        </div>
+        <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="badges">
+            <span class="badge">Windows x64</span>
+            <span class="badge">macOS Apple Silicon</span>
+            <span class="badge">Linux x64</span>
+            <span class="badge">中英双语</span>
+            <span class="badge">数据全本地</span>
+        </div>
+    </div>
+</header>
+
+<section id="pipeline">
+    <div class="wrap">
+        <h2 class="sec-title">一句话,全流程无人值守</h2>
+        <p class="sec-sub">「帮我整理 XX 方向的近期工作」—— 你只管提需求和挑格式</p>
+        <div class="pipeline">
+            <div class="step">
+                <div class="paw" aria-hidden="true"></div>
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
+                <div class="name">找</div>
+                <div class="desc">学术库检索,多分身并行速读筛掉不相关</div>
+            </div>
+            <div class="step">
+                <div class="paw" aria-hidden="true"></div>
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></div>
+                <div class="name">下</div>
+                <div class="desc">取回 PDF 原文,登录墙也能翻过去</div>
+            </div>
+            <div class="step">
+                <div class="paw" aria-hidden="true"></div>
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+                <div class="name">读</div>
+                <div class="desc">分章节精读正文与表格,扫描件走 OCR</div>
+            </div>
+            <div class="step">
+                <div class="paw" aria-hidden="true"></div>
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+                <div class="name">写</div>
+                <div class="desc">结构化中文综述,对比表格一个不少</div>
+            </div>
+            <div class="step">
+                <div class="paw" aria-hidden="true"></div>
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 9.4L7.55 4.24"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
+                <div class="name">交</div>
+                <div class="desc">Word / PPT / Excel / PDF 成品直接拿走</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="features">
+    <div class="wrap">
+        <h2 class="sec-title">它不止是桌面上会跳会跑的小可爱</h2>
+        <p class="sec-sub">陪伴与干活,同一只</p>
+        <div class="grid">
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg></div>
+                <h3>交付成品,不只是答案</h3>
+                <p>直接给你排好版的 Word / PPT / Excel / PDF,拿到手就能发出去。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/></svg></div>
+                <h3>任何格式,进出自如</h3>
+                <p>论文、报告、表格、讲义都读得懂,扫描件 PDF 也有 OCR 兜底;想变什么格式,一句话的事。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                <h3>会分工的智能体</h3>
+                <p>复杂任务先派多个分身并行推进再汇总;不是单线程聊天机器人。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11.5 11 13.5 15 9.5"/></svg></div>
+                <h3>先问再做,不擅自动手</h3>
+                <p>多步任务先递计划等你点头;要动手改东西时弹审批卡,纯读取的自己跑。嫌确认烦?开 auto-pilot 一路绿灯。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></div>
+                <h3>干过的活都能找回</h3>
+                <p>每一步留痕,diff 一眼看清改了什么;改错一键还原,新建的文件也能撤。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div>
+                <h3>记得住你</h3>
+                <p>长期记忆 + 每日手账,关掉再开还是它,不用每次从头交代。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+                <h3>定时任务说人话就行</h3>
+                <p>「每天早上八点提醒我吃药」它就懂,跑失败自动重试并通知你。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1.5a2 2 0 0 0 0-4H12a2 2 0 0 1-2-2 2 2 0 0 1 2-2h5a4 4 0 0 0 4-4 8 8 0 0 0-9-6z"/><circle cx="7.5" cy="10.5" r="0.6"/><circle cx="12" cy="7.5" r="0.6"/><circle cx="16.5" cy="10.5" r="0.6"/></svg></div>
+                <h3>能给自己换皮肤</h3>
+                <p>描述想要的样子,它自己画形象、做动作、打包成能导入的桌宠皮肤。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></div>
+                <h3>花销一目了然</h3>
+                <p>每轮 token 用量实时显示,日 / 周 / 月汇总一张图表看尽。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></div>
+                <h3>能听会说</h3>
+                <p>语音识别跑在你自己电脑上,不联网不上传;朗读一句一句流着念。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><path d="M17 13v6"/><path d="M14 16h6"/></svg></div>
+                <h3>能力没有上限</h3>
+                <p>31 个内置工具 + 技能包 + MCP 外部能力,接上什么它就是什么。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+                <h3>它会主动来找你</h3>
+                <p>没事搭句话,一半概率翻你的记忆聊旧事;点一下气泡直接进聊天,它先开口、你来接。</p>
+            </div>
+            <div class="card">
+                <div class="icon"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="6.5" cy="8.5" r="2"/><circle cx="12" cy="6.5" r="2"/><circle cx="17.5" cy="8.5" r="2"/><path d="M12 11c-3.2 0-5.8 2.4-5.8 4.9 0 1.7 1.3 3 2.9 3 1 0 1.9-.5 2.9-.5s1.9.5 2.9.5c1.6 0 2.9-1.3 2.9-3C17.8 13.4 15.2 11 12 11z"/></svg></div>
+                <h3>它是桌宠,不是网页</h3>
+                <p>常驻桌面、透明穿透、会跳会跑会冒气泡陪你。</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="preview">
+    <div class="wrap">
+        <h2 class="sec-title">看看它长什么样</h2>
+        <p class="sec-sub">桌宠、聊天、弹幕、手账 —— 都是常驻在你桌面上的真窗口</p>
+        <div class="shots">
+            <figure class="shot lead">
+                <img src="./screenshots/demo.gif" alt="Symbix 主界面动图:桌宠在桌面上活动,聊天窗口处理任务" loading="lazy">
+                <figcaption>主界面:桌宠常驻桌面,一句话派活,成品文件直接交</figcaption>
+            </figure>
+            <figure class="shot">
+                <img src="./screenshots/chat.png" alt="聊天窗口:流式对话、工具执行步骤与审批卡" loading="lazy">
+                <figcaption>聊天窗口:流式对话,每一步工具调用看得见</figcaption>
+            </figure>
+            <figure class="shot">
+                <img src="./screenshots/danmaku.png" alt="陪伴弹幕窗:透明全屏飘字,主动搭话气泡" loading="lazy">
+                <figcaption>陪伴弹幕窗:透明穿透,它没事会主动来找你</figcaption>
+            </figure>
+            <figure class="shot">
+                <img src="./screenshots/skin-studio.png" alt="皮肤工坊:桌宠形象与动作管理" loading="lazy">
+                <figcaption>皮肤工坊:描述想要的样子,它自己画形象做动作</figcaption>
+            </figure>
+            <figure class="shot">
+                <img class="tall" src="./screenshots/journal.png" alt="每日手账窗口:记忆与小巧思" loading="lazy">
+                <figcaption>每日手账:它记得你们之间发生过什么</figcaption>
+            </figure>
+            <figure class="shot">
+                <img class="tall" src="./screenshots/panel-timeline.png" alt="行为时间线面板:每步操作留痕可回溯" loading="lazy">
+                <figcaption>行为时间线:干过的活每步留痕,一键回溯</figcaption>
+            </figure>
+            <figure class="shot">
+                <img class="tall" src="./screenshots/panel-risk.png" alt="工具风险分级面板:审批策略随你调" loading="lazy">
+                <figcaption>工具风险面板:哪些自动跑、哪些先问,由你定</figcaption>
+            </figure>
+        </div>
+    </div>
+</section>
+
+<section id="download">
+    <div class="wrap">
+        <h2 class="sec-title">下载</h2>
+        <p class="sec-sub">安装即用,语音识别模型与运行时都打包在内</p>
+        <div class="platforms">
+            <table>
+                <tr><th>平台</th><th>安装包</th><th>本地语音识别</th></tr>
+                <tr><td>Windows x64</td><td><a class="ok" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">.exe (NSIS)</a></td><td class="ok">✅</td></tr>
+                <tr><td>macOS Apple Silicon</td><td><a class="ok" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">.dmg</a></td><td class="ok">✅</td></tr>
+                <tr><td>Linux x64</td><td><a class="ok" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">.deb</a></td><td class="ok">✅</td></tr>
+                <tr><td>macOS Intel</td><td class="no">暂不支持</td><td class="no">—</td></tr>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section>
+    <div class="wrap">
+        <h2 class="sec-title">在你自己的电脑上跑</h2>
+        <p class="sec-sub">所有对话与记忆都留在本地 —— Tauri 2 桌面壳 + FastAPI 后端 + 自研 Agent SDK</p>
+        <div class="arch">
+            <div class="layer"><b>Tauri 2 桌面壳</b> — <span>Vue 3 + TypeScript + naive-ui 界面 · PixiJS 渲染桌宠 · 透明窗口 / 鼠标穿透 / 多窗口</span></div>
+            <div class="layer"><b>FastAPI 后端</b> — <span>流式对话 · 审批卡 · 会话 · Checkpoint · 定时任务 · 语音</span></div>
+            <div class="layer"><b>Symbix Agent SDK</b> — <span>Agent 循环 · 31 工具 · 风险分级 · 记忆 RAG · 技能 · MCP · OCR 兜底</span></div>
+            <div class="layer"><b>本地数据</b> — <span>SQLite 记忆与手账 · 行为时间线 · 一键回溯还原</span></div>
+        </div>
+    </div>
+</section>
+
+<div class="cta-final">
+    <div class="wrap">
+        <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+        <h2>让 AI 陪你生活,也替你干活。</h2>
+        <p>免费开源,MIT 协议。</p>
+        <div class="cta">
+            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>立即下载</a>
+            <a class="btn btn-ghost" href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>查看源码</a>
+        </div>
+    </div>
+</div>
+
+<footer>
+    <div class="wrap">
+        <a href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener">GitHub</a>
+        · <a href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">Releases</a>
+        · MIT License
+        · Built with Tauri · Vue · FastAPI · PixiJS
+    </div>
+</footer>
+
+<script>
+// 亮暗切换:记忆选择(localStorage),与 theme.ts 的 data-theme 约定一致
+(function () {
+    var root = document.documentElement;
+    var KEY = 'symbix-landing-theme';
+    var btn = document.getElementById('theme-toggle');
+    var sun = document.getElementById('icon-sun');
+    var moon = document.getElementById('icon-moon');
+    function apply(mode) {
+        root.setAttribute('data-theme', mode);
+        try { localStorage.setItem(KEY, mode); } catch (e) {}
+        var dark = mode === 'dark';
+        sun.style.display = dark ? 'block' : 'none';
+        moon.style.display = dark ? 'none' : 'block';
+        btn.setAttribute('aria-label', dark ? '切换到亮色模式' : '切换到暗色模式');
+    }
+    apply(root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+    btn.addEventListener('click', function () {
+        apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+})();
+</script>
+
+</body>
+</html>

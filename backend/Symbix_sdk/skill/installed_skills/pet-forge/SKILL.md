@@ -40,6 +40,8 @@ description: >-
 
 ```
 1. 读规范(必要时):references/rig-spec.md、references/keyframe-spec.md
+1.5. 可选草稿模式:形象描述模糊/用户在犹豫时,用内置 MCP pixeldraw 画像素草稿给用户看,
+      满意后转录成 base.svg —— 协议见 references/pixeldraw-draft.md;描述明确则跳过
 2. 自己产出 base.svg(部件化 rig)→ 可用 references/prompt-templates.md 的模板作参考
 3. 自己产出 states.json(6 状态动画规则)→ 参考 keyframe-spec 白名单
 4. 脚本校验:
@@ -144,7 +146,7 @@ python scripts/pack_theme.py \
 
 ## Agent 执行清单
 
-1. **读规范**(需要时):`references/rig-spec.md`、`references/keyframe-spec.md`
+1. **读规范**(需要时):`references/rig-spec.md`、`references/keyframe-spec.md`;形象模糊时读 `references/pixeldraw-draft.md` 走草稿模式
 2. **自己写 base.svg**(部件化 rig,`<g id="...">` + `var(--pet-*)` 颜色,viewBox `0 0 192 208`)
 3. **自己写 states.json**(6 状态:idle/listening/happy/concerned/sleeping/waking,动画名白名单)
 4. **跑 `validate_rig`**;失败 → 把错误塞回自己思路改,重试(≤3 次)
@@ -171,6 +173,7 @@ python scripts/pack_theme.py \
 ## 参考文档
 
 - `references/rig-spec.md` — SVG 几何与安全
+- `references/pixeldraw-draft.md` — pixeldraw MCP 草稿模式(画草稿→用户确认→转录成 rig)
 - `references/keyframe-spec.md` — 状态与动画白名单
 - `references/prompt-templates.md` — 模板(供你参考,不再由脚本调 LLM)
 - `references/qa-rubric.md` — 人类维护者检查清单
