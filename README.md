@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="#-english">English</a> | <a href="#中文">中文</a>
+  <a href="README_EN.md">English</a> | <a href="#中文">中文</a>
 </p>
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -82,26 +82,23 @@ Symbix 把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己�
 
 **设置界面**
 
-![设置 - 通用](docs/screenshots/settings-general.png)
-![设置 - 语音](docs/screenshots/settings-voice.png)
-![设置 - 提示词](docs/screenshots/settings-prompt.png)
-![设置 - 模型](docs/screenshots/settings-model.png)
-![设置 - 其它](docs/screenshots/settings-misc.png)
+| | | |
+| --- | --- | --- |
+| <img src="docs/screenshots/settings-general.png" width="440"> | <img src="docs/screenshots/settings-voice.png" width="440"> | <img src="docs/screenshots/settings-prompt.png" width="440"> |
+| <img src="docs/screenshots/settings-model.png" width="440"> | <img src="docs/screenshots/settings-misc.png" width="440"> | |
 
 **模型设置**
 
-![模型 1](docs/screenshots/model-setting-1.png)
-![模型 2](docs/screenshots/model-setting-2.png)
+| | |
+| --- | --- |
+| <img src="docs/screenshots/model-setting-1.png" width="440"> | <img src="docs/screenshots/model-setting-2.png" width="440"> |
 
-**聊天侧栏**（左侧栏按钮从上到下）
+**聊天侧栏**（从上到下）
 
-1. 文件浏览器 —— 打开工作区，查看并编辑文件 ![文件](docs/screenshots/panel-files.png)
-2. Skill 管理 ![Skill](docs/screenshots/panel-skill.png)
-3. MCP 管理 ![MCP](docs/screenshots/panel-mcp.png)
-4. 本地工具 ![本地工具](docs/screenshots/panel-native-tools.png)
-5. 行为时间线（回溯 / 详情） ![时间线](docs/screenshots/panel-timeline.png)
-6. 工具风险 ![风险](docs/screenshots/panel-risk.png)
-7. 定时任务 ![定时](docs/screenshots/panel-jobs.png)
+| | | | |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/panel-files.png" width="290"><br><sub>文件浏览器</sub> | <img src="docs/screenshots/panel-skill.png" width="290"><br><sub>Skill 管理</sub> | <img src="docs/screenshots/panel-mcp.png" width="290"><br><sub>MCP 管理</sub> | <img src="docs/screenshots/panel-native-tools.png" width="290"><br><sub>本地工具</sub> |
+| <img src="docs/screenshots/panel-timeline.png" width="290"><br><sub>行为时间线</sub> | <img src="docs/screenshots/panel-risk.png" width="290"><br><sub>工具风险</sub> | <img src="docs/screenshots/panel-jobs.png" width="290"><br><sub>定时任务</sub> | |
 
 </details>
 
@@ -147,133 +144,9 @@ npm run tauri dev    # 桌面应用
 ## 🙏 致谢
 
 - [PixiJS](https://pixijs.com/) · [Tauri](https://tauri.app/) · [naive-ui](https://www.naiveui.com/) · [FastAPI](https://fastapi.tiangolo.com/) · [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
-- [linux do 社区](https://linux.do)
+- 友链: [linux do 社区](https://linux.do)
 
 **Symbix — 让 AI 陪你生活,也替你干活。** 🐾
 
 </div>
 
----
-
-<div id="-english">
-
-Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and it finds the tools, does the work, and hands you a finished, formatted Word / PPT / Excel / PDF file. Everything is conversation-driven, every step is logged and reversible — and all chats and memories stay on your machine.
-
-**Stack**: Tauri 2 desktop shell (Vue 3 + PixiJS) + FastAPI backend + a custom Python Agent SDK (31 tools / memory / skills / MCP / scheduled jobs).
-
-## ✨ Highlights
-
-- 📦 **Delivers finished files, not just answers** — formatted Word / PPT / Excel / PDF, ready to send
-- 🧬 **Reads and writes any format** — papers, reports, spreadsheets, handouts; scanned PDFs fall back to OCR
-- 🤖 **One sentence, whole pipeline** — search → download → deep-read → summarize → deliver, fully unattended
-- 🎭 **Multi-agent teamwork** — complex tasks spawn parallel sub-agents, each with its own model
-- 🙋 **Asks before it acts** — multi-step plans need your approval; file edits and commands pop a confirmation card; or flip on auto-pilot and let it run
-- 🗂️ **Everything is traceable** — every step logged with a readable diff; undo any step, even newly created files
-- 💾 **Remembers you** — long-term memory + daily journal; no re-introductions after restart
-- ⏰ **Scheduled jobs in plain words** — "remind me to take my meds at 8 every morning" just works; failures auto-retry
-- 📊 **Token usage at a glance** — per-round usage, daily / weekly / monthly charts
-- 🎨 **Makes its own skins** — describe a look; it draws, animates, and packages an importable pet skin
-- 🔊 **Listens and speaks** — local speech recognition (nothing leaves your machine); streaming sentence-by-sentence TTS
-- 💬 **It comes to you** — it strikes up conversation on its own; half the time it digs up an old memory ("that pet you wanted to make — how did it go?"); click the bubble and it opens the chat, having spoken first, waiting for you 💛
-- 🧩 **Extensible** — skill packs + MCP tools plug in with the same permissions and approvals as built-ins
-
-## 🎯 What sets it apart
-
-| | Typical agent / chatbot | Symbix |
-| --- | --- | --- |
-| Output | A paragraph, a terminal dump — formatting is on you | Finished, formatted Word / PPT / Excel / PDF |
-| Acting | Too timid to act, or acts without asking | Read-only runs freely; edits & commands pop an approval card |
-| Mistakes | Start over | Every step logged, readable diffs, undo to any point |
-| Memory | Forgotten when the tab closes | Long-term memory + daily journal; grows familiar — and finds its own topics from what it remembers |
-| Data | Chats live in the cloud | Chats, memory, attachments all local; deleting a session wipes its attachments |
-| Form | A browser tab | A pet living on your desktop: transparent, clickable, skinnable |
-
-## 🧪 What it can do — a few examples
-
-- 📚 Say "catch me up on recent work in XX field" → it searches, downloads, deep-reads papers (parallel sub-agents), and hands you a formatted Chinese review with comparison tables
-- 📁 Say "summarize the reports in this folder into one PPT slide deck" → it reads everything and delivers
-- ⏰ Casually mention "remind me to take my meds at 8 every morning" → remembered and executed on time, with auto-retry on failure
-- 🎨 "I want a blue pixel-art cat pet" → it draws the sprite, animates it, and packages an importable skin
-- 🌐 "Watch this page and tell me when it changes" → with Playwright plugged in, it drives a real browser
-
-## 📸 Screenshots
-
-| Main UI | Skin Studio |
-| --- | --- |
-| <img src="docs/screenshots/demo.gif" width="440"> | <img src="docs/screenshots/skin-studio.png" width="440"> |
-
-| Chat | Danmaku |
-| --- | --- |
-| <img src="docs/screenshots/chat.png" width="440"> | <img src="docs/screenshots/danmaku.png" width="440"> |
-| <img src="docs/screenshots/journal.png" width="440"> | |
-
-<details>
-<summary><b>More screenshots (settings / side panels)</b></summary>
-
-**Settings**
-
-![Settings - General](docs/screenshots/settings-general.png)
-![Settings - Voice](docs/screenshots/settings-voice.png)
-![Settings - Prompt](docs/screenshots/settings-prompt.png)
-![Settings - Model](docs/screenshots/settings-model.png)
-![Settings - Misc](docs/screenshots/settings-misc.png)
-
-**Model settings**
-
-![Model 1](docs/screenshots/model-setting-1.png)
-![Model 2](docs/screenshots/model-setting-2.png)
-
-**Chat sidebar** (top to bottom)
-
-1. File browser ![Files](docs/screenshots/panel-files.png)
-2. Skills ![Skills](docs/screenshots/panel-skill.png)
-3. MCP ![MCP](docs/screenshots/panel-mcp.png)
-4. Native tools ![Tools](docs/screenshots/panel-native-tools.png)
-5. Behavior timeline (revert / details) ![Timeline](docs/screenshots/panel-timeline.png)
-6. Tool risk ![Risk](docs/screenshots/panel-risk.png)
-7. Scheduled jobs ![Jobs](docs/screenshots/panel-jobs.png)
-
-</details>
-
-## 🚀 Getting Started
-
-### Download (recommended)
-
-Grab an installer from [Releases](../../releases) — speech models and runtimes are bundled:
-
-| Platform | Installer | Local STT |
-| --- | --- | --- |
-| Windows x64 | `.exe` | ✅ |
-| macOS Apple Silicon | `.dmg` | ✅ |
-| Linux x64 | `.deb` | ✅ |
-| macOS Intel | Not available (build from source with cloud STT) | — |
-
-### Run from source
-
-```bash
-# Backend (Python 3.10+, tested on 3.13)
-cd backend
-pip install -r requirements.txt
-python main.py           # http://127.0.0.1:8000, auto-falls back to a nearby port
-
-# Frontend
-cd Symbix_frontend
-npm install
-npm run dev          # browser dev
-npm run tauri dev    # desktop app
-```
-
-> For local speech recognition (SenseVoice): download the native stack for your platform from the `assets-v1` release and place it under `backend/Symbix_sdk/stt/multi-platform/<platform>/`. Without it, cloud STT is used (Groq offers a free tier).
-
-### Configure a model
-
-Pick a provider in the Model Setting panel and paste your API key. 9 vendor presets built in; any OpenAI-compatible gateway works via a custom `base_url`. TTS supports Edge TTS, OpenAI-compatible APIs, and self-hosted servers (GPT-SoVITS one-click packages connect directly).
-
-## 📚 Docs
-
-- [`当前已实现的功能.md`](./当前已实现的功能.md) — feature changelog & engineering notes (development log)
-- Landing page: [`docs/index.html`](./docs/index.html) (GitHub Pages)
-
-**Symbix — an AI companion that lives with you, and works for you.** 🐾
-
-</div>
