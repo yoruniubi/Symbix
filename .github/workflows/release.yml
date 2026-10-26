@@ -81,7 +81,9 @@ jobs:
         run: |
           EXE=backend/dist/SymbixBackend/SymbixBackend
           [ -f "$EXE.exe" ] && EXE="$EXE.exe"
-          SYMBIX_PORT=18912 "$EXE" > backend_smoke.log 2>&1 &
+          # PYTHONIOENCODING 双保险:Windows runner 子进程继承 cp1252,
+          # 冻结后端在 main.py reconfigure 之前的任何输出也不至于崩
+          PYTHONIOENCODING=utf-8 SYMBIX_PORT=18912 "$EXE" > backend_smoke.log 2>&1 &
           PID=$!
           for i in $(seq 1 30); do
             if curl -fsS --noproxy '*' http://127.0.0.1:18912/ > /dev/null 2>&1; then

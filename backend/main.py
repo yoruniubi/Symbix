@@ -1,5 +1,14 @@
 from contextlib import asynccontextmanager
 import asyncio
+import sys as _sys
+
+# Windows 控制台默认 cp1252,中文日志(如「SDK 运行时目录已加入 PATH」)会
+# UnicodeEncodeError 直接崩。必须在任何中文 print 之前统一兜底。
+# 治本:所有启动日志/后续运行时日志一处修复全覆盖。
+for _s in (_sys.stdout, _sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
