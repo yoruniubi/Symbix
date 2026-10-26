@@ -52,6 +52,11 @@ class DanmakuConfigManager:
     def save(self) -> None:
         with self._lock:
             data = self.cfg.to_dict()
+            # 冻结(PYZ)模式下 __file__ 拼出的 .. 路径中间目录不在磁盘上,
+            # open 前必须先建目录(与 mcp_config._load 同一约定)
+            _d = os.path.dirname(self.path)
+            if _d:
+                os.makedirs(_d, exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

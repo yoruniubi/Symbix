@@ -35,6 +35,10 @@ class VoiceConfigManager:
     def save(self) -> None:
         with _lock:
             data = {"tts": self.tts.to_dict(), "stt": self.stt.to_dict()}
+            # 同 danmaku_config:冻结模式下中间目录可能不在磁盘,先建目录
+            _d = os.path.dirname(self.path)
+            if _d:
+                os.makedirs(_d, exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

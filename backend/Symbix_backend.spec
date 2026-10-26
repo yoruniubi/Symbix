@@ -19,6 +19,12 @@ providers.json / uploads / installed_skills 等)目前仍落在 _MEIPASS 里,one
 import os
 import sys
 
+# Windows runner 控制台默认 cp1252,spec 里的中文 print 会 UnicodeEncodeError
+# (PyInstaller spec 本质是 Python 脚本,同样需要强制 UTF-8)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 BACKEND = os.path.abspath(SPECPATH)          # backend/
