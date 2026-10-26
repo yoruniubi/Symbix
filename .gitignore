@@ -108,5 +108,3 @@ backend/build/
 backend/dist/
 # release_assets.py pack 的产物(资产 zip + manifest,上传资产 Release 后可删)
 backend/dist-assets/
-
-*.spec

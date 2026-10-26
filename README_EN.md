@@ -26,6 +26,7 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 - 🎨 **Makes its own skins** — describe a look; it draws, animates, and packages an importable pet skin
 - 🔊 **Listens and speaks** — local speech recognition (nothing leaves your machine); streaming sentence-by-sentence TTS
 - 💬 **It comes to you** — it strikes up conversation on its own; half the time it digs up an old memory ("that pet you wanted to make — how did it go?"); click the bubble and it opens the chat, having spoken first, waiting for you 💛
+- ☕ **Warmth in the details** — completion sounds are soft and soothing (breeze, dew, ember… over a dozen gentle presets, not a shrill "ding"); the UI theme is warm cream, and even dark mode stays warm charcoal — no cold tech gray
 - 🧩 **Extensible** — skill packs + MCP tools plug in with the same permissions and approvals as built-ins
 
 ## 🎯 What sets it apart
@@ -38,6 +39,7 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 | Memory | Forgotten when the tab closes | Long-term memory + daily journal; grows familiar — and finds its own topics from what it remembers |
 | Data | Chats live in the cloud | Chats, memory, attachments all local; deleting a session wipes its attachments |
 | Form | A browser tab | A pet living on your desktop: transparent, clickable, skinnable |
+| Feel | A productivity tool — use it, close it | Companionship: soft breeze-like completion tones, a warm theme, and it comes to talk when you're idle |
 
 ## 🧪 What it can do — a few examples
 
