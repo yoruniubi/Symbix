@@ -288,4 +288,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Windows runner 控制台默认 cp1252,中文 print 会 UnicodeEncodeError
+    # 强制 UTF-8 输出,macOS/Linux 无感
+    for _s in (sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())
