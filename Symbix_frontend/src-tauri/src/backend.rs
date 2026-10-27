@@ -657,11 +657,19 @@ pub fn shutdown(app: &AppHandle) {
     // uvicorn / MCP server 都可能是它的子进程,/T 连根收,免得留下孤儿占着端口
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW:taskkill 是控制台程序,由无窗口的 GUI 进程拉起时
+        // Windows 会给它新建一个控制台 → 退出瞬间黑框一闪。隐身掉。
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // spawn 而不是 status:整棵树枚举 + 强杀可能要 1~2 秒,而这里跑在
+        // RunEvent::Exit 的主线程上,阻塞等待会让用户觉得「点了退出没反应」。
+        // taskkill 是独立进程,本进程退出后它照样跑完,孤儿照样被收。
         let _ = Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status();
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
     }
     let _ = child.kill();
     let _ = child.wait();
