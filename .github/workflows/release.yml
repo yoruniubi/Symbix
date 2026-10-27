@@ -58,7 +58,10 @@ jobs:
             j.version = process.env.VER;
             fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
           "
-          sed -i 's/^version = ".*"/version = "'"$VER"'"/' src-tauri/Cargo.toml
+          # -i.bak 兼容 BSD/GNU sed(macOS runner 是 BSD,-i 必须带后缀参数);
+          # node 原生改 Cargo.toml 更稳,但行级 sed 更直观,保留 .bak 中转即可
+          sed -i.bak 's/^version = ".*"/version = "'"$VER"'"/' src-tauri/Cargo.toml
+          rm -f src-tauri/Cargo.toml.bak
           grep '"version"' src-tauri/tauri.conf.json
           grep '^version' src-tauri/Cargo.toml
         env:
