@@ -530,6 +530,14 @@ onMounted(async () => {
     const seed = event.payload || {}
     const line = String(seed.text || '').trim()
     if (!line) return
+    // Home 侧不知道本窗什么时候才注册好监听,所以同一个种子会重发几次(带同一个 ts)。
+    // 这里只认第一次:否则一次点击会插入好几条一模一样的搭话气泡。
+    const ts = Number(seed.ts) || 0
+    if (ts && ts === lastProactiveSeedTs) {
+      ackProactiveSeed(ts)
+      return
+    }
+    if (ts) lastProactiveSeedTs = ts
     // 无活跃会话时先建一个,保证气泡有落点且后续用户发言归入同一会话
     if (!activeSessionId.value) {
       const newId = crypto.randomUUID()
@@ -547,7 +555,12 @@ onMounted(async () => {
       content: line,
       proactive: true,   // 标记为搭话气泡(非回复),前端可按需区分样式
     })
+    // 必须把 messages 回写进 session:侧边历史列表读的是 session.messages,
+    // 只 persistSessions() 会把「只有一条搭话」的会话存成空会话(点进去是欢迎页)。
+    const active = sessions.value.find(s => s.id === activeSessionId.value)
+    if (active) active.messages = [...messages.value]
     persistSessions()
+    ackProactiveSeed(ts)
     void nextTick(() => scrollToBottom())
     // 同步写进后端会话记忆:否则用户接话时模型不知道它刚说过这句
     fetch(`${BACKEND_URL}/companion/proactive/seed`, {
@@ -861,6 +874,8 @@ async function uploadRefImage(ref: { dataUrl: string; name: string; mime: string
 // 用于跨窗口事件取消订阅
 let unlistenSkinGen: (() => void) | null = null
 let unlistenProactiveSeed: (() => void) | null = null
+// 已处理过的搭话种子 ts:同一个种子被重发时只认第一次
+let lastProactiveSeedTs = 0
 
 
 /** 处理 SkinWindow 传过来的皮肤生成请求 payload（发一条预设消息给 AI） */
@@ -907,6 +922,12 @@ function publishAgentStatus(status: AgentStatus, bubble?: string) {
     // 浏览器开发模式没有 Tauri event 总线时,聊天本身仍应正常工作。
     console.debug('[agent-status] event unavailable:', error)
   })
+}
+
+/** 告诉 Home「这条搭话种子已经入会话了」,让它停止重发(见 Home.openChatFromProactive)。 */
+function ackProactiveSeed(ts: number) {
+  if (!ts) return
+  void emitTauri('proactive-seed-ack', { ts }).catch(() => {})
 }
 
 /**

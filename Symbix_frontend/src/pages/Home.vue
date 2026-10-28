@@ -1032,17 +1032,34 @@ let unlistenProactiveChat: UnlistenFn | null = null
 
 // 点击弹幕窗里的主动搭话气泡 → 打开聊天窗,并把搭话内容作为开场上下文
 async function openChatFromProactive(payload: { text?: string; memory?: string }) {
+  const { emit, listen: listenEv } = await import('@tauri-apps/api/event')
   await openChatWindow()
-  // 等窗口就绪后把上下文发给聊天窗(简要重试,窗口初始化期间可能还没监听)
   const seed = {
     text: payload.text || '',
     memory: payload.memory || '',
     ts: Date.now(),
   }
-  const { emit } = await import('@tauri-apps/api/event')
-  for (const delay of [300, 900, 1800]) {
-    await new Promise((r) => setTimeout(r, delay))
-    await emit('proactive-chat-seed', seed)
+  // 聊天窗刚建时可能还没注册监听,所以隔一段时间重发几次。
+  // 但重发不能变成「多插几条」:聊天窗处理完会回 ack(带同一个 ts),收到就停;
+  // 聊天窗侧另有同 ts 去重做兜底(见 chat_window.vue)。
+  let acked = false
+  let unlistenAck: UnlistenFn | null = null
+  try {
+    unlistenAck = await listenEv<{ ts?: number }>('proactive-seed-ack', (ev) => {
+      if (ev.payload?.ts === seed.ts) acked = true
+    })
+  } catch (e) {
+    console.warn('[proactive] ack listen failed:', e)
+  }
+  try {
+    for (const delay of [300, 900, 1800]) {
+      if (acked) break
+      await new Promise((r) => setTimeout(r, delay))
+      if (acked) break
+      await emit('proactive-chat-seed', seed).catch(() => undefined)
+    }
+  } finally {
+    unlistenAck?.()
   }
 }
 
@@ -1345,8 +1362,8 @@ onUnmounted(() => {
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
   display: -webkit-box;
   -webkit-box-orient: vertical;
+  line-clamp: 3;
   -webkit-line-clamp: 3;
-  line-clamp: calc();
   overflow: hidden;
   line-height: 1.45;
 }

@@ -73,6 +73,7 @@ export default {
     generating: 'AI is generating response...',
     retrying: 'Upstream interrupted, regenerating',
     proactiveBadge: 'It came to say hi',
+    tapToChat: 'Tap to chat',
     actModeReactive: 'Auto',
     actModeReactiveTip: 'Agent auto-routed this turn to a direct reply (no plan)',
     actModePlan: 'Plan',

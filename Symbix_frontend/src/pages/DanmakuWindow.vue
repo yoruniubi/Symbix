@@ -12,7 +12,7 @@
       >
         {{ d.text }}
         <!-- 主动搭话气泡带「点击开聊」提示 -->
-        <span v-if="d.kind === 'proactive'" class="dm-hint">💬</span>
+        <span v-if="d.kind === 'proactive'" class="dm-hint">{{ t('chat.tapToChat') }}</span>
       </div>
     </div>
   </div>
@@ -20,12 +20,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow, cursorPosition } from '@tauri-apps/api/window'
+import { useI18n } from 'vue-i18n'
 // 后端端口是动态的,SSE(EventSource)不走 fetch 改写,必须直接引用
 import { BACKEND_URL } from '@/utils/backend'
 
-// 全屏透明弹幕窗口:鼠标点击穿透(依赖后端已启用 setIgnoreCursorEvents)
+// 全屏透明弹幕窗口。
+// 主动搭话要能点,但整窗一旦不穿透就会吃掉**整块屏幕**的点击,所以做法是:
+// 平时保持穿透,只在鼠标压在主动搭话气泡上时(轮询命中测试)临时解除,移开立刻恢复。
+// 气泡本身仍用 CSS 动画飘(和普通弹幕同一套 keyframes),所以方向和速度天然一致。
+
+const { t } = useI18n()
+
 interface DanmakuItem {
   id: number
   text: string
@@ -37,46 +43,126 @@ interface DanmakuItem {
 
 const activeDanmaku = ref<DanmakuItem[]>([])
 let nextId = 1
-let unlistenSSE: UnlistenFn | null = null
-let eventSourceConnected = false
+let es: EventSource | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+/** 已处理过的事件 id:防同一条事件插两次(SSE 重连/多连接时最容易发生) */
+const seenEventIds = new Set<string>()
 
-// ---- SSE 连接:订阅后端 /pet/events,收到 type=danmaku 即飘字 ----
-function connectSSE() {
-  if (eventSourceConnected) return
-  eventSourceConnected = true
-  const es = new EventSource(`${BACKEND_URL}/pet/events`)
-  // 后端 format_sse 发的是命名事件(event: danmaku),必须用 addEventListener 接收
-  es.addEventListener('danmaku', (ev) => {
-    try {
-      const data = JSON.parse((ev as MessageEvent).data)
-      if (data.text) {
-        spawnDanmaku(String(data.text), String(data.kind || 'idle'))
-      }
-    } catch { /* ignore */ }
+// ---- 命中测试:决定这一刻要不要解除穿透 ----
+const POLL_MS = 70
+/** 命中框外扩几个像素,避免边缘疯狂抖动 */
+const HIT_MARGIN = 6
+let pollTimer: ReturnType<typeof setInterval> | null = null
+/** 当前窗口是否处于穿透状态 */
+let ignoring = true
+/** cursorPosition 不可用(权限/平台问题)时置位:退化成「只显示不可点」,绝不能锁屏 */
+let pollBroken = false
+let winOriginX = 0
+let winOriginY = 0
+let dpr = 1
+
+async function applyIgnore(through: boolean) {
+  ignoring = through
+  try {
+    await getCurrentWindow().setIgnoreCursorEvents(through)
+  } catch (e) {
+    console.warn('[danmaku] setIgnoreCursorEvents failed:', e)
+  }
+}
+
+/** 鼠标是否压在某个主动搭话气泡上 */
+async function pollHit(): Promise<void> {
+  if (pollBroken) return
+  const items = document.querySelectorAll<HTMLElement>('.danmaku-item.dm-proactive')
+  if (!items.length) {
+    // 屏上没有可点的气泡 → 必须穿透
+    if (!ignoring) await applyIgnore(true)
+    return
+  }
+  let cur: { x: number; y: number }
+  try {
+    cur = await cursorPosition()
+  } catch (e) {
+    pollBroken = true
+    if (pollTimer) clearInterval(pollTimer)
+    pollTimer = null
+    console.warn('[danmaku] cursorPosition 不可用,主动搭话气泡改为只展示不响应点击:', e)
+    await applyIgnore(true)
+    return
+  }
+  // cursorPosition 是屏幕物理像素,换算成窗口内的 CSS 像素再和 DOM 矩形比
+  const x = (cur.x - winOriginX) / dpr
+  const y = (cur.y - winOriginY) / dpr
+  let hit = false
+  items.forEach((el) => {
+    if (hit) return
+    const r = el.getBoundingClientRect()
+    if (
+      x >= r.left - HIT_MARGIN && x <= r.right + HIT_MARGIN
+      && y >= r.top - HIT_MARGIN && y <= r.bottom + HIT_MARGIN
+    ) {
+      hit = true
+    }
   })
-  // 主动搭话:可点击气泡,点击后打开聊天窗并带入上下文
+  if (hit === !ignoring) return
+  await applyIgnore(!hit)
+}
+
+async function startHitTest() {
+  try {
+    const win = getCurrentWindow()
+    dpr = (await win.scaleFactor()) || 1
+    const pos = await win.outerPosition()
+    winOriginX = pos.x
+    winOriginY = pos.y
+  } catch (e) {
+    console.warn('[danmaku] hit test init failed:', e)
+  }
+  pollTimer = setInterval(() => { void pollHit() }, POLL_MS)
+}
+
+// ---- SSE 连接:订阅后端 /pet/events ----
+function connectSSE() {
+  if (es) return
+  es = new EventSource(`${BACKEND_URL}/pet/events`)
+  // 后端 format_sse 发的是命名事件(event: danmaku / proactive),必须用 addEventListener
+  es.addEventListener('danmaku', (ev) => {
+    handleEvent((ev as MessageEvent).data)
+  })
   es.addEventListener('proactive', (ev) => {
-    try {
-      const data = JSON.parse((ev as MessageEvent).data)
-      if (data.text) {
-        spawnDanmaku(String(data.text), 'proactive', data.memory ? String(data.memory) : undefined)
-      }
-    } catch { /* ignore */ }
+    handleEvent((ev as MessageEvent).data)
   })
   // onmessage 兜底:兼容不带 event 字段的默认消息
-  es.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data)
-      if (data.type === 'danmaku' && data.text) {
-        spawnDanmaku(String(data.text), String(data.kind || 'idle'))
-      }
-    } catch { /* ignore */ }
-  }
+  es.onmessage = (ev) => handleEvent(ev.data)
   es.onerror = () => {
-    eventSourceConnected = false
-    try { es.close() } catch { /* ignore */ }
-    setTimeout(() => connectSSE(), 3000)
+    es?.close()
+    es = null
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = setTimeout(() => connectSSE(), 3000)
   }
+}
+
+/** 统一入口:去重后按 type 分派 */
+function handleEvent(raw: string) {
+  let data: any
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    return
+  }
+  if (!data?.text) return
+  // 同一条事件只认一次(后端每条事件都带 id;老版本没有就退化成 ts+text)
+  const key = String(data.id || `${data.ts ?? ''}|${data.text}`)
+  if (seenEventIds.has(key)) return
+  seenEventIds.add(key)
+  if (seenEventIds.size > 200) {
+    // 只保留最近的一段,避免长跑期间无限增长
+    const keep = Array.from(seenEventIds).slice(-100)
+    seenEventIds.clear()
+    keep.forEach((k) => seenEventIds.add(k))
+  }
+  const kind = String(data.type === 'proactive' ? 'proactive' : data.kind || 'idle')
+  spawnDanmaku(String(data.text), kind, data.memory ? String(data.memory) : undefined)
 }
 
 function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
@@ -87,41 +173,26 @@ function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
     kind,
     memory,
     top: 12 + Math.random() * 60, // 12%~72% 高度
-    duration: kind === 'proactive' ? 16000 : 8000 + Math.random() * 4000, // 主动搭话停留更久,留出点击时间
+    duration: kind === 'proactive' ? 16000 : 8000 + Math.random() * 4000,
   }
   activeDanmaku.value.push(item)
-  // 主动搭话气泡存在期间解除鼠标穿透(否则点不到);消失后恢复
-  if (kind === 'proactive') void setClickThrough(false)
-  // 动画结束后移除
   setTimeout(() => {
     activeDanmaku.value = activeDanmaku.value.filter((d) => d.id !== id)
-    if (kind === 'proactive' && !activeDanmaku.value.some((d) => d.kind === 'proactive')) {
-      void setClickThrough(true)
-    }
   }, item.duration + 200)
-}
-
-/** 切换弹幕窗鼠标穿透(true = 穿透) */
-async function setClickThrough(through: boolean) {
-  try {
-    await getCurrentWindow().setIgnoreCursorEvents(through)
-  } catch (e) {
-    console.warn('[danmaku] setIgnoreCursorEvents failed:', e)
-  }
 }
 
 /** 点击主动搭话气泡 → 广播给 Home 窗打开聊天窗并带入上下文 */
 function onDanmakuClick(d: DanmakuItem) {
   if (d.kind !== 'proactive') return
   import('@tauri-apps/api/event').then(({ emit }) => {
-    emit('proactive-open-chat', { text: d.text, memory: d.memory || '' })
+    emit('proactive-open-chat', { text: d.text, memory: d.memory || '' }).catch(() => undefined)
   })
-  // 立即收掉气泡并恢复穿透
   activeDanmaku.value = activeDanmaku.value.filter((x) => x.id !== d.id)
-  void setClickThrough(true)
+  // 点完立刻恢复穿透,不等下一轮轮询
+  void applyIgnore(true)
 }
 
-/** kind → 样式类:完成 / 出错 / 时段问候 各有强调色,主动搭话强调+可点,其余走默认柔和 */
+/** kind → 样式类:完成 / 出错 / 时段问候 / 主动搭话 各有强调,其余走默认柔和 */
 function kindClass(kind: string): string {
   if (kind === 'complete') return 'dm-complete'
   if (kind === 'error') return 'dm-error'
@@ -138,31 +209,30 @@ function itemStyle(d: DanmakuItem) {
 }
 
 onMounted(async () => {
+  const win = getCurrentWindow()
   try {
-    const win = getCurrentWindow()
-    // 开启鼠标点击穿透(权限已在 capabilities 配置)
+    // 默认穿透 + 不可聚焦(权限已在 capabilities 配置)
     await win.setIgnoreCursorEvents(true)
     await win.setFocusable(false)
   } catch (e) {
-    console.warn('[danmaku] setIgnoreCursorEvents failed:', e)
+    console.warn('[danmaku] window init failed:', e)
   }
-  // 订阅同窗口 Tauri 事件(Home 窗口转发弹幕)
-  try {
-    unlistenSSE = await listen<{ text: string; kind?: string }>('danmaku-text', (event) => {
-      if (event.payload?.text) spawnDanmaku(event.payload.text, event.payload.kind || 'idle')
-    })
-  } catch (e) {
-    console.warn('[danmaku] listen failed:', e)
-  }
-  // 直接连后端 SSE(与 Home 同一总线)
   connectSSE()
+  await startHitTest()
 })
 
 onUnmounted(() => {
-  if (unlistenSSE) {
-    unlistenSSE()
-    unlistenSSE = null
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  reconnectTimer = null
+  // 断开 SSE:否则重挂载后会有两条连接,同一条事件被处理两次(气泡会重复)
+  if (es) {
+    try { es.close() } catch { /* ignore */ }
+    es = null
   }
+  // 离场前确保恢复穿透
+  void applyIgnore(true)
 })
 </script>
 
@@ -172,7 +242,7 @@ onUnmounted(() => {
   inset: 0;
   background: transparent;
   overflow: hidden;
-  pointer-events: none; /* CSS 层也不吃事件,双保险 */
+  pointer-events: none; /* CSS 层默认不吃事件;主动搭话气泡单独放行 */
   user-select: none;
 }
 
@@ -239,10 +309,10 @@ onUnmounted(() => {
   border-color: var(--success, #4e9a6e);
 }
 
-/* 主动搭话:强调色 + 可点击(点击打开聊天窗) */
+/* 主动搭话:强调色 + 可点(鼠标压上来时窗才会临时解除穿透) */
 .dm-proactive {
   cursor: pointer;
-  pointer-events: auto; /* 父层 none,气泡自身可点 */
+  pointer-events: auto; /* 父层 none,气泡自身要能接住点击 */
   border-color: var(--accent-500);
   background: linear-gradient(
     135deg,
@@ -257,10 +327,13 @@ onUnmounted(() => {
 }
 .dm-proactive:hover {
   filter: brightness(1.05);
+  /* 鼠标压上来就暂停飘动,方便对准点击(此时窗已由命中测试解除穿透) */
+  animation-play-state: paused;
 }
 .dm-hint {
-  font-size: 15px;
-  opacity: 0.75;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.65;
 }
 @keyframes proactive-pulse {
   0%,

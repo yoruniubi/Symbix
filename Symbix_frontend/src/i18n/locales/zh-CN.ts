@@ -73,6 +73,7 @@ export default {
     generating: 'AI 正在生成回复...',
     retrying: '上游中断,正在重新生成',
     proactiveBadge: '它先来找你',
+    tapToChat: '点击开聊',
     actModeReactive: '自动',
     actModeReactiveTip: '本轮由后端自动判断为「直接回应」,不列计划',
     actModePlan: '计划',
