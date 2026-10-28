@@ -39,9 +39,6 @@
                   :placeholder="t('modelSetting.apiKeyPlaceholder')"
                 />
               </n-form-item>
-              <div v-if="backendHasKey && !form.apiKey" class="key-hint">
-                {{ t('modelSetting.keyFromBackend') }}
-              </div>
             </div>
             <div class="form-section">
               <n-form-item :label="t('modelSetting.baseUrl')" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
@@ -664,13 +661,6 @@ function handleReset() {
   margin-bottom: 22px;
 }
 
-.key-hint {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-top: -8px;
-  margin-bottom: 4px;
-}
 .form-section:last-of-type {
   margin-bottom: 0;
 }

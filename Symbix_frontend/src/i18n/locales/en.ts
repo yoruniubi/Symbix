@@ -728,7 +728,6 @@ export default {
     resetDone: 'Reset done',
     needApiKey: 'Please fill in the API Key first',
     needApiKeyAndBase: 'Please fill in the API Key and Base URL first',
-    keyFromBackend: 'Backend already has a saved key; leave empty to keep it (the key never goes back to the frontend, only model / base_url are synced)',
     needKeyToFetch: 'This action needs an API Key entered here (the key lives only in the backend by design)',
     connectionSuccess: 'Connected!',
     connectionFail: 'Connection failed: {msg}',

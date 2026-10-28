@@ -727,7 +727,6 @@ export default {
     resetDone: '已重置',
     needApiKey: '请先填写 API Key',
     needApiKeyAndBase: '请先填写 API Key 和 Base URL',
-    keyFromBackend: '后端已保存密钥,留空即保持不变(前端不持有密钥,仅同步 model / base_url)',
     needKeyToFetch: '该操作需要临时填入 API Key(密钥按设计只存在后端,不回传到前端)',
     connectionSuccess: '连接成功!',
     connectionFail: '连接失败:{msg}',
