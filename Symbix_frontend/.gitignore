@@ -12,9 +12,10 @@ dist
 dist-ssr
 *.local
 
-# Pet assets:皮肤成品(spritesheet.webp/base.svg/pet.json)总体积仅 ~5MB,
-# 且是桌宠默认形象的唯一来源 —— CI 构建必须能从 checkout 拿到,必须入库。
-# (若以后引入未压缩源图/大量皮肤导致仓库膨胀,再考虑 assets Release 方案)
+# Pet assets:内置默认皮肤 public/codex_pet/frieren 已在库中(CI 构建必须能从
+# checkout 拿到它,所以这个目录不能忽略)。
+# public/pixiv_pet 是 pet-forge 生成 / 用户导入的本地皮肤,不入库。
+public/pixiv_pet
 
 # Editor directories and files
 .vscode/*
