@@ -39,6 +39,9 @@
                   :placeholder="t('modelSetting.apiKeyPlaceholder')"
                 />
               </n-form-item>
+              <div v-if="backendHasKey && !form.apiKey" class="key-hint">
+                {{ t('modelSetting.keyFromBackend') }}
+              </div>
             </div>
             <div class="form-section">
               <n-form-item :label="t('modelSetting.baseUrl')" v-if="selectedProvider === 'custom' || currentProviderNeedsBase">
@@ -147,7 +150,7 @@ import { useApiClient } from '@/composables/useApiClient'
 const router = useRouter()
 const message = useMessage()
 const { t } = useI18n()
-const { settings, loadSettings, saveSettings, resetSettings } = useSettings()
+const { settings, loadSettings, saveSettings, resetSettings, syncFromBackend, backendHasKey } = useSettings()
 const { fetchModels, testConnection } = useApiClient()
 
 interface Provider {
@@ -338,8 +341,10 @@ function applySystemPromptPreset(preset: { label: string; text: string }) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadSettings()
+  // 后端 providers.json 已有配置时补齐 baseUrl/model(密钥不回传,仅用于消除误报)
+  await syncFromBackend()
   form.value = {
     apiKey: settings.value.apiKey || '',
     baseUrl: settings.value.baseUrl || '',
@@ -409,7 +414,7 @@ function selectProvider(p: Provider) {
 
 async function handleFetchModels() {
   if (!form.value.apiKey || !form.value.baseUrl) {
-    message.warning(t('modelSetting.needApiKeyAndBase'))
+    message.warning(t(backendHasKey.value && !form.value.apiKey ? 'modelSetting.needKeyToFetch' : 'modelSetting.needApiKeyAndBase'))
     return
   }
   fetchingModels.value = true
@@ -438,7 +443,7 @@ async function handleFetchModels() {
 
 async function handleTest() {
   if (!form.value.apiKey) {
-    message.warning(t('modelSetting.needApiKey'))
+    message.warning(t(backendHasKey.value ? 'modelSetting.needKeyToFetch' : 'modelSetting.needApiKey'))
     return
   }
   testing.value = true
@@ -455,7 +460,8 @@ async function handleTest() {
 const BACKEND_URL = 'http://127.0.0.1:8000'
 
 async function handleSave() {
-  saveSettings(form.value)
+  // 密钥框留空 = 沿用旧值(前端已有的 key 不因保存而被抹掉)
+  saveSettings({ ...form.value, apiKey: form.value.apiKey || settings.value.apiKey })
   // 同步 default provider 到后端 providers.json，让 generate_title / maybe_compress / pet-forge 等
   // 走非流式 chat() 的后台路径能拿到当前 model+key+base（否则会拿 providers.json 里旧 default dead value）。
   // 失败不影响前端已保存，仅提示警告。
@@ -656,6 +662,14 @@ function handleReset() {
 /* 表单项分组:三块之间用留白隔开 */
 .form-section {
   margin-bottom: 22px;
+}
+
+.key-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-top: -8px;
+  margin-bottom: 4px;
 }
 .form-section:last-of-type {
   margin-bottom: 0;

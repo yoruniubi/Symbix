@@ -195,7 +195,7 @@ import { fetch } from '@tauri-apps/plugin-http'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const messageUi = useMessage()
-const { settings, loadSettings, saveSettings } = useSettings()
+const { settings, loadSettings, saveSettings, syncFromBackend, backendHasKey } = useSettings()
 const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat'), t('home.petGreetingList')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
@@ -327,7 +327,8 @@ function resetUsage() {
   lastUsage.value = null
   sessionUsage.value = { prompt: 0, output: 0, calls: 0, tools: 0 }
 }
-const hasApiKey = computed(() => !!settings.value.apiKey)
+// 前端没填密钥但后端 providers.json 有 → 不报警(后端会自动兜底用它的 key)
+const hasApiKey = computed(() => !!settings.value.apiKey || backendHasKey.value)
 
 // 添加 Skill / MCP 弹窗
 const showAddSkillModal = ref(false)
@@ -490,6 +491,8 @@ watch(sessions, () => {
 
 onMounted(async () => {
   loadSettings()
+  // 后端 providers.json 里已有配置时补齐前端空缺(baseUrl/model),密钥不回传
+  await syncFromBackend()
   currentModel.value = settings.value.model || 'gpt-4o-mini'
   // 冷启动恢复的会话同样可能带着过期审批卡
   if (activeSessionId.value) void syncPendingApprovals(activeSessionId.value)

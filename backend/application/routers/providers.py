@@ -8,15 +8,24 @@ router = APIRouter(tags=["providers"])
 
 @router.get("/providers")
 async def list_providers():
+    """列出 provider 配置。密钥本身不回传（前端不需要、也不应该持有），
+    只给 has_key 布尔值，前端据此判断「后端已保存密钥」，避免误报未配置。"""
     providers = {
         name: {
             "model": p.model,
             "api_base": p.api_base,
             "sub_model": p.sub_model or "",
+            "has_key": bool(p.api_key),
         }
         for name, p in provider_registry.providers.items()
     }
-    return {"active": provider_registry.active, "providers": providers}
+    active = provider_registry.active
+    active_has_key = bool(active and providers.get(active, {}).get("has_key"))
+    return {
+        "active": active,
+        "providers": providers,
+        "active_has_key": active_has_key,
+    }
 
 
 @router.post("/providers")

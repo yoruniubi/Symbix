@@ -153,6 +153,18 @@ class ProviderRegistry:
 
     def add(self, name: str, model: str, api_key: str = None, api_base: str = None,
             sub_model: str = None):
+        """新增或更新 provider。
+
+        空值语义是「保持不变」而非「清空」：前端保存时密钥框常常是留空的
+        （前端不持有密钥），若按字面覆盖会把 providers.json 里已有的 key 抹掉，
+        表现为「明明配过却提示未配置」。要真正清空请用 delete。
+        """
+        old = self.providers.get(name)
+        if old is not None:
+            model = (model or "").strip() or old.model
+            api_key = (api_key or "") or old.api_key
+            api_base = (api_base or "") or old.api_base
+            sub_model = (sub_model or "") or old.sub_model
         self.providers[name] = ProviderConfig(name, model, api_key, api_base,
                                               sub_model=(sub_model or None))
         if self.active is None:
