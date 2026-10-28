@@ -190,12 +190,14 @@ import AddSkillModal from '@/components/AddSkillModal.vue'
 import UsageDetailModal from '@/components/UsageDetailModal.vue'
 import AddMcpModal from '@/components/AddMcpModal.vue'
 import { useSettings } from '@/composables/useSettings'
+import { useUpdateCheck } from '@/composables/useUpdateCheck'
 import { useApiClient } from '@/composables/useApiClient'
 import { fetch } from '@tauri-apps/plugin-http'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const messageUi = useMessage()
 const { settings, loadSettings, saveSettings, syncFromBackend, backendHasKey } = useSettings()
+const { startupCheck } = useUpdateCheck()
 const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat'), t('home.petGreetingList')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
@@ -493,6 +495,9 @@ onMounted(async () => {
   loadSettings()
   // 后端 providers.json 里已有配置时补齐前端空缺(baseUrl/model),密钥不回传
   await syncFromBackend()
+  // 版本更新：自动检查放在聊天窗（正常尺寸窗口），发现新版开独立更新窗口；
+  // 桌宠主窗(280x260 透明)和弹幕窗不参与
+  void startupCheck()
   currentModel.value = settings.value.model || 'gpt-4o-mini'
   // 冷启动恢复的会话同样可能带着过期审批卡
   if (activeSessionId.value) void syncPendingApprovals(activeSessionId.value)

@@ -26,6 +26,9 @@ class VoiceConfigManager:
             for k, v in (raw.get("tts") or {}).items():
                 if hasattr(self.tts, k):
                     setattr(self.tts, k, v)
+            # edge-tts 的 403 自愈(升库 + 重试一次)已从 UI 移除，恒开启：
+            # 旧配置里是 false 也覆盖掉，免得历史设置把自愈关死
+            self.tts.edge_auto_update = True
             for k, v in (raw.get("stt") or {}).items():
                 if hasattr(self.stt, k):
                     setattr(self.stt, k, v)
@@ -48,6 +51,9 @@ class VoiceConfigManager:
         """部分更新 TTS 配置(priority/voice_*/speed/openai_*)。"""
         allowed = set(TTSConfig().to_dict().keys())
         for k, v in (patch or {}).items():
+            # 自愈开关不对外开放，忽略任何写入
+            if k == "edge_auto_update":
+                continue
             if k in allowed and v is not None:
                 setattr(self.tts, k, v)
         self.save()

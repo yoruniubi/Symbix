@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from Symbix_sdk.tts import edge_update
@@ -96,10 +97,14 @@ def _edge_error_hint(e: Exception) -> str:
         ver = getattr(edge_tts, "__version__", "未知")
     except Exception:
         pass
+    if getattr(sys, "frozen", False):
+        fix = "打包版不能自行升级第三方库,请更新 Symbix 到新版本后重试。"
+    else:
+        fix = "升级即可恢复:pip install -U edge-tts 并重启后端。"
     return (
         f"Edge 合成失败: 403 —— 微软拒绝了 Sec-MS-GEC 令牌校验。"
         f"当前 edge-tts {ver},通常是版本过旧(微软会周期性更换令牌代次)。"
-        f"升级即可恢复:pip install -U edge-tts 并重启后端。"
+        f"{fix}"
         f"原始报错: {msg}"
     )
 

@@ -4,11 +4,16 @@ import AutoImport from "unplugin-auto-import/vite";
 import Components from "unplugin-vue-components/vite";
 import { NaiveUiResolver } from "unplugin-vue-components/resolvers";
 import { fileURLToPath, URL } from "node:url";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
 const host = process.env.TAURI_DEV_HOST;
+
+/** 浏览器调试环境没有 Tauri getVersion()，用它兜底(直接读 package.json，不依赖 npm 注入的 env) */
+const APP_VERSION = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf-8")
+).version as string;
 
 // Vite 只为「启动时已登记进 publicFiles 白名单」的 public 文件提供服务,而白名单靠文件 watcher
 // 增量维护。public/codex_pet 与 public/pixiv_pet 必须从 watcher 里排除(资源被运行中的 Tauri
@@ -74,6 +79,10 @@ export default defineConfig(async () => ({
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
+  },
+  // 浏览器调试环境没有 Tauri getVersion()，用它兜底(与 package.json 同源)
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   plugins:[
     // 桌宠皮肤静态服务(必须在 Vite 内置中间件之前接入)

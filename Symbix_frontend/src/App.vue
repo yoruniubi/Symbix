@@ -32,7 +32,6 @@ const ProviderBridge = defineComponent({
     return () => h(RouterView)
   },
 })
-
 // 后端进程由 Tauri 侧托管(src-tauri/src/backend.rs:资源目录里找不到就自己拉起,
 // 已在跑则不插手,应用退出时收尸);前端只负责把「起不来」告诉用户。
 // 后端不可用时几乎所有请求都会失败,所以这类提示不自动消失(duration: 0)。

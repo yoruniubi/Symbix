@@ -23,6 +23,10 @@ def upgrade() -> tuple[bool, str]:
     同步阻塞,调用方应丢进线程池。失败不抛错,把原因塞进摘要里返回,
     让上层能把它拼进用户可见的错误提示。
     """
+    # 打包版没有可用的 pip:sys.executable 是应用本体,`-m pip` 会把它再启动一遍
+    # (等于多开一个后端,还会白白卡到 timeout)。直接拒绝并说清出路。
+    if getattr(sys, "frozen", False):
+        return False, "打包版不能自动升级 edge-tts(pip 不可用),需随 Symbix 新版本更新"
     cmd = [sys.executable, "-m", "pip", "install", "-U", PACKAGE, "--no-input", "--disable-pip-version-check"]
     try:
         with _upgrade_lock:

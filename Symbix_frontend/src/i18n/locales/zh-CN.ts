@@ -596,6 +596,8 @@ export default {
     sttReset: '重置',
     sttResetInfo: 'STT 设置已重置',
     // Voice 新增(手动优先级 + 流式参数)
+    ttsEnabled: '语音合成',
+    readAloud: '朗读回复',
     voicePrimary: '主引擎',
     voiceSecondary: '备用引擎',
     voiceSecondaryHint: '主引擎不可用时自动降级到备用',
@@ -636,8 +638,6 @@ export default {
     sttLangYue: '粤语',
     // TTS
     tts: '语音合成 (TTS)',
-    ttsEnabledHint: '启用语音合成功能',
-    readAloudHint: '开启文字朗读:AI 回复与定时任务提醒自动朗读',
     ttsProvider: 'TTS 服务商',
     ttsProviderPlaceholder: '选择 TTS 服务商',
     ttsApiKey: 'API Key',
@@ -658,13 +658,6 @@ export default {
     ttsReset: '重置',
     ttsResetInfo: 'TTS 设置已重置',
     // edge-tts(微软免费接口):版本查看 + 一键升级
-    edgeAutoUpdateHint: 'edge-tts 自动更新(服务端换令牌导致 403 时自动升库并重试)',
-    edgeVersion: 'edge-tts 版本',
-    edgeVersionUnknown: '未知',
-    edgeUpgrade: '升级 edge-tts',
-    edgeUpgradeOk: '已升级到 {ver}',
-    edgeUpgradeFail: '升级失败:{detail}',
-    edgeAutoUpdateFail: '保存开关失败:{detail}',
     // Language options
     langAuto: '自动检测',
     langZhCN: '中文(简体)',
@@ -776,6 +769,26 @@ export default {
     created: "Skill '{name}' 已创建",
     fail: '安装/创建失败:{msg}',
     needName: '请填写 Skill 名称',
+  },
+
+  // ===== Version Update =====
+  update: {
+    section: '版本更新',
+    currentVersion: '当前版本',
+    autoCheck: '启动时自动检查更新',
+    status: '检查结果',
+    check: '检查更新',
+    checking: '检查中...',
+    upToDate: '已是最新版本',
+    viewNotes: '查看更新内容',
+    failed: '检查失败:{msg}',
+    title: '发现新版本 {version}',
+    fromTo: '{current} → {next}',
+    badge: '新版本',
+    hint: '关闭后不再自动提醒，可在设置页随时重新查看',
+    emptyNotes: '该版本未填写更新说明',
+    later: '稍后提醒',
+    download: '前往下载',
   },
 
   // ===== Usage Detail Modal =====

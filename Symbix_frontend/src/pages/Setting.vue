@@ -324,29 +324,14 @@
 
       <!-- TTS 设置卡片 -->
       <n-card :title="t('setting.tts')" class="setting-card">
-        <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
-          <span class="hint-text">{{ t('setting.ttsEnabledHint') }}</span>
-          <n-switch v-model:value="ttsForm.enabled" />
-        </n-space>
-        <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
-          <span class="hint-text">{{ t('setting.readAloudHint') }}</span>
-          <n-switch :value="readAloud" @update:value="setReadAloud" />
-        </n-space>
-        <!-- edge-tts 自愈:微软换令牌代次后旧版一律 403,开着就自动升库并重试一次 -->
-        <template v-if="edgeInUse">
-          <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
-            <span class="hint-text">{{ t('setting.edgeAutoUpdateHint') }}</span>
-            <n-switch :value="ttsForm.edge_auto_update" :disabled="!ttsForm.enabled" @update:value="setEdgeAutoUpdate" />
-          </n-space>
-          <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
-            <span class="hint-text">
-              {{ t('setting.edgeVersion') }} {{ edgeVersion || t('setting.edgeVersionUnknown') }}
-            </span>
-            <n-button size="small" :loading="edgeUpgrading" :disabled="!ttsForm.enabled" @click="upgradeEdge">
-              {{ t('setting.edgeUpgrade') }}
-            </n-button>
-          </n-space>
-        </template>
+        <n-form label-placement="top">
+          <n-form-item :label="t('setting.ttsEnabled')">
+            <n-switch v-model:value="ttsForm.enabled" />
+          </n-form-item>
+          <n-form-item :label="t('setting.readAloud')">
+            <n-switch :value="readAloud" @update:value="setReadAloud" />
+          </n-form-item>
+        </n-form>
         <n-form :model="ttsForm" label-placement="top" size="small" :disabled="!ttsForm.enabled">
           <n-form-item :label="t('setting.voicePrimary')">
             <n-select
@@ -419,6 +404,28 @@
           </n-space>
         </n-form>
       </n-card>
+
+      <!-- 版本更新:轻量提示(只告知 + 跳下载页,不做自动安装) -->
+      <n-card :title="t('update.section')" class="setting-card">
+        <n-form label-placement="top">
+          <n-form-item :label="t('update.autoCheck')">
+            <n-switch :value="autoCheck" @update:value="setAutoCheck" />
+          </n-form-item>
+
+          <n-form-item :label="t('update.currentVersion')">
+            <span class="version-text">{{ currentVersion || '—' }}</span>
+          </n-form-item>
+
+          <n-space justify="end" align="center">
+            <n-button v-if="latest" @click="openUpdateWindow">
+              {{ t('update.viewNotes') }}
+            </n-button>
+            <n-button type="primary" :loading="checking" @click="handleCheckUpdate">
+              {{ t('update.check') }}
+            </n-button>
+          </n-space>
+        </n-form>
+      </n-card>
     </div>
   </div>
 </template>
@@ -445,13 +452,31 @@ import {
   updateVoiceConfig,
   listSttDevices,
   previewTts as previewTtsApi,
-  upgradeEdgeTts,
-  setEdgeAutoUpdate as setEdgeAutoUpdateApi,
   type VoiceConfigResp,
 } from '@/utils/backend'
+import { useUpdateCheck } from '@/composables/useUpdateCheck'
+import { openUpdateWindow } from '@/composables/useUpdateWindow'
 
 const message = useMessage()
 const { t } = useI18n()
+const {
+  currentVersion,
+  latest,
+  checking,
+  error: updateError,
+  autoCheck,
+  setAutoCheck,
+  initCurrentVersion,
+  checkForUpdate,
+  loadAutoCheck,
+} = useUpdateCheck()
+
+// 检查结果不占行内位置：已是最新/失败走 toast，有新版直接开独立更新窗口
+async function handleCheckUpdate() {
+  const result = await checkForUpdate({ manual: true })
+  if (result === 'latest') message.success(t('update.upToDate'))
+  else if (result === 'error') message.error(t('update.failed', { msg: updateError.value }))
+}
 const { readAloud, setReadAloud } = useReadAloud()
 const { mode, setMode } = useTheme()
 const { locale, localeOptions: uiLocaleOptions, setLocale } = useLocale()
@@ -614,43 +639,7 @@ const sttSaving = ref(false)
 const ttsSaving = ref(false)
 const ttsPreviewing = ref(false)
 
-// ---- edge-tts(云端)版本 + 手动升级 ----
-// 微软会周期性轮换 Sec-MS-GEC 令牌代次,旧版 edge-tts 一律 403。引擎侧能自愈,
-// 这里给用户一个「看版本 + 一键升级」的兜底入口。
-const edgeVersion = ref('')
-const edgeUpgrading = ref(false)
-/** 主/备引擎里有 edge 时才显示上面两个入口 */
-const edgeInUse = computed(() => [ttsForm.value.priority0, ttsForm.value.priority1].includes('edge'))
-
-/** 「自动更新 edge-tts」开关:改动立即落盘,不必再点「保存 TTS 设置」;失败回滚。 */
-async function setEdgeAutoUpdate(next: boolean) {
-  const prev = ttsForm.value.edge_auto_update
-  ttsForm.value.edge_auto_update = next
-  try {
-    ttsForm.value.edge_auto_update = await setEdgeAutoUpdateApi(next)
-  } catch (e) {
-    ttsForm.value.edge_auto_update = prev
-    message.error(t('setting.edgeAutoUpdateFail', { detail: String((e as Error)?.message || e) }))
-  }
-}
-
-async function upgradeEdge() {
-  edgeUpgrading.value = true
-  try {
-    const r = await upgradeEdgeTts()
-    if (r.ok) {
-      edgeVersion.value = r.installed || edgeVersion.value
-      message.success(t('setting.edgeUpgradeOk', { ver: r.installed || '?' }))
-      await loadVoiceConfig()
-    } else {
-      message.error(t('setting.edgeUpgradeFail', { detail: r.detail }))
-    }
-  } catch (e) {
-    message.error(String((e as Error)?.message || e))
-  } finally {
-    edgeUpgrading.value = false
-  }
-}
+// edge-tts 的 403 自愈(升库 + 重试一次)现在恒开启，不再给用户开关/手动升级入口
 
 // STT 语言下拉(对齐 SenseVoice: zh/en/yue/ja/ko + auto)
 const sttLanguageOptions = computed(() => [
@@ -716,7 +705,6 @@ async function loadVoiceConfig() {
     const cfg: VoiceConfigResp = await getVoiceConfig()
     ttsStatus.value = cfg.status?.tts || {}
     sttStatus.value = cfg.status?.stt || {}
-    edgeVersion.value = cfg.status?.edgeVersion || ''
     const stt = cfg.stt || {}
     sttForm.value = {
       enabled: stt.enabled ?? true,
@@ -783,6 +771,9 @@ onMounted(() => {
   loadVoiceConfig()
   loadSttDevices()
   void loadCompanionForm()
+  // 版本信息(含自动检查开关)；不在这里主动检查，避免进设置页就发请求
+  void initCurrentVersion()
+  loadAutoCheck()
 })
 
 async function saveNotify() {
@@ -860,7 +851,7 @@ function buildTtsPatch() {
   patch.openai_api_key = f.openai_api_key
   patch.openai_model = f.openai_model
   patch.custom_servers = f.custom_servers
-  patch.edge_auto_update = f.edge_auto_update
+  // edge_auto_update 已从 UI 移除并在后端恒开启,不再回传
   return patch
 }
 
@@ -951,6 +942,15 @@ async function previewTts() {
 .hint-text {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 版本号：比正文大一级、等宽字体，不用 tag 以免看着像可选状态 */
+.version-text {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
 }
 
 .inline-row {

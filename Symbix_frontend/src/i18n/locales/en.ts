@@ -597,6 +597,8 @@ export default {
     sttReset: 'Reset',
     sttResetInfo: 'STT settings reset',
     // Voice new (manual priority + streaming params)
+    ttsEnabled: 'Speech synthesis',
+    readAloud: 'Read replies aloud',
     voicePrimary: 'Primary engine',
     voiceSecondary: 'Secondary engine',
     voiceSecondaryHint: 'Fallback when primary is unavailable',
@@ -637,8 +639,6 @@ export default {
     sttLangYue: 'Cantonese',
     // TTS
     tts: 'Speech Synthesis (TTS)',
-    ttsEnabledHint: 'Enable speech synthesis',
-    readAloudHint: 'Read aloud: AI replies and scheduled reminders are spoken',
     ttsProvider: 'TTS Provider',
     ttsProviderPlaceholder: 'Select TTS provider',
     ttsApiKey: 'API Key',
@@ -659,13 +659,6 @@ export default {
     ttsReset: 'Reset',
     ttsResetInfo: 'TTS settings reset',
     // edge-tts (Microsoft free endpoint): version display + one-click upgrade
-    edgeAutoUpdateHint: 'Auto-update edge-tts (upgrade & retry when the service rotates tokens and returns 403)',
-    edgeVersion: 'edge-tts version',
-    edgeVersionUnknown: 'unknown',
-    edgeUpgrade: 'Upgrade edge-tts',
-    edgeUpgradeOk: 'Upgraded to {ver}',
-    edgeUpgradeFail: 'Upgrade failed: {detail}',
-    edgeAutoUpdateFail: 'Failed to save switch: {detail}',
     // Language options
     langAuto: 'Auto detect',
     langZhCN: 'Chinese (Simplified)',
@@ -777,6 +770,26 @@ export default {
     created: "Skill '{name}' created",
     fail: 'Install/Create failed: {msg}',
     needName: 'Please enter the Skill name',
+  },
+
+  // ===== Version Update =====
+  update: {
+    section: 'Updates',
+    currentVersion: 'Current version',
+    autoCheck: 'Check on startup',
+    status: 'Result',
+    check: 'Check for updates',
+    checking: 'Checking...',
+    upToDate: 'You are on the latest version',
+    viewNotes: 'What\'s new',
+    failed: 'Check failed: {msg}',
+    title: 'New version {version}',
+    fromTo: '{current} → {next}',
+    badge: 'NEW',
+    hint: 'Closed for now — you can reopen it anytime from Settings',
+    emptyNotes: 'No release notes for this version',
+    later: 'Remind me later',
+    download: 'Go to download',
   },
 
   // ===== Usage Detail Modal =====

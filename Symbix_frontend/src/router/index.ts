@@ -6,6 +6,7 @@ import SkinWindowPage from '../pages/SkinWindow.vue'
 import ModelSettingPage from '../pages/model_setting.vue'
 import DanmakuWindowPage from '../pages/DanmakuWindow.vue'
 import JournalWindowPage from '../pages/JournalWindow.vue'
+import UpdateWindowPage from '../pages/UpdateWindow.vue'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -42,6 +43,11 @@ const routes: RouteRecordRaw[] = [
     path: '/journal',
     name: 'JournalWindow',
     component: JournalWindowPage,
+  },
+  {
+    path: '/update',
+    name: 'UpdateWindow',
+    component: UpdateWindowPage,
   },
 ]
 

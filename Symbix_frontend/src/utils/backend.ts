@@ -210,25 +210,6 @@ export async function readErrorDetail(res: Response, fallback: string): Promise<
   return `${fallback} ${res.status}`
 }
 
-/** 立即升级 edge-tts。ok=false 时 detail 是 pip 的输出摘要。 */
-export async function upgradeEdgeTts(): Promise<{ ok: boolean; detail: string; installed: string }> {
-  const res = await fetch(`${BACKEND_URL}/voice/tts/edge/upgrade`, { method: 'POST' })
-  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/tts/edge/upgrade'))
-  return res.json()
-}
-
-/** 「自动更新 edge-tts」开关:只改这一个字段,改动立即落盘(不必再点保存)。 */
-export async function setEdgeAutoUpdate(enabled: boolean): Promise<boolean> {
-  const res = await fetch(`${BACKEND_URL}/voice/config/edge-auto-update`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  })
-  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/config/edge-auto-update'))
-  const data = await res.json()
-  return !!data.edge_auto_update
-}
-
 /** 剥离 markdown 语法,返回纯文本(用于 TTS 朗读) */
 function stripMarkdown(text: string): string {
   return text

@@ -62,22 +62,6 @@ async def update_voice_config(patch: VoiceConfigPatch):
     return {"status": "ok"}
 
 
-class EdgeAutoUpdatePatch(BaseModel):
-    enabled: bool
-
-
-@router.post("/voice/config/edge-auto-update")
-async def set_edge_auto_update(patch: EdgeAutoUpdatePatch):
-    """设置页的「自动更新 edge-tts」开关。
-
-    单独给一个接口而不是走 POST /voice/config:开关改一下就要立刻生效,没必要把
-    表单里其它未保存的字段一并提交。`tts_engine.config` 与 `voice_cfg.tts` 是同一个
-    对象(见文件顶部),所以 apply_tts_patch 会直接热更新到引擎。
-    """
-    voice_cfg.apply_tts_patch({"edge_auto_update": bool(patch.enabled)})
-    return {"status": "ok", "edge_auto_update": voice_cfg.tts.edge_auto_update}
-
-
 # ---------------- TTS ----------------
 
 class TTSRequest(BaseModel):
