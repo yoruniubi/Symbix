@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from application.schemas import ProviderAddRequest
 from application.state import provider_registry
 from Symbix_sdk.model_capabilities import get_model_capabilities, get_vision_note, resolve_vision, clear_vision_cache
+from Symbix_sdk.providers import has_real_api_key
 
 router = APIRouter(tags=["providers"])
 
@@ -15,7 +16,7 @@ async def list_providers():
             "model": p.model,
             "api_base": p.api_base,
             "sub_model": p.sub_model or "",
-            "has_key": bool(p.api_key),
+            "has_key": has_real_api_key(p.api_key),
         }
         for name, p in provider_registry.providers.items()
     }

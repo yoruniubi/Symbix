@@ -26,6 +26,9 @@ const settings = ref<Settings>({
  */
 const backendHasKey = ref(false)
 
+/** 模板占位 base(providers.json.example 里的 api.example.com),不预填给用户免得看着像自己填过 */
+const PLACEHOLDER_BASE = /api\.example\.com/i
+
 function persist() {
   localStorage.setItem('symbix_settings', JSON.stringify(settings.value))
 }
@@ -60,6 +63,8 @@ export function useSettings() {
       backendHasKey.value = !!data.active_has_key
       const active = data.active ? data.providers?.[data.active] : null
       if (!active) return
+      // 刚安装时 providers.json 是从 .example 模板复制来的,base/model 都是示例值,不预填
+      if (PLACEHOLDER_BASE.test(active.api_base || '')) return
       let changed = false
       if (!settings.value.baseUrl && active.api_base) {
         settings.value.baseUrl = active.api_base

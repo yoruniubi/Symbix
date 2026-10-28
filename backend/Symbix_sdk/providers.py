@@ -5,6 +5,28 @@ import json
 import shutil
 
 
+# 模板/占位密钥：providers.json.example 首启复制过来时带的是这些占位串，
+# 它们不应当被当成「已配置密钥」，否则刚安装时界面会误以为已配好（告警一闪而过），
+# 聊天会直接打出一个 401。比较时统一转小写。
+_PLACEHOLDER_API_KEYS = frozenset({
+    "your_api_key_here",
+    "your-api-key-here",
+    "your_api_key",
+    "your-api-key",
+    "api_key_here",
+    "sk-xxx",
+    "sk-your-key",
+    "sk-your-api-key",
+    "paste_your_key_here",
+})
+
+
+def has_real_api_key(api_key: Optional[str]) -> bool:
+    """判断是不是真填了密钥（空串、模板占位串都不算）。"""
+    key = (api_key or "").strip()
+    return bool(key) and key.lower() not in _PLACEHOLDER_API_KEYS
+
+
 @dataclass
 class ProviderConfig:
     name: str
