@@ -20,6 +20,7 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 - 🎭 **Multi-agent teamwork** — complex tasks spawn parallel sub-agents, each with its own model
 - 🙋 **Asks before it acts** — multi-step plans need your approval; file edits and commands pop a confirmation card; or flip on auto-pilot and let it run
 - 🗂️ **Everything is traceable** — every step logged with a readable diff; undo any step, even newly created files
+- 🔍 **Every step is out in the open** — which tool was called, what went in, what came back, how long it took, why it failed: all logged in the chat stream, no black box
 - 💾 **Remembers you** — long-term memory + daily journal; no re-introductions after restart
 - ⏰ **Scheduled jobs in plain words** — "remind me to take my meds at 8 every morning" just works; failures auto-retry
 - 📊 **Token usage at a glance** — per-round usage, daily / weekly / monthly charts
@@ -34,6 +35,7 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 | | Typical agent / chatbot | Symbix |
 | --- | --- | --- |
 | Output | A paragraph, a terminal dump — formatting is on you | Finished, formatted Word / PPT / Excel / PDF |
+| Visibility | You only know it "thought for a while": the tools it called, their arguments, why they failed — all a black box | Tool calls fully visible: tool name + arguments + output + duration + error, debug by looking |
 | Acting | Too timid to act, or acts without asking | Read-only runs freely; edits & commands pop an approval card |
 | Mistakes | Start over | Every step logged, readable diffs, undo to any point |
 | Memory | Forgotten when the tab closes | Long-term memory + daily journal; grows familiar — and finds its own topics from what it remembers |
@@ -58,6 +60,12 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 | Chat | Danmaku |
 | --- | --- |
 | <img src="docs/screenshots/chat.png" width="440"> | <img src="docs/screenshots/danmaku.png" width="440"> |
+
+### 🔍 Tool calls fully visible
+
+In most agent harnesses all you see is "it thought for a while" — which tool it called, what arguments it passed, what came back, why it failed: a black box you can only guess about. Symbix lays every step out in the chat stream: **tool name, arguments, raw output, duration, pass/fail and the error reason are all logged**, and the behaviour timeline lets you walk back through exactly what it did.
+
+<img src="docs/screenshots/tool_use.png" width="620">
 
 <details>
 <summary><b>More screenshots (settings / side panels)</b></summary>
