@@ -430,6 +430,7 @@ export default {
     authorizeFail: 'OAuth authorization failed: {msg}',
     statusUnknown: 'Unknown',
     statusConnected: 'Connected · {count} tools',
+    statusConnecting: 'Connecting… (first launch may download dependencies, can take a while)',
     statusError: 'Error',
     statusOffline: 'Not connected',
     error: 'Not connected',

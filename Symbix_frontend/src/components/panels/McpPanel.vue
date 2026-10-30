@@ -140,6 +140,7 @@ function mcpStatusClass(serverId: string) {
   const st = props.mcpStatusMap[serverId]?.status
   if (st === 'connected') return 'ok'
   if (st === 'error') return 'err'
+  if (st === 'connecting') return 'wait'
   return 'off'
 }
 
@@ -148,6 +149,7 @@ function mcpStatusLabel(serverId: string) {
   if (!info) return t('mcpPanel.statusUnknown')
   if (info.status === 'connected') return t('mcpPanel.statusConnected', { count: info.tools_count ?? 0 })
   if (info.status === 'error') return info.error || t('mcpPanel.statusError')
+  if (info.status === 'connecting') return t('mcpPanel.statusConnecting')
   return info.status || t('mcpPanel.statusOffline')
 }
 
@@ -402,6 +404,12 @@ function formatMcpToolDesc(toolName: string, originalDesc: string): string {
 }
 .mcp-status-dot.ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.55); }
 .mcp-status-dot.err { background: #ef4444; }
+.mcp-status-dot.wait { background: #f59e0b; animation: mcp-pulse 1.2s ease-in-out infinite; }
+
+@keyframes mcp-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
 .mcp-status-dot.off { background: #9ca3af; }
 .panel-icon-btn {
   width: 32px !important;

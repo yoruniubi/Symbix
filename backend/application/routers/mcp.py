@@ -386,8 +386,16 @@ async def test_mcp_connection():
             }
     for server_id, cfg in mcp_config.get_servers().items():
         if server_id not in servers_status:
+            # 启动过但失败的:把原因一起透出(前端 status=error 时会显示在提示里),
+            # 否则用户只看到灰点「未连接」,不知道是握手超时还是命令不存在。
+            if server_id in (getattr(mcp_manager, "starting", None) or set()):
+                # 还在握手(npx 首次下载可能要几十秒):显示「连接中」,别让用户以为坏了
+                servers_status[server_id] = {"status": "connecting", "config": cfg}
+                continue
+            reason = (mcp_manager.failed or {}).get(server_id)
             servers_status[server_id] = {
-                "status": "disconnected",
+                "status": "error" if reason else "disconnected",
+                "error": reason,
                 "config": cfg,
             }
     return {"servers": servers_status}

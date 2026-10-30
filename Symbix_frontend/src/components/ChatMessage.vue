@@ -295,7 +295,7 @@ import MarkdownRender from 'markstream-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useI18n } from 'vue-i18n'
 import { BACKEND_URL } from '@/utils/backend'
-import { pickPreviewRigPath, rigFolderName } from '@/utils/petRig'
+import { pickPreviewRigPath, pickPreviewImagePath, rigFolderName } from '@/utils/petRig'
 import { toolIconSvg } from '@/utils/toolIcons'
 import { getMcpToolI18n } from '@/utils/mcpToolI18n'
 
@@ -492,16 +492,7 @@ watch(
 // 工具输出里的 `[Image saved: <绝对路径>]`:connector 把 MCP 返回的图片内容(pixeldraw
 // 这类绘图工具每次都返回 8x 预览 PNG)落盘后打的标记。从「完成」步骤里倒序找最新一张,
 // 经 /api/files/raw 拉字节渲染 —— 草稿迭代时每画一笔都能直接看到当前画面。
-const mcpImgPath = computed(() => {
-  const steps = props.msg?.steps || []
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const st: any = steps[i]
-    if (st?.status !== 'done') continue
-    const m = /\[Image saved: ([^\]\r\n]+?)\]/.exec(String(st.result || ''))
-    if (m) return m[1].trim()
-  }
-  return ''
-})
+const mcpImgPath = computed(() => pickPreviewImagePath(props.msg?.steps))
 const mcpImgUrl = ref('')
 const mcpImgLoading = ref(false)
 let mcpImgToken = 0

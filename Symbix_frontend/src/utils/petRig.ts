@@ -21,18 +21,18 @@
  * - 中文标点、括号、空白、引号一律不跨过(匹配会被截断或直接失败);
  * - 必须带目录分隔符,光一个 `base.svg` 定位不到文件。
  */
-const RIG_HIT = /[A-Za-z0-9_\u4e00-\u9fff.\-\\/:]+[\\/][A-Za-z0-9_\u4e00-\u9fff.\-\\/:]*base\.svg/i
+const RIG_HIT = /[A-Za-z0-9_%\u4e00-\u9fff.\-\\/:]+[\\/][A-Za-z0-9_%\u4e00-\u9fff.\-\\/:]*base\.svg/i
 
 /** 产物目录下的 base.svg(pixiv_pet / codex_pet 任一子目录)。 */
 const SHIPPED_RIG_HIT = new RegExp(
-  '[A-Za-z0-9_\\u4e00-\\u9fff.\\-\\\\/:]*[\\\\/](?:pixiv_pet|codex_pet)[\\\\/]' +
-  '[A-Za-z0-9_\\u4e00-\\u9fff.\\-\\\\/:]*base\\.svg', 'i',
+  '[A-Za-z0-9_%\\u4e00-\\u9fff.\\-\\\\/:]*[\\\\/](?:pixiv_pet|codex_pet)[\\\\/]' +
+  '[A-Za-z0-9_%\\u4e00-\\u9fff.\\-\\\\/:]*base\\.svg', 'i',
 )
 
 /** 只提到产物目录本身(build_theme.py 的 out_dir),没带 base.svg。 */
 const SHIPPED_DIR_HIT = new RegExp(
-  '[A-Za-z0-9_\\u4e00-\\u9fff.\\-\\\\/:]*[\\\\/](?:pixiv_pet|codex_pet)[\\\\/]' +
-  '[A-Za-z0-9_\\u4e00-\\u9fff.\\-]+', 'i',
+  '[A-Za-z0-9_%\\u4e00-\\u9fff.\\-\\\\/:]*[\\\\/](?:pixiv_pet|codex_pet)[\\\\/]' +
+  '[A-Za-z0-9_%\\u4e00-\\u9fff.\\-]+', 'i',
 )
 
 /**
@@ -55,6 +55,30 @@ const RIG_UNLANDED_STATUS = new Set(['pending', 'awaiting_approval', 'rejected',
 /** JSON 文本里的转义反斜杠还原成单斜杠(`F:\\a\\base.svg` → `F:\a\base.svg`)。 */
 function unescapePath(raw: string): string {
   return raw.replace(/\\\\/g, '\\')
+}
+
+/**
+ * 把各种「路径表情」归一成后端能读的真路径。
+ *
+ * MCP filesystem 这类 server 回的是 `file:///F:/a/b.svg` URI,直接送到
+ * `/api/files/read` 只会 404(后端只认磁盘路径);UI 预览也不该显示 URI 前缀。
+ * 顺带解开 `%20` 与首尾引号/反引号。
+ */
+export function normalizeFsPath(raw: string): string {
+  let p = raw.trim().replace(/^[`'"]+|[`'"]+$/g, '')
+  if (/^file:\/\//i.test(p)) {
+    p = p.replace(/^file:\/\/(localhost)?/i, '')
+    // `/F:/a/b.svg` → `F:/a/b.svg`(Windows 盘符),POSIX 的 `/home/...` 保持原样
+    p = p.replace(/^\/([A-Za-z]:)/, '$1')
+    try {
+      p = decodeURIComponent(p)
+    } catch {
+      try {
+        p = decodeURI(p)
+      } catch { /* ignore */ }
+    }
+  }
+  return p
 }
 
 function asText(raw: unknown): string {
@@ -139,7 +163,7 @@ function extractRigPath(argumentsRaw: unknown): string {
     hit = fallback ? unescapePath(fallback[0]) : ''
   }
   if (!hit || isSkillTemplate(hit)) return ''
-  return hit
+  return normalizeFsPath(hit)
 }
 
 /**
@@ -156,12 +180,27 @@ function findShippedRigPath(raw: unknown): string {
   const text = unescapePath(asText(raw))
   if (!text || !/[\\/](pixiv_pet|codex_pet)[\\/]/i.test(text)) return ''
   const withFile = text.match(SHIPPED_RIG_HIT)
-  if (withFile) return withFile[0]
+  if (withFile) return normalizeFsPath(withFile[0])
   // 只提到目录(build_theme.py 的 out_dir):拼上约定文件名 base.svg
   const dir = text.match(SHIPPED_DIR_HIT)
   if (!dir) return ''
   const base = dir[0]
-  return base + (base.includes('\\') ? '\\' : '/') + 'base.svg'
+  return normalizeFsPath(base + (base.includes('\\') ? '\\' : '/') + 'base.svg')
+}
+
+/**
+ * pet-forge 真正「在造桌宠」的痕迹:build 脚本名或 skill 目录名。
+ *
+ * 产物目录路径会出现在很多地方 —— 列目录、读模板、读已有皮肤、刚才的对话回显……
+ * 那些都不算生成,不能因为它长得像就弹预览卡(否则用户只是问「我有哪些桌宠」,
+ * 聊天里就会多出一张读不到的预览图)。
+ */
+const RIG_PET_BUILD_HINT = /pet-forge|build_theme\.py|pack_theme\.py|pack_spritesheet\.py|bake_snapshots\.py/i
+
+/** 该步骤是不是「本轮真在造/打包桌宠」:写文件类工具,或跑了 pet-forge 的构建脚本。 */
+function isPetBuildStep(step: unknown, text: string): boolean {
+  if (isRigWriteStep(step)) return true
+  return RIG_PET_BUILD_HINT.test(text)
 }
 
 /**
@@ -186,7 +225,10 @@ export function pickPreviewRigPath(steps: unknown): string {
   for (const step of list) {
     if (!isRigLandedStep(step)) continue
     const rec = step as { arguments?: unknown; result?: unknown } | null
-    const shippedHit = findShippedRigPath(`${asText(rec?.arguments)}\n${asText(rec?.result)}`)
+    const hay = `${asText(rec?.arguments)}\n${asText(rec?.result)}`
+    // 产物目录只有「本轮确实在造桌宠」时才算数(理由见 RIG_PET_BUILD_HINT)
+    if (!isPetBuildStep(step, hay)) continue
+    const shippedHit = findShippedRigPath(hay)
     if (shippedHit && !shipped.includes(shippedHit)) shipped.push(shippedHit)
     if (!isRigWriteStep(step)) continue
     const hit = extractRigPath(rec?.arguments)
@@ -194,6 +236,34 @@ export function pickPreviewRigPath(steps: unknown): string {
   }
   if (shipped.length) return shipped[shipped.length - 1]
   return written.length ? written[written.length - 1] : ''
+}
+
+/** MCP 图片落盘标记:connector 拿到图片内容后存盘,并在工具输出里打这个标记。 */
+const MCP_IMG_MARK = /\[Image saved: ([^\]\r\n]+?)\]/
+
+/**
+ * 只认「真绝对路径 + 图片扩展名」。
+ *
+ * 技能正文 / 文档里写的格式说明 `[Image saved: <绝对路径>]` 也会被上面的正则命中,
+ * 那样前端会拿占位符去请求 `/api/files/raw`,后端必然 404(还会把日志刷满)。
+ */
+const MCP_IMG_PATH_OK = /^(?:[A-Za-z]:[\\/]|\/|\\\\)[^<>]*\.(?:png|jpe?g|webp|gif|bmp|svg)$/i
+
+/**
+ * 从一条消息的步骤里选出 MCP 绘图工具刚落盘的那张预览图。
+ * 只看 `done` 状态的步骤,并倒序找最新一张 —— 草稿迭代时每画一笔都能看到当前画面。
+ */
+export function pickPreviewImagePath(steps: unknown): string {
+  const list = Array.isArray(steps) ? steps : []
+  for (let i = list.length - 1; i >= 0; i--) {
+    const st = list[i] as { status?: unknown; result?: unknown } | null
+    if (String(st?.status || '').trim().toLowerCase() !== 'done') continue
+    const m = MCP_IMG_MARK.exec(String(st?.result || ''))
+    if (!m) continue
+    const path = normalizeFsPath(m[1].trim())
+    if (MCP_IMG_PATH_OK.test(path)) return path
+  }
+  return ''
 }
 
 /** 取 base.svg 所在目录名(皮肤名),用于预览卡标题。 */

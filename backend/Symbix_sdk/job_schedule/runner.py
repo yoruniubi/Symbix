@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import asyncio
 import json as _json
 import time
@@ -162,7 +163,8 @@ class JobRunner:
             )
             last_reasoning = response.get("reasoning")
 
-            max_tool_rounds = 25
+            # 轮次上限:无人值守任务通常步骤更多,默认放宽到 40(可用环境变量调)
+            max_tool_rounds = int(os.environ.get("SYMBIX_MAX_TOOL_ROUNDS") or 40)
             round_count = 0
             write_counts: dict[str, int] = {}
             NONSTREAM_WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",

@@ -429,6 +429,7 @@ export default {
     authorizeFail: 'OAuth 授权失败:{msg}',
     statusUnknown: '未知',
     statusConnected: '已连接 · {count} 工具',
+    statusConnecting: '连接中…(首次启动需要下载依赖,可能要几十秒)',
     statusError: '错误',
     statusOffline: '未连接',
     error: '未连接',

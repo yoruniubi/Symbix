@@ -1,3 +1,4 @@
+import os
 import json
 import asyncio
 import httpx
@@ -19,6 +20,28 @@ SKILL_INJECT_MAX_BYTES = 12000
 # 流式读取的空闲上限:上游「接了连接但不发数据」时,靠它把等待打断。
 # 定时任务这类无人值守链路会传更短的值,见 job_schedule.runner.JOB_READ_TIMEOUT。
 DEFAULT_READ_TIMEOUT = 300.0
+
+# 单条工具结果**进上下文**时的字符上限(保头保尾,中间省略并给模型指路)。
+# 只裁送给模型的那份:SSE 推给前端的 tool_result、检查点记录仍是完整内容。
+# 起因:读一个 500KB 的 SVG / 整份日志,单条结果就能吃掉十几万 token,
+# 一次就把多轮工具链的预算耗尽(见 MAX_CUM_TOOL_TOKENS),长任务被迫腰斩。
+TOOL_RESULT_MAX_CHARS = int(os.environ.get("SYMBIX_TOOL_RESULT_MAX_CHARS") or 24000)
+TOOL_RESULT_KEEP_TAIL = int(os.environ.get("SYMBIX_TOOL_RESULT_KEEP_TAIL") or 4000)
+
+
+def clamp_tool_result(text) -> str:
+    """把超长工具结果裁成「头 + 省略说明 + 尾」,让模型知道该分段读而不是硬塞。"""
+    if not isinstance(text, str) or len(text) <= TOOL_RESULT_MAX_CHARS:
+        return text
+    head_len = max(TOOL_RESULT_MAX_CHARS - TOOL_RESULT_KEEP_TAIL, 0)
+    omitted = len(text) - head_len - TOOL_RESULT_KEEP_TAIL
+    return (
+        f"{text[:head_len]}\n\n"
+        f"[结果过长已截断:共 {len(text)} 字符,中间 {omitted} 字符省略未显示。"
+        f"需要完整内容请分段读取(如 read_file 带 offset/limit,或先 grep 定位关键行),"
+        f"不要重复整篇读取。]\n\n"
+        f"{text[-TOOL_RESULT_KEEP_TAIL:] if TOOL_RESULT_KEEP_TAIL else ''}"
+    )
 
 
 def build_tool_result_messages(messages: list[dict], tool_results: list[dict],
@@ -42,6 +65,9 @@ def build_tool_result_messages(messages: list[dict], tool_results: list[dict],
         assistant_msg["reasoning_content"] = reasoning
     messages.append(assistant_msg)
     for tr in (tool_results or []):
+        # 顺手写回 tool_results:调用方随后按它统计「累积工具结果 token」,
+        # 不写回的话统计的是裁剪前的体积,和真实上下文对不上。
+        tr["content"] = clamp_tool_result(tr.get("content"))
         messages.append({
             "role": "tool",
             "tool_call_id": tr["tool_call_id"],

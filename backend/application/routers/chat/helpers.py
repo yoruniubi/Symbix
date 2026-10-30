@@ -2,6 +2,7 @@
 
 拆分自 chat.py 的公共部分,供 files_api / approve / stream 复用。
 """
+import os
 import asyncio
 import uuid
 import json as _json
@@ -309,9 +310,56 @@ def _emit_round_summary(
 # 每轮把本轮的 assistant(tool_calls) + tool 结果 append 进去,
 # 让模型始终能看到"已调过什么、结果是什么"。
 
-# 累积工具结果达到该估算 token 上限时,终止工具循环并给兑底提示。
+# 累积工具结果达到该估算 token 上限时,终止工具循环并给兜底提示。
 # 无 tiktoken,用近似估算:中文字符 ≈ 1.5 token,其他字符 ≈ 0.3 token。
-MAX_CUM_TOOL_TOKENS = 120_000
+#
+# 这是「长任务」与「上下文爆掉」之间的闸门,两个方向都有坑:
+# - 太小 → 正经的多步任务(读源码 → 改 → 跑测试)跑不完就被收尾;
+# - 太大 → prompt 超过模型上下文,上游直接 400,比优雅收尾更难懂。
+# 默认按「单条结果已裁剪(见 Symbix_sdk/client.py: TOOL_RESULT_MAX_CHARS)」估算:
+# 24k 字符 ≈ 7k token/条,300k 够跑 40 条左右的重活,再长的任务适合拆子代理(delegate_task)。
+# 需要更长可在环境变量里调:SYMBIX_MAX_CUM_TOOL_TOKENS=600000
+MAX_CUM_TOOL_TOKENS = int(os.environ.get("SYMBIX_MAX_CUM_TOOL_TOKENS") or 300_000)
+
+# 单次请求里最多跑几轮「模型 → 工具 → 模型」。
+# 25 轮对「读源码 → 改 → 跑测试 → 再改」这种较真的任务偏紧,放宽到 40;
+# 死循环由下面的重复调用拦截 + MAX_CUM_TOOL_TOKENS 兜着,不靠轮次硬砍。
+MAX_TOOL_ROUNDS = int(os.environ.get("SYMBIX_MAX_TOOL_ROUNDS") or 40)
+
+# 同一个(工具 + 参数)在一次请求里最多真执行几次。
+# 旧策略是「见过就拦」,于是「改完代码再跑一次 npm test」这种长任务刚需会被误杀;
+# 现在跨轮允许重跑,只有反复磨同一个调用才拦。
+MAX_SAME_CALL_EXECUTIONS = int(os.environ.get("SYMBIX_MAX_SAME_CALL_EXECUTIONS") or 3)
+
+# 连续被拦这么多轮(说明模型无视提示在原地打转)就收尾整个工具循环。
+MAX_REPEAT_BLOCKED_STREAK = 2
+
+
+def check_repeat_tool_call(
+    sig: tuple,
+    round_sigs: set,
+    call_counts: dict,
+) -> tuple[str, str]:
+    """判断一次工具调用是否算「原地重复」。
+
+    返回 (action, message):action 为 "allow" 或 "block"。
+    - 同一轮里出现两条一模一样的调用(模型一次吐重复):直接拦;
+    - 跨轮重跑:累计执行次数没到 MAX_SAME_CALL_EXECUTIONS 就放行,
+      到了才拦 —— 长任务里「改完再跑一遍同样的命令」必须能过。
+    """
+    name = sig[0] if isinstance(sig, tuple) and sig else str(sig)
+    if isinstance(round_sigs, set) and sig in round_sigs:
+        return "block", (
+            f"[System] 工具 `{name}` 在同一轮里已用相同参数调用过,已阻止重复执行。"
+            "请基于上文的工具结果继续推进;若确实需要重跑,请换参数或说明理由。"
+        )
+    done = int(call_counts.get(sig, 0)) if call_counts else 0
+    if done >= MAX_SAME_CALL_EXECUTIONS:
+        return "block", (
+            f"[System] 工具 `{name}` 已用相同参数执行过 {done} 次,已阻止再次执行。"
+            "请基于已有结果推进,或换一组参数;确实需要重跑请先向用户说明理由。"
+        )
+    return "allow", ""
 
 
 def _estimate_tool_tokens(text: str) -> int:

@@ -131,6 +131,15 @@ def resolve_stdio_runner(command: str, args: Optional[List[str]] = None) -> tupl
     return command, args
 
 
+# 首次启动可能要下载包的 runner:握手超时得放宽,否则「第一次连不上、点重连才好」。
+# 实测 `npx @playwright/mcp@latest` 冷启动(要解析并下载新版本)会超过 30 秒。
+_SLOW_START_COMMANDS = {
+    "npx", "npx.cmd", "npx.exe", "npm", "npm.cmd",
+    "uvx", "uvx.cmd", "uvx.exe",
+    "bun", "bun.exe", "bunx", "bunx.exe",
+}
+
+
 class McpServerClient:
     """通过 stdio 与 MCP server 通信的客户端"""
 
@@ -138,6 +147,8 @@ class McpServerClient:
 
     #: 单次请求等待上限(秒)
     timeout: float = 30
+    #: 握手(initialize)等待上限:runner 冷启动要下载包,start() 里会按命令名放宽到 120s
+    _start_timeout: float = 30.0
     #: stderr 最多打印多少行,避免下载日志刷屏(超出部分仍留在尾部供诊断)
     _stderr_print_limit = 50
     #: list_tools 失败后的冷却时间(秒),期内不重试
@@ -170,6 +181,9 @@ class McpServerClient:
         eff_args = resolved_args if resolved_cmd != self.command else self.args
         if effective != self.command and not effective.endswith(".exe"):
             print(f"[MCP] '{self.server_id}': 未检测到 npx,使用 '{effective}' 替代")
+        if os.path.basename(str(effective).lower()) in _SLOW_START_COMMANDS:
+            # npx/uvx/bun x 首次要拉包:30 秒不够,放宽到 120 秒
+            self._start_timeout = 120.0
         try:
             # Windows 下 npx/npm 等是 .cmd 脚本，需要 shell=True 才能找到
             use_shell = sys.platform == "win32"
@@ -224,12 +238,17 @@ class McpServerClient:
                         "version": "1.0.0"
                     }
                 }
-            })
+            }, timeout=self._start_timeout)
             if "error" in resp:
                 # 握手失败就别登记成"启动成功",否则用户看到添加成功、
                 # 列表却一直超时。
                 self.last_error = str(resp["error"])
-                print(f"[MCP] Server '{self.server_id}' 初始化失败: {resp['error']}")
+                if "timeout" in str(resp["error"]).lower() and self._start_timeout > self.timeout:
+                    self.last_error += (
+                        f"(握手等待超过 {int(self._start_timeout)} 秒。首次启动要下载包,"
+                        "网络慢时可稍后点重连)"
+                    )
+                print(f"[MCP] Server '{self.server_id}' 初始化失败: {self.last_error}")
                 self.stop()
                 return False
 
@@ -315,8 +334,8 @@ class McpServerClient:
                     print(f"[MCP] Error reading output: {e}")
                 break
 
-    def _send_request(self, request: dict) -> dict:
-        """发送请求并等待响应"""
+    def _send_request(self, request: dict, timeout: Optional[float] = None) -> dict:
+        """发送请求并等待响应(timeout 缺省用 self.timeout)"""
         request_id = request["id"]
         response_queue = queue.Queue()
         self.response_map[request_id] = response_queue
@@ -329,7 +348,7 @@ class McpServerClient:
 
             # 分片轮询:既能等响应,又能在子进程已死时立刻失败,
             # 而不是干等满超时(否则一次失败要卡 30 秒)。
-            deadline = time.time() + self.timeout
+            deadline = time.time() + (timeout if timeout else self.timeout)
             while True:
                 remaining = deadline - time.time()
                 if remaining <= 0:
@@ -884,6 +903,11 @@ class McpServerManager:
         self._initialized = False
         # 最近一次 add_* 失败的原因(供上层判断是否需 OAuth 等)
         self.last_error: Optional[str] = None
+        # 启动失败的 server → 失败原因。列表接口要把原因透给前端,
+        # 否则面板只显示「未连接」,用户完全不知道是超时、缺 npx 还是端口占用。
+        self.failed: Dict[str, str] = {}
+        # 正在握手的 server:面板据此显示「连接中」而不是「未连接」
+        self.starting: set = set()
 
     def add_server(self, server_id: str, command: str, args: List[str]) -> bool:
         """添加并启动本地 stdio MCP server"""
@@ -892,10 +916,17 @@ class McpServerManager:
             self.remove_server(server_id)
 
         client = McpServerClient(server_id, command, args)
-        ok = client.start()
+        self.starting.add(server_id)
+        try:
+            ok = client.start()
+        finally:
+            self.starting.discard(server_id)
         self.last_error = getattr(client, "last_error", None)
         if ok:
             self.servers[server_id] = client
+            self.failed.pop(server_id, None)
+        else:
+            self.failed[server_id] = str(self.last_error or "启动失败")
         return ok
 
     def add_remote_server(
@@ -924,10 +955,17 @@ class McpServerManager:
             oauth_status_cb=oauth_status_cb,
             oauth_no_browser=oauth_no_browser,
         )
-        ok = client.start()
+        self.starting.add(server_id)
+        try:
+            ok = client.start()
+        finally:
+            self.starting.discard(server_id)
         self.last_error = getattr(client, "last_error", None)
         if ok:
             self.servers[server_id] = client
+            self.failed.pop(server_id, None)
+        else:
+            self.failed[server_id] = str(self.last_error or "启动失败")
         return ok
 
     def add_from_config(self, server_id: str, config: dict) -> bool:
@@ -965,7 +1003,8 @@ class McpServerManager:
         return False
 
     def remove_server(self, server_id: str):
-        """移除 MCP server"""
+        """移除 MCP server(顺手清掉它的失败记录,免得面板一直挂着旧原因)"""
+        self.failed.pop(server_id, None)
         if server_id in self.servers:
             self.servers[server_id].stop()
             del self.servers[server_id]

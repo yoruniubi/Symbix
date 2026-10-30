@@ -53,6 +53,9 @@ from application.routers.chat.helpers import (
     _is_read_only_parallel_tool,
     run_tools_parallel,
     MAX_CUM_TOOL_TOKENS,
+    MAX_TOOL_ROUNDS,
+    MAX_REPEAT_BLOCKED_STREAK,
+    check_repeat_tool_call,
     build_usage_payload,
 )
 
@@ -265,17 +268,14 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             if flushed is not None:
                 yield format_sse(flushed)
 
-            max_rounds = 25
+            max_rounds = MAX_TOOL_ROUNDS
             round_count = 0
             # last_reasoning 已在首轮循环前初始化,这里不再覆盖。
             attempted_tool_calls = set()
-            # 按(工具名, 参数)签名统计:仅同参数反复调用才触发,不同参数(如连续改不同文件)不误伤
-            tool_name_counts: dict[tuple, int] = {}
-            # 写入/创建类工具(对同一会话重复运行是不正常的)
-            WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",
-                           "delete_file", "create_skill", "run_command",
-                           "open_terminal"}
-            MAX_WRITE_CALLS_PER_NAME = 3
+            # 每个(工具, 参数)签名在本请求里真执行了几次(跨轮累计,见 check_repeat_tool_call)
+            call_counts: dict[tuple, int] = {}
+            # 连续被拦次数:模型无视提示原地打转时靠它收尾
+            repeat_blocked_streak = 0
 
             # —— 多轮工具上下文累积 ——
             # 首轮流结束后,以与首轮请求一致的 messages 为基底(history + user),
@@ -336,9 +336,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 round_count += 1
                 # 本轮实际执行(拿到结果)的工具,供轮末累积进 running_msgs。
                 round_results: list[dict] = []
-                # 本轮被"重复拦截"注入合成结果的次数;若模型无视提示持续重复,
-                # 连续多次合成无真实执行说明陷入死循环 → 强制收尾。
-                synthetic_count = 0
+                # 本轮的签名集合:同一轮里出现两条一模一样的调用 → 直接拦(见 check_repeat_tool_call)
+                round_signatures: set = set()
 
                 steps.append({
                     "type": "tool_calls",
@@ -369,14 +368,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         )
                     except (TypeError, _json.JSONDecodeError):
                         call_signature = (tc_name, str(tc_args))
-                    if call_signature in attempted_tool_calls:
-                        # 同一工具+相同参数在本轮内已被调用过:不再真实执行,
-                        # 而是向模型注入一条合成结果,让它基于已有结果继续或调整参数。
-                        repeated_error = (
-                            f"[System] 工具 `{tc_name}` 在本轮已用相同参数调用过,已阻止重复执行。"
-                            "请基于上文的工具结果继续推进;若确实需要最新状态/重跑,"
-                            "请更换参数或向用户说明理由,不要原样重试。"
-                        )
+                    repeat_action, repeated_error = check_repeat_tool_call(
+                        call_signature, round_signatures, call_counts,
+                    )
+                    if repeat_action == "block":
+                        # 同一轮重复 / 磨同一个调用:不真实执行,只注入合成结果,
+                        # 让模型基于已有结果继续或调整参数。
                         steps.append({
                             "type": "tool_result",
                             "tool_call_id": tc_id,
@@ -398,41 +395,19 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             "content": repeated_error,
                             "arguments": tc_args,
                         })
-                        synthetic_count += 1
-                        # 若连续多次重复仍被模型无视 → 直接结束整个工具循环,不再空转。
-                        if synthetic_count >= 2:
+                        repeat_blocked_streak += 1
+                        # 连续被拦仍未改口 → 直接结束整个工具循环,不再空转。
+                        if repeat_blocked_streak >= MAX_REPEAT_BLOCKED_STREAK:
                             tool_calls_raw = None
                             full_text = full_text or repeated_error
                             break
                         # 跳过该重复调用,继续处理同轮其余工具(而非直接中断整轮)。
                         continue
+                    # 放行:记进本轮签名集合(同轮再来一次就拦)与跨轮执行次数
+                    repeat_blocked_streak = 0
+                    round_signatures.add(call_signature)
+                    call_counts[call_signature] = call_counts.get(call_signature, 0) + 1
                     attempted_tool_calls.add(call_signature)
-
-                    # 额外频次检测:同一工具+相同参数(签名)反复调用超过阈值才强制终止循环。
-                    if tc_name in WRITE_TOOLS:
-                        tool_name_counts[call_signature] = tool_name_counts.get(call_signature, 0) + 1
-                        if tool_name_counts[call_signature] > MAX_WRITE_CALLS_PER_NAME:
-                            stop_hint = (
-                                f"[System] 工具 `{tc_name}` 已用相同参数被调用 "
-                                f"{tool_name_counts[call_signature] - 1} 次。看起来你在重复调用同一工具。"
-                                "请立即停下来,向用户总结已完成的工作、实际结果、未完成项与原因,"
-                                "不要再调用任何写入/创建类工具。"
-                            )
-                            steps.append({
-                                "type": "tool_result",
-                                "tool_call_id": tc_id,
-                                "name": tc_name,
-                                "content": stop_hint,
-                            })
-                            yield format_sse({
-                                "type": "tool_result",
-                                "id": tc_id,
-                                "name": tc_name,
-                                "content": stop_hint,
-                            })
-                            tool_calls_raw = None
-                            full_text = full_text or stop_hint
-                            break
 
                     # 动态风险分级:根据工具名和参数判断是否需要审批(通道化 + 会话信任)
                     _risk, _needs_approval, _ = classify_for_chat(
@@ -458,7 +433,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "system_prompt": stable_prompt,
                                 "tool_chain_msgs": tool_chain_msgs,
                                 "attempted_tool_calls": attempted_tool_calls,
-                                "tool_name_counts": tool_name_counts,
+                                "call_counts": call_counts,
                                 "mcp_tools": mcp_tools,
                                 "api_key": api_key,
                                 "api_base": api_base,
@@ -533,7 +508,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                             "system_prompt": stable_prompt,
                             "tool_chain_msgs": tool_chain_msgs,
                             "attempted_tool_calls": attempted_tool_calls,
-                            "tool_name_counts": tool_name_counts,
+                            "call_counts": call_counts,
                             "mcp_tools": mcp_tools,
                             "api_key": api_key,
                             "api_base": api_base,
@@ -707,7 +682,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     print(f"[chat_stream] 工具结果累积超限({cum_tool_tokens} tok),终止工具循环")
                     tool_calls_raw = None
                     full_text = full_text or (
-                        "[已完成较多工具调用,为避免上下文过长提前收尾。]"
+"[本轮工具结果累计已到上下文上限,为避免超出模型上下文先收尾;"
+                            "剩下的步骤可以让我继续,或分批做。]"
                     )
                     break
 

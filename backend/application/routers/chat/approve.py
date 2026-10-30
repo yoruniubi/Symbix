@@ -44,6 +44,9 @@ from application.routers.chat.helpers import (
     _execute_tool,
     _stream_tool_events,
     MAX_CUM_TOOL_TOKENS,
+    MAX_TOOL_ROUNDS,
+    MAX_REPEAT_BLOCKED_STREAK,
+    check_repeat_tool_call,
     build_usage_payload,
 )
 
@@ -256,7 +259,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             })
 
         last_reasoning = ctx.get("last_reasoning")
-        max_tool_rounds = 25
+        max_tool_rounds = MAX_TOOL_ROUNDS
         session_id = ctx["session_id"]
 
         # ---- 流式生成后续回复（SSE） ----
@@ -378,18 +381,12 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
 
                 # 后续 tool_calls 循环(复用 chat_stream 主循环逻辑)
                 round_count_local = ctx["round_count"]
-                # 跨审批延续去重集合:让嵌套/后续审批仍记得前面已调用过的 (name, args)。
-                attempted = set(ctx.get("attempted_tool_calls") or ())
-                # 频次检测:同一工具+相同参数(签名)调用超过阈值才触发(不同参数不误伤)
-                name_counts_local: dict[tuple, int] = dict(ctx.get("tool_name_counts") or {})
-                LOCAL_WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",
-                                     "delete_file", "create_skill", "run_command",
-                                     "open_terminal"}
-                MAX_WRITE_NAME = 3
+                # 跨审批延续:每个(工具, 参数)签名已真执行过几次(见 check_repeat_tool_call)
+                call_counts: dict[tuple, int] = dict(ctx.get("call_counts") or {})
                 # 防上下文无限增长:随每轮工具结果累计估算 token。
                 cum_tool_tokens = 0
-                # 本轮连续"重复拦截"注入合成结果的次数,防模型无视提示死循环。
-                synthetic_count = 0
+                # 连续被拦次数:模型无视提示原地打转时靠它收尾
+                repeat_blocked_streak = 0
                 while tool_calls_raw and round_count_local < max_tool_rounds:
                     # 客户端断连检测：前端 abort / 删 session 会断 SSE 连接，后端需主动停。
                     if await http_request.is_disconnected():
@@ -406,6 +403,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     })
                     yield format_sse({"type": "steps", "steps": steps})
 
+                    # 本轮的签名集合:同一轮里出现两条一模一样的调用 → 直接拦
+                    round_signatures: set = set()
                     new_results = []
                     for idx_tc, tc in enumerate(tool_calls_raw):
                         tc_id = tc["id"]
@@ -418,44 +417,22 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             sig = (tc_name, _json.dumps(parsed, ensure_ascii=False, sort_keys=True))
                         except (TypeError, _json.JSONDecodeError):
                             sig = (tc_name, str(tc_args))
-                        if sig in attempted:
-                            err = (
-                                f"[System] 工具 `{tc_name}` 在本轮已用相同参数调用过,已阻止重复执行。"
-                                "请基于上文的工具结果继续推进;若确实需要最新状态/重跑,"
-                                "请更换参数或向用户说明理由,不要原样重试。"
-                            )
+                        repeat_action, err = check_repeat_tool_call(sig, round_signatures, call_counts)
+                        if repeat_action == "block":
                             steps.append({"type": "tool_result", "tool_call_id": tc_id, "name": tc_name, "content": err, "synthetic": True})
                             yield format_sse({"type": "tool_result", "id": tc_id, "name": tc_name, "content": err})
                             # 合成结果同样进入 new_results,让模型看到"已被拦"。
                             new_results.append({"tool_call_id": tc_id, "role": "tool", "name": tc_name, "content": err, "arguments": tc_args})
-                            synthetic_count += 1
+                            repeat_blocked_streak += 1
                             # 模型连续两次无视重复提示 → 直接结束循环收尾。
-                            if synthetic_count >= 2:
+                            if repeat_blocked_streak >= MAX_REPEAT_BLOCKED_STREAK:
                                 tool_calls_raw = None
                                 full_text = full_text or err
                                 break
                             continue
-                        attempted.add(sig)
-
-                        # 频次检测:同一工具+相同参数(签名)反复调用 → 强制终止循环,要求总结
-                        if tc_name in LOCAL_WRITE_TOOLS:
-                            name_counts_local[sig] = name_counts_local.get(sig, 0) + 1
-                            if name_counts_local[sig] > MAX_WRITE_NAME:
-                                stop_hint = (
-                                    f"[System] 工具 `{tc_name}` 已用相同参数被调用 "
-                                    f"{name_counts_local[sig] - 1} 次。看起来你在重复调用同一工具。"
-                                    "请立即停下来,向用户总结已完成的工作,不要再调用任何写入工具。"
-                                )
-                                steps.append({
-                                    "type": "tool_result",
-                                    "tool_call_id": tc_id,
-                                    "name": tc_name,
-                                    "content": stop_hint,
-                                })
-                                yield format_sse({"type": "tool_result", "id": tc_id, "name": tc_name, "content": stop_hint})
-                                tool_calls_raw = None
-                                full_text = full_text or stop_hint
-                                break
+                        repeat_blocked_streak = 0
+                        round_signatures.add(sig)
+                        call_counts[sig] = call_counts.get(sig, 0) + 1
 
                         _risk, _needs_approval, _ = classify_for_chat(
                             tc_name, tc_args, mcp_tools, session_id,
@@ -477,8 +454,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     # 嵌套提问也要带回本轮 system prompt 快照(续跑显式传参)
                                     "system_prompt": ctx.get("system_prompt") or req.system_prompt or "",
                                     "tool_chain_msgs": _steps_to_tool_messages(steps),
-                                    "attempted_tool_calls": attempted,
-                                    "tool_name_counts": name_counts_local,
+                                    "call_counts": call_counts,
                                     "mcp_tools": mcp_tools,
                                     "api_key": api_key,
                                     "api_base": api_base,
@@ -536,8 +512,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 # 嵌套审批也要带上前置已执行工具链 + 去重集合,
                                 # 否则二次审批续跑又会对前面的工具"失忆"。
                                 "tool_chain_msgs": _steps_to_tool_messages(steps),
-                                "attempted_tool_calls": attempted,
-                                "tool_name_counts": name_counts_local,
+                                "call_counts": call_counts,
                                 "mcp_tools": mcp_tools,
                                 "api_key": api_key,
                                 "api_base": api_base,
@@ -620,7 +595,10 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     if cum_tool_tokens > MAX_CUM_TOOL_TOKENS:
                         print(f"[approve] 工具结果累积超限({cum_tool_tokens} tok),终止工具循环")
                         tool_calls_raw = None
-                        full_text = full_text or "[已完成较多工具调用,为避免上下文过长提前收尾。]"
+                        full_text = full_text or (
+"[本轮工具结果累计已到上下文上限,为避免超出模型上下文先收尾;"
+                            "剩下的步骤可以让我继续,或分批做。]"
+                        )
                         break
                     msgs = running_msgs
 
