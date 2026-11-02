@@ -358,6 +358,10 @@ async def get_mcp_config():
 async def update_mcp_config(mcpServers: dict = None):
     """更新 MCP 配置（新格式）"""
     if mcpServers is not None:
+        # 兼容两种请求体:直接给 servers 映射,或给整份配置 {"mcpServers": {...}}。
+        # 不拆的话前者是对的,后者会写出 "mcpServers": {"mcpServers": {...}} 把配置搞坏。
+        if isinstance(mcpServers.get("mcpServers"), dict):
+            mcpServers = mcpServers["mcpServers"]
         mcp_config.data["mcpServers"] = mcpServers
         mcp_config.save()
         # 停掉全部 + 重拉:两者都会 spawn/kill 子进程,同样不能占着事件循环

@@ -15,6 +15,9 @@ backend/Symbix_sdk/config/voice_config.json
 backend/Symbix_sdk/config/mcp_oauth.json
 backend/Symbix_sdk/config/mcp_oauth.json.tmp
 backend/Symbix_sdk/config/mcp_config.json
+# Petdex 商店清单缓存(5209 条,按需重新拉取)
+backend/Symbix_sdk/config/petdex_manifest.json
+backend/Symbix_sdk/config/petdex_thumbs/
 # TTS/STT local model & binaries (large, downloaded separately)
 backend/Symbix_sdk/tts/model
 backend/Symbix_sdk/stt/bin
@@ -108,3 +111,6 @@ backend/build/
 backend/dist/
 # release_assets.py pack 的产物(资产 zip + manifest,上传资产 Release 后可删)
 backend/dist-assets/
+
+Symbix_frontend/public/codex_pet
+Symbix_frontend/public/pixiv_pet

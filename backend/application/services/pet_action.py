@@ -6,7 +6,6 @@ import uuid
 from collections import deque
 from typing import Any
 
-
 # 与前端 Home.vue ROWS 对齐的规范动作
 PET_ACTIONS = frozenset(
     {
@@ -19,6 +18,10 @@ PET_ACTIONS = frozenset(
         "running",
         "runningRight",
         "runningLeft",
+        # Codex Row Contract 的正名(行 6/7/8),旧名仍可用
+        "progress",
+        "patrol",
+        "coding",
         # 语义别名（emit 时会归一化）
         "happy",
         "thinking",
@@ -43,7 +46,7 @@ ACTION_ALIASES: dict[str, str] = {
 
 # 可循环播放的状态（与前端 LOOP_STATES 一致）
 LOOP_ACTIONS = frozenset(
-    {"idle", "waiting", "running", "runningRight", "runningLeft"}
+    {"idle", "waiting", "running", "patrol", "runningRight", "runningLeft"}
 )
 
 
@@ -66,6 +69,9 @@ def normalize_pet_action(action: str) -> str:
         "running": "running",
         "runningright": "runningRight",
         "runningleft": "runningLeft",
+        "progress": "progress",
+        "patrol": "patrol",
+        "coding": "coding",
         "happy": "happy",
         "celebrate": "celebrate",
         "thinking": "thinking",

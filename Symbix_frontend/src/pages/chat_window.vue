@@ -924,6 +924,13 @@ function publishAgentStatus(status: AgentStatus, bubble?: string) {
   })
 }
 
+/** 工具完成数 → Home 的进度条行(行 6),每多一个工具调用往前一格。 */
+function publishAgentProgress(completed: number) {
+  void emitTauri('agent-progress', { completed }).catch((error) => {
+    console.debug('[agent-progress] event unavailable:', error)
+  })
+}
+
 /** 告诉 Home「这条搭话种子已经入会话了」,让它停止重发(见 Home.openChatFromProactive)。 */
 function ackProactiveSeed(ts: number) {
   if (!ts) return
@@ -1198,6 +1205,9 @@ function handleSSEEvent(
         ...s,
         arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
       }))
+      if (status === 'done') {
+        publishAgentProgress(steps.filter((s: any) => s.status === 'done').length)
+      }
       nextTick(() => scrollToBottom())
       break
     }

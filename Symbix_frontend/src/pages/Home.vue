@@ -72,10 +72,17 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
-
 import { useI18n } from 'vue-i18n'
 import { speak } from '@/utils/backend'
 import { fitsSheetContract, SHEET_COLS, SHEET_FRAME_H, SHEET_FRAME_W, SHEET_MIN_ROWS } from '@/utils/petSheet'
+import {
+  PET_FRAME_SEQUENCES,
+  PET_LOOP_STATES,
+  PET_ROWS,
+  petProgressFrameIndex,
+  resolvePetState,
+  type PetState,
+} from '@/utils/petRows'
 import { useReadAloud } from '@/composables/useReadAloud'
 
 const { t } = useI18n()
@@ -89,7 +96,7 @@ const bubbleText = ref('')
 const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 
-// ---- 桌宠模式 ----\r
+// ---- 桌宠模式 ----
 type PetMode = 'work' | 'relax'
 const petMode = ref<PetMode>((localStorage.getItem('petMode') as PetMode) || 'relax')
 
@@ -145,9 +152,9 @@ const STATE_FPS = {
   waving: 6,
   jumping: 6.5,
   failed: 4.5,
-  waiting: 5.5,
-  review: 4.5,
-  running: 8,
+  progress: 6,
+  coding: 4.5,
+  patrol: 8,
   runningRight: 8,
   runningLeft: 8,
 } as const
@@ -157,37 +164,18 @@ const ACTION_SETTLE_MS: Partial<Record<PetState, number>> = {
   waving: 220,
   jumping: 320,
   failed: 520,
-  review: 700,
+  coding: 700,
 }
 // 思考先停一下再开始,让"收到任务 → 回神 → 思考"更自然。
 const ACTION_START_DELAY_MS: Partial<Record<PetState, number>> = {
-  review: 480,
+  coding: 480,
 }
 
-// 标准 Petdex 8x9 spritesheet 行定义
-const ROWS = {
-  idle:         { row: 0, frames: 6 },
-  runningRight: { row: 1, frames: 8 },
-  runningLeft:  { row: 2, frames: 8 },
-  waving:       { row: 3, frames: 4 },
-  jumping:      { row: 4, frames: 5 },
-  failed:       { row: 5, frames: 7 },
-  waiting:      { row: 6, frames: 6 }, // 被抱起时循环(备用)
-  running:      { row: 7, frames: 6 },
-  review:       { row: 8, frames: 6 },
-} as const
-
-type PetState = keyof typeof ROWS
-const LOOP_STATES: ReadonlySet<PetState> = new Set(['idle', 'waiting', 'running', 'runningRight', 'runningLeft'])
+// 行契约见 utils/petRows.ts(8 列 × 9 行,语义按 Codex 官方 Row Contract)。
+const ROWS = PET_ROWS
 
 function isLoopState(state: PetState) {
-  return LOOP_STATES.has(state) || (state === 'review' && agentThinking)
-}
-
-// 个别动作的原图帧并非严格按时间顺序排列,允许在不修改素材的情况下重排/重复帧。
-// failed:站立 → 蹲下 → 跪地 → 趴倒,最后重复趴倒作为落地停留。
-const FRAME_SEQUENCES: Partial<Record<PetState, readonly number[]>> = {
-  failed: [0, 1, 3, 5, 6, 6, 6],
+  return PET_LOOP_STATES.has(state) || (state === 'coding' && agentThinking)
 }
 
 function animationSpeedFor(state: PetState) {
@@ -201,12 +189,12 @@ let baseSource: TextureSource | null = null
 // rAF 停摆兜底(桌宠窗被完全遮挡时 WebView2 会停投 rAF,导致动画冻住)
 let tickerGuard: TickerResilienceHandle | null = null
 let currentState: PetState = 'idle'
-let randomTimer: ReturnType<typeof setTimeout> | null = null
 let actionStartTimer: ReturnType<typeof setTimeout> | null = null
 let actionSettleTimer: ReturnType<typeof setTimeout> | null = null
+// 行 7(patrol)在窗口内就地走两步，不移动窗口。
+let patrolTimer: ReturnType<typeof setTimeout> | null = null
 let actionToken = 0
-let lastRandomAction: PetState | '' = ''
-// Agent 正在处理请求时,review 必须循环播放,直到收到完成/错误/中止状态。
+// Agent 正在处理请求时,coding(行 8 敲键盘)必须循环播放,直到收到完成/错误/中止状态。
 let agentThinking = false
 
 /**
@@ -273,7 +261,7 @@ function attachPointerEndListeners() {
 }
 
 function isRunningState(state: PetState = currentState) {
-  return state === 'runningRight' || state === 'runningLeft' || state === 'running'
+  return state === 'runningRight' || state === 'runningLeft'
 }
 
 function endDragSession(opts: { backToIdle: boolean; swallowClick: boolean }) {
@@ -504,7 +492,7 @@ function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
     baseSource as TextureSource,
     def.row,
     def.frames,
-    FRAME_SEQUENCES[state],
+    PET_FRAME_SEQUENCES[state],
   )
   sprite.animationSpeed = animationSpeedFor(state)
   sprite.loop = isLoopState(state)
@@ -562,45 +550,23 @@ function playState(state: PetState, returnToIdle = true) {
   playStateNow(state, returnToIdle, token)
 }
 
-function pickRandomAction(actions: readonly PetState[], exclude?: string): PetState {
-  const candidates = exclude ? actions.filter((a) => a !== exclude) : [...actions]
-  if (candidates.length === 0) return actions[0]
-  return candidates[Math.floor(Math.random() * candidates.length)]
+function patrolOnce() {
+  if (!sprite || !baseSource || dragSession || agentThinking) return
+  playState('patrol', false)
+  if (patrolTimer) clearTimeout(patrolTimer)
+  patrolTimer = setTimeout(() => {
+    patrolTimer = null
+    // 只有还在巡逻、没被别的动作或对话抢走时才收尾
+    if (currentState === 'patrol') playState(agentThinking ? 'coding' : 'idle', false)
+  }, 4000 + Math.random() * 3000)
 }
 
-function scheduleRandom(delayMs?: number) {
-  randomTimer = setTimeout(() => {
-    // 工作模式:不做随机动作,只保持 idle
-    if (petMode.value !== 'relax') {
-      scheduleRandom()
-      return
-    }
-    if (currentState === 'idle' && !dragSession) {
-      // 所有非循环动作池,充分展现活力
-      const pool = ['waving', 'jumping', 'failed', 'review'] as const
-      const act = pickRandomAction(pool, lastRandomAction)
-      lastRandomAction = act
-      playState(act)
-
-      // 15% 概率在动作完毕后追加第二个动作(连招:更生动)
-      if (Math.random() < 0.15) {
-        const originalAct = act
-        const secondPool = pool.filter(a => a !== originalAct)
-        const secondAct = secondPool[Math.floor(Math.random() * secondPool.length)]
-        // 在第一个动作播完后,短暂延迟再播第二个
-        const frameCount = ROWS[act].frames
-        const playTime = (frameCount / STATE_FPS[act]) * 1000
-        setTimeout(() => {
-          if (currentState === 'idle' && !dragSession) {
-            lastRandomAction = secondAct
-            playState(secondAct)
-          }
-        }, playTime + (ACTION_SETTLE_MS[act] ?? 0) + (ACTION_START_DELAY_MS[secondAct] ?? 0) + 120)
-      }
-    }
-    // 随机间隔 3~9 秒,比之前更紧凑
-    scheduleRandom()
-  }, delayMs ?? (3000 + Math.random() * 6000))
+// 鼠标扫到桌宠时挥个手：只在待机、没在拖、工作模式关掉，作为轻量的「我在呢」反馈。
+function onPetMouseEnter() {
+  if (petMode.value === 'work') return
+  if (currentState === 'idle' && !dragSession) {
+    playState('waving')
+  }
 }
 
 function handlePetClick() {
@@ -619,17 +585,10 @@ function handlePetClick() {
     showBubble(t('home.workingDnd'), 2500)
     return
   }
-  // 点击时所有动作都可触发,包括 review(思考)
-  const clickPool = ['waving', 'jumping', 'failed', 'review'] as const
+  // 点击时所有动作都可触发,包括 coding(敲键盘)
+  const clickPool = ['waving', 'jumping', 'failed', 'coding'] as const
   playState(clickPool[Math.floor(Math.random() * clickPool.length)])
   showBubble(greeting)
-}
-
-function onPetMouseEnter() {
-  if (petMode.value === 'work') return
-  if (currentState === 'idle' && !dragSession) {
-    playState('waving')
-  }
 }
 
 function showBubble(text: string, duration = 3000) {
@@ -644,36 +603,11 @@ function showBubble(text: string, duration = 3000) {
 
 // ---- 后端桌宠事件(emit_pet_action → /pet/events SSE)----
 const BACKEND_URL = 'http://127.0.0.1:8000'
-const ACTION_ALIASES: Record<string, PetState> = {
-  happy: 'jumping',
-  celebrate: 'jumping',
-  jump: 'jumping',
-  wave: 'waving',
-  thinking: 'review',
-  sad: 'failed',
-  error: 'failed',
-  scheduled_job: 'jumping',  // 定时任务触发 → 开心跳一下
-}
 
 let petEventAbort: AbortController | null = null
 let petEventReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let bubbleClearTimer: ReturnType<typeof setTimeout> | null = null
 let lastRemoteActionId = ''
-
-function resolvePetState(action: string | undefined | null): PetState | null {
-  if (!action) return null
-  const raw = String(action).trim()
-  if (!raw) return null
-  if (raw in ROWS) return raw as PetState
-  const key = raw.replace(/[-_]/g, '').toLowerCase()
-  const mapped = ACTION_ALIASES[key] || ACTION_ALIASES[raw]
-  if (mapped) return mapped
-  // runningRight / runningLeft 大小写容错
-  if (key === 'runningright') return 'runningRight'
-  if (key === 'runningleft') return 'runningLeft'
-  if (key === 'running') return 'running'
-  return null
-}
 
 function applyRemotePetAction(payload: {
   id?: string
@@ -704,8 +638,14 @@ function applyRemotePetAction(payload: {
     else console.warn('[pet] unknown action:', payload.action)
     return
   }
-  // 远程循环动作(waiting / running 系)要限时收尾:放完就回 idle,
-  // 思考中则回到 review,保证状态机最终有主;一次性的表情动作播完自然回 idle。
+  // patrol（行 7）：原地走两步当动作展示；
+  if (state === 'patrol') {
+    patrolOnce()
+    if (payload.bubble) showBubble(payload.bubble, 3200)
+    return
+  }
+  // 远程循环动作(running 系)要限时收尾:放完就回 idle,
+  // 思考中则回到 coding,保证状态机最终有主;一次性的表情动作播完自然回 idle。
   // idle 本身就是休息态,不加限时。
   const returnToIdle = !isLoopState(state)
   playState(state, returnToIdle)
@@ -713,7 +653,7 @@ function applyRemotePetAction(payload: {
     remoteLoopTimer = setTimeout(() => {
       remoteLoopTimer = null
       if (currentState !== state) return
-      playState(agentThinking ? 'review' : 'idle', false)
+      playState(agentThinking ? 'coding' : 'idle', false)
     }, REMOTE_LOOP_MAX_MS)
   }
   if (payload.bubble) showBubble(payload.bubble, 3200)
@@ -727,8 +667,8 @@ function applyAgentStatus(payload: { status?: AgentStatus; bubble?: string }) {
 
   if (status === 'thinking') {
     agentThinking = true
-    // false:不要在 review 播完后回 idle,由后续状态事件结束本次循环。
-    playState('review', false)
+    // false:不要在 coding 播完后回 idle,由后续状态事件结束本次循环。
+    playState('coding', false)
     if (payload.bubble) showBubble(payload.bubble, 2200)
     return
   }
@@ -747,6 +687,40 @@ function applyAgentStatus(payload: { status?: AgentStatus; bubble?: string }) {
 }
 
 let unlistenAgentStatus: UnlistenFn | null = null
+let unlistenAgentProgress: UnlistenFn | null = null
+let progressRestoreTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 工具进度 → progress 行(行 6 就是 Codex 契约里的进度条 0/20/40/60/80/100%)。
+ * 只停在一帧上展示一会,然后回到 coding / idle,不做循环。
+ */
+function applyAgentProgress(payload: { completed?: number; total?: number }) {
+  if (!sprite || !baseSource) return
+  if (petMode.value === 'work') return
+  if (dragSession && dragMoved) return
+  const completed = Number(payload?.completed ?? 0)
+  if (!Number.isFinite(completed) || completed <= 0) return
+
+  const idx = petProgressFrameIndex(completed)
+  const def = ROWS.progress
+  currentState = 'progress'
+  if (progressRestoreTimer) {
+    clearTimeout(progressRestoreTimer)
+    progressRestoreTimer = null
+  }
+  sprite.textures = getFrames(baseSource as TextureSource, def.row, def.frames, [idx])
+  sprite.animationSpeed = animationSpeedFor('progress')
+  sprite.loop = false
+  sprite.onComplete = undefined
+  sprite.gotoAndStop(0)
+
+  // 进度条只在工具切换的瞬间闪一下,不能抢住主动作
+  progressRestoreTimer = setTimeout(() => {
+    progressRestoreTimer = null
+    if (currentState !== 'progress') return
+    playState(agentThinking ? 'coding' : 'idle', false)
+  }, 1200)
+}
 
 function parseSseChunk(buffer: string): { events: Array<{ event: string; data: string }>; rest: string } {
   const events: Array<{ event: string; data: string }> = []
@@ -1199,7 +1173,6 @@ onMounted(async () => {
   // 遮挡时 WebView2 会停止投递 rAF → Pixi ticker 停摆 → 动画卡住。装一层兜底:
   // 检测到停摆就手动按 60Hz 推进 ticker,帧回来了再交还浏览器。
   tickerGuard = installTickerResilience(app.ticker)
-  scheduleRandom()
   // 订阅后端 emit_pet_action → SSE,驱动远程动作
   void connectPetEvents()
   // 全屏弹幕窗口(透明 + 鼠标穿透),静默创建
@@ -1242,6 +1215,16 @@ onMounted(async () => {
     console.warn('[pet] failed to listen agent-status:', e)
   }
 
+  // 工具进度 → 进度条行(行 6)。聊天窗每完成一个工具调用广播一次。
+  try {
+    unlistenAgentProgress = await listen<{ completed?: number; total?: number }>(
+      'agent-progress',
+      (event) => applyAgentProgress(event.payload || {}),
+    )
+  } catch (e) {
+    console.warn('[pet] failed to listen agent-progress:', e)
+  }
+
   // 订阅皮肤切换事件(Tauri 跨窗口)
   try {
     const { listen } = await import('@tauri-apps/api/event')
@@ -1280,7 +1263,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (randomTimer) clearTimeout(randomTimer)
+  if (patrolTimer) {
+    clearTimeout(patrolTimer)
+    patrolTimer = null
+  }
   stopPetEvents()
   if (bubbleClearTimer) {
     clearTimeout(bubbleClearTimer)
@@ -1306,6 +1292,14 @@ onUnmounted(() => {
   if (unlistenAgentStatus) {
     unlistenAgentStatus()
     unlistenAgentStatus = null
+  }
+  if (unlistenAgentProgress) {
+    unlistenAgentProgress()
+    unlistenAgentProgress = null
+  }
+  if (progressRestoreTimer) {
+    clearTimeout(progressRestoreTimer)
+    progressRestoreTimer = null
   }
   if (onPetStorage) {
     window.removeEventListener('storage', onPetStorage)

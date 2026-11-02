@@ -8,6 +8,8 @@ PET_ACTION_ENUM = [
     "failed",
     "waiting",
     "review",
+    "coding",     
+    "patrol",    
     "happy",      # → jumping
     "thinking",   # → review
     "sad",        # → failed
@@ -47,7 +49,7 @@ def check_agent_status(status: str) -> dict:
 
     result = status_map.get(status, {"status": "unknown", "message": f"未知状态: {status}", "action": "idle"})
     # 确保 action 是有效值
-    if result["action"] not in ["idle", "waving", "jumping", "failed", "waiting", "review"]:
+    if result["action"] not in ["idle", "waving", "jumping", "failed", "waiting", "review", "coding", "patrol"]:
         result["action"] = "idle"
     return result
 

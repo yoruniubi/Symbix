@@ -1,15 +1,3 @@
-"""主动搭话(Proactive Companion)。
-
-陪伴感的核心是「它想着我」:不只是被动应答,还会在合适的时机主动开口。
-本模块挂在 main.py 的陪伴心跳(_companion_loop,每 60s)上,三类触发:
-
-1. 空闲搭话 —— 距上次用户交互超过阈值,带随机抖动地冒一句(不机械)
-2. 记忆回访 —— 从长期记忆里翻一条旧事,「还记得你说过 XX 吗」
-3. 频控 —— 每日上限 + 最小间隔,弹幕总开关关闭时整体静默
-
-事件通过 pet_action 总线发布,type=proactive,前端弹幕窗渲染成
-可点击气泡;点击后经 Tauri 事件打开聊天窗并带入该条上下文。
-"""
 from __future__ import annotations
 
 import random

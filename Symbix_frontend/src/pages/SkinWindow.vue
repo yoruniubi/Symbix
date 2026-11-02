@@ -54,8 +54,8 @@
             </svg>
           </button>
 
-          <!-- 方式 2：Codex 桌宠导入（Tauri 原生选目录 / 浏览器回退） -->
-          <button type="button" class="add-card" @click="pickFolder">
+          <!-- 方式 2：Codex 桌宠导入（点开先选来源：本地文件夹 / Petdex 商店） -->
+          <button type="button" class="add-card" @click="showImportChoice = true">
             <div class="add-card-icon import">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -195,6 +195,98 @@
         </n-space>
       </template>
     </n-modal>
+    <!-- 导入方式选择：文件夹 / Petdex 商店 -->
+    <n-modal
+      v-model:show="showImportChoice"
+      preset="card"
+      :title="t('skinWindow.importChoiceTitle')"
+      style="width: 400px; max-width: 94vw;"
+      :bordered="false"
+    >
+      <div class="import-choice">
+        <button type="button" class="import-choice-row" @click="chooseFolderImport">
+          <div class="import-choice-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+          </div>
+          <div class="import-choice-body">
+            <div class="import-choice-title">{{ t('skinWindow.importChoiceFolder') }}</div>
+            <div class="import-choice-desc">{{ t('skinWindow.importChoiceFolderDesc') }}</div>
+          </div>
+        </button>
+
+        <button type="button" class="import-choice-row" @click="chooseStoreImport">
+          <div class="import-choice-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9l1.5-5h15L21 9" />
+              <path d="M4 9h16v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" />
+              <path d="M9 13a3 3 0 0 0 6 0" />
+            </svg>
+          </div>
+          <div class="import-choice-body">
+            <div class="import-choice-title">{{ t('skinWindow.importChoiceStore') }}</div>
+            <div class="import-choice-desc">{{ t('skinWindow.importChoiceStoreDesc') }}</div>
+          </div>
+        </button>
+      </div>
+    </n-modal>
+    <!-- Petdex 商店 -->
+    <n-modal
+      v-model:show="showStoreModal"
+      preset="card"
+      :title="t('skinWindow.storeTitle')"
+      style="width: 460px; max-width: 94vw;"
+      :bordered="false"
+    >
+      <div class="store-body">
+        <n-input-group>
+          <n-input
+            v-model:value="storeQuery"
+            :placeholder="t('skinWindow.storeSearchPlaceholder')"
+            clearable
+            @keyup.enter="submitStoreInput()"
+          />
+          <n-button type="primary" ghost :loading="storeLoading" @click="searchPetdex()">
+            {{ t('skinWindow.storeSearch') }}
+          </n-button>
+        </n-input-group>
+
+        <div v-if="storeResults.length" class="store-list">
+          <div v-for="item in storeResults" :key="item.slug" class="store-row">
+            <img
+              v-if="item.spritesheet"
+              class="store-thumb"
+              :src="thumbUrl(item.slug)"
+              :alt="item.display_name"
+              loading="lazy"
+              :title="t('skinWindow.storePreviewHint')"
+              @click="previewPetdex(item)"
+            />
+            <div class="store-row-main">
+              <div class="store-row-name">{{ item.display_name }}</div>
+              <div class="store-row-meta">{{ item.slug }}<span v-if="item.author"> · {{ item.author }}</span></div>
+            </div>
+            <span v-if="item.installed" class="store-tag">{{ t('skinWindow.storeInstalled') }}</span>
+            <n-button
+              size="tiny"
+              :type="item.installed ? 'default' : 'primary'"
+              :loading="installingSlug === item.slug"
+              @click="installPetdex(item)"
+            >
+              {{ item.installed ? t('skinWindow.storeReinstall') : t('skinWindow.storeInstallBtn') }}
+            </n-button>
+          </div>
+        </div>
+        <n-empty
+          v-else
+          size="small"
+          :description="storeSearched ? t('skinWindow.storeEmpty') : t('skinWindow.storeHint')"
+          style="margin: 12px 0;"
+        />
+
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -207,6 +299,7 @@ import { Assets, Texture } from 'pixi.js'
 import { useI18n } from 'vue-i18n'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { fitsSheetContract } from '@/utils/petSheet'
+
 const { t } = useI18n()
 const skillList = ref([])
 interface PetSkin {
@@ -666,6 +759,138 @@ async function pickFolder() {
   }
 }
 
+// ── Petdex 商店（后端走公开 manifest,不依赖 npx/node） ──────
+interface StoreItem {
+  slug: string
+  display_name: string
+  author?: string
+  /** 官方 sprite 全图(仅用来判断有没有封面) */
+  spritesheet?: string
+  /** petdex.dev 上的详情页,点封面去那儿看动画预览 */
+  page_url?: string
+  installed?: boolean
+}
+
+const showStoreModal = ref(false)
+// Codex 导入卡点开后的来源选择（文件夹 / Petdex 商店）
+const showImportChoice = ref(false)
+const storeQuery = ref('')
+const storeResults = ref<StoreItem[]>([])
+const storeLoading = ref(false)
+const storeSearched = ref(false)
+const installingSlug = ref('')
+
+async function openStore() {
+  showStoreModal.value = true
+  if (!storeResults.value.length && !storeLoading.value) await searchPetdex()
+}
+
+/** 封面走后端裁首帧的缓存小图(官方 sprite 全图 1.9MB,直接当缩略图会拖死列表)。 */
+function thumbUrl(slug: string) {
+  return `${BACKEND_URL}/pet/store/thumb?slug=${encodeURIComponent(slug)}`
+}
+
+/** 点封面 → 去 petdex.dev 的详情页看真正的动画预览。 */
+async function previewPetdex(item: StoreItem) {
+  const url = item.page_url || `https://petdex.dev/pets/${encodeURIComponent(item.slug)}`
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener')
+    await openUrl(url)
+  } catch {
+    window.open(url, '_blank', 'noopener')
+  }
+}
+
+/** 选项一：选本地文件夹（复用原有的导入流程） */
+function chooseFolderImport() {
+  showImportChoice.value = false
+  void pickFolder()
+}
+
+/** 选项二：Petdex 商店 */
+function chooseStoreImport() {
+  showImportChoice.value = false
+  void openStore()
+}
+
+/** 官方 README 里那串命令(npx / bunx petdex install <slug>),直接贴进来就行。 */
+const STORE_CMD_RE = /(?:npx|bunx|pnpm\s+dlx|yarn\s+dlx|bun\s+x)\b[^\n]*?\binstall\s+([A-Za-z0-9][A-Za-z0-9._-]{0,63})/i
+const STORE_RUNNER_RE = /^\s*(?:npx|bunx|pnpm|yarn|bun)\b/i
+
+/** 命令里的目标也允许写中文显示名(如 `npx petdex install 大橘猫`)。 */
+function storeCommandTarget(raw: string): string {
+  const hit = raw.match(STORE_CMD_RE)
+  if (hit) return hit[1]
+  if (STORE_RUNNER_RE.test(raw)) {
+    const parts = raw.split(/\s+/).filter(Boolean)
+    return parts[parts.length - 1] || raw
+  }
+  return ''
+}
+
+function submitStoreInput() {
+  const raw = storeQuery.value.trim()
+  if (!raw) {
+    void searchPetdex()
+    return
+  }
+  const slug = storeCommandTarget(raw)
+  if (slug && slug !== raw) {
+    // 粘贴的是完整命令 → 直接装,不再当搜索词
+    void installPetdex({ slug, display_name: slug })
+    return
+  }
+  void searchPetdex()
+}
+
+async function searchPetdex() {
+  storeLoading.value = true
+  try {
+    const q = storeQuery.value.trim()
+    const url = `${BACKEND_URL}/pet/store/search?limit=24${q ? `&q=${encodeURIComponent(q)}` : ''}`
+    const res = await fetch(url)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error((err as any)?.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    storeResults.value = (data.items || []) as StoreItem[]
+    storeSearched.value = true
+  } catch (e: any) {
+    message.error(t('skinWindow.storeSearchFail', { msg: e.message || e }))
+  } finally {
+    storeLoading.value = false
+  }
+}
+
+async function installPetdex(item: StoreItem) {
+  installingSlug.value = item.slug
+  const loadingMsg = message.loading(t('skinWindow.storeInstalling', { name: item.display_name }), { duration: 0 })
+  try {
+    const res = await fetch(`${BACKEND_URL}/pet/store/install`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: item.slug, overwrite: true }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error((data as any)?.detail || `HTTP ${res.status}`)
+    const displayName = data.display_name || item.display_name
+    pushImportedPet({
+      id: `custom_${Date.now()}`,
+      displayName,
+      preview: data.preview || `/codex_pet/${item.slug}/spritesheet.webp`,
+      source: 'imported',
+    })
+    item.installed = true
+    loadingMsg.destroy()
+    message.success(t('skinWindow.storeInstallDone', { name: displayName }))
+  } catch (e: any) {
+    loadingMsg.destroy()
+    message.error(t('skinWindow.storeInstallFail', { msg: e.message || e }))
+  } finally {
+    installingSlug.value = ''
+  }
+}
 
 // ── 磁盘皮肤扫描 / 烘焙 / 切换 ──────────────────────────────────
 /**
@@ -1033,7 +1258,8 @@ onMounted(() => {
 /* ---- Add cards ---- */
 .add-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* 卡片数量会变(导入已合并成一张),用 auto-fit 让单张卡铺满宽度 */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
 }
 
@@ -1090,6 +1316,133 @@ onMounted(() => {
 .add-card-icon.import {
   color: var(--info, #5B8AC4);
   background: rgba(91, 138, 196, 0.12);
+}
+
+/* Codex 导入：点开卡先选来源（文件夹 / Petdex 商店） */
+.import-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.import-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast, 120ms) ease,
+    background var(--duration-fast, 120ms) ease;
+}
+
+.import-choice-row:hover {
+  border-color: var(--accent-border, rgba(239, 107, 110, 0.45));
+  background: var(--accent-soft);
+}
+
+.import-choice-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--info, #5B8AC4);
+  background: rgba(91, 138, 196, 0.12);
+}
+
+.import-choice-body {
+  min-width: 0;
+}
+
+.import-choice-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.import-choice-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Petdex 商店弹窗 */
+.store-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.store-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.store-thumb {
+  width: 40px;
+  height: 44px;
+  object-fit: cover;
+  object-position: 50% 0;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.store-thumb:hover {
+  outline: 1px solid var(--border);
+}
+
+.store-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.store-row:last-child {
+  border-bottom: none;
+}
+
+.store-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.store-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-tag {
+  font-size: 11px;
+  color: var(--success);
+  background: rgba(95, 158, 110, 0.12);
+  padding: 1px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
 .add-card-body {

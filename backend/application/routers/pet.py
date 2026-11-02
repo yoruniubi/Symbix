@@ -1,13 +1,19 @@
 
 from __future__ import annotations
 import asyncio
+import io
 import json as _json
 import os
+import re
 import shutil
+import tempfile
+import time
+import urllib.request
+import zipfile
 from functools import lru_cache
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from application.services.memory_ops import format_sse
@@ -540,3 +546,389 @@ async def pet_bake_theme(req: PetBakeRequest):
 
     return {"status": "ok", **result}
 
+
+
+# ── Petdex 宠物商店 ───────────────────────────────────────────────
+# Petdex 有公开 manifest(petdex.dev/api/manifest/v2),不用登录、不用 node/npx,
+# 纯 HTTP 就能装。`npx petdex@latest install <slug>` 落地的也是同样两个文件
+# (pet.json + spritesheet.webp),所以本机已装的目录也能一键导入。
+PETDEX_MANIFEST_URL = os.environ.get(
+    "SYMBIX_PETDEX_MANIFEST", "https://petdex.dev/api/manifest/v2"
+)
+_PETDEX_CACHE_TTL = 6 * 3600
+_PETDEX_CACHE = Path(__file__).resolve().parents[2] / "Symbix_sdk" / "config" / "petdex_manifest.json"
+# 商店封面图缓存:官方 sprite.webp 每张 ~1.9MB,直接给 <img> 当缩略图会拖死列表,
+# 所以后端裁出首帧缩成小图落盘,一张 ~5KB。
+_PETDEX_THUMB_DIR = Path(__file__).resolve().parents[2] / "Symbix_sdk" / "config" / "petdex_thumbs"
+_PETDEX_THUMB_SIZE = (96, 104)
+_PETDEX_THUMB_MAX_BYTES = 12 * 1024 * 1024
+_PETDEX_MAX_BYTES = 40 * 1024 * 1024
+_PETDEX_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# 允许直接粘官方 README 里的命令: npx petdex@latest install succy /
+# bunx petdex install succy / bun x petdex@latest install succy
+_PETDEX_CMD_RE = re.compile(
+    r"(?:npx|bunx|pnpm\s+dlx|yarn\s+dlx|bun\s+x)\b[^\n]*?\binstall\s+([A-Za-z0-9][A-Za-z0-9._-]{0,63})",
+    re.IGNORECASE,
+)
+
+
+_PETDEX_RUNNER_RE = re.compile(
+    r"^\s*(?:npx|bunx|pnpm|yarn|bun)\b", re.IGNORECASE
+)
+
+
+def _petdex_parse_query(raw: str) -> str:
+    """把「npx petdex install succy」这种整条命令拆成一个 slug/名字。"""
+    text = (raw or "").strip().strip('"\'').strip()
+    if not text:
+        return ""
+    hit = _PETDEX_CMD_RE.search(text)
+    if hit:
+        return hit.group(1)
+    # 命令里的目标不一定是 ASCII slug(也允许中文显示名),退一步取最后一个词
+    if _PETDEX_RUNNER_RE.match(text):
+        tail = text.split()[-1].strip('"\'')
+        return tail or text
+    return text
+
+
+class PetStoreInstallRequest(BaseModel):
+    slug: str = Field(..., description="Petdex 宠物 slug(如 succy)或显示名")
+    overwrite: bool = Field(True, description="同名皮肤已存在时是否覆盖")
+
+
+def _http_get_bytes(url: str, timeout: float = 90.0) -> bytes:
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Symbix/0.1.0", "Accept": "*/*"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return resp.read()
+
+
+def _petdex_manifest(force: bool = False) -> dict:
+    """读 6 小时缓存或拉取 manifest,归一化成 {assetBase, items:[{slug,...}]}。"""
+    now = time.time()
+    if not force and _PETDEX_CACHE.is_file():
+        try:
+            cached = _json.loads(_PETDEX_CACHE.read_text(encoding="utf-8"))
+            if cached.get("items") and now - float(cached.get("fetched_at") or 0) < _PETDEX_CACHE_TTL:
+                return cached
+        except Exception:
+            pass
+
+    try:
+        raw = _http_get_bytes(PETDEX_MANIFEST_URL)
+    except Exception as e:  # noqa: BLE001
+        # 网络挂了但有旧缓存就降级用旧的,别让面板整个空掉
+        if _PETDEX_CACHE.is_file():
+            try:
+                return _json.loads(_PETDEX_CACHE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail=f"拉取 Petdex 清单失败: {e}") from e
+
+    data = _json.loads(raw.decode("utf-8"))
+    fields = [str(f) for f in (data.get("fields") or [])]
+    items: list[dict] = []
+    for row in data.get("pets") or []:
+        if not isinstance(row, list):
+            continue
+        rec = {k: v for k, v in zip(fields, row)}
+        if not rec.get("slug"):
+            continue
+        items.append(rec)
+
+    payload = {
+        "assetBase": str(data.get("assetBase") or "").rstrip("/"),
+        "generatedAt": data.get("generatedAt"),
+        "items": items,
+        "fetched_at": now,
+    }
+    try:
+        _PETDEX_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _PETDEX_CACHE.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        print(f"[pet-store] 写清单缓存失败(忽略): {e}")
+    return payload
+
+
+def _petdex_installed(slug: str) -> bool:
+    return (_CODEX_PET_DIR / slug).is_dir()
+
+
+def _petdex_thumb_bytes(slug: str) -> bytes:
+    """裁出宠物 sprite 的首帧(站立姿势)缩成小图,按 slug 落盘缓存。"""
+    if not _PETDEX_SLUG_RE.match(slug or ""):
+        raise HTTPException(status_code=400, detail=f"slug 不合法: {slug}")
+    out = _PETDEX_THUMB_DIR / f"{slug}.webp"
+    if out.is_file():
+        try:
+            return out.read_bytes()
+        except Exception:  # noqa: BLE001
+            pass
+
+    man = _petdex_manifest(False)
+    rec = _petdex_resolve(man, slug)
+    base = str(man.get("assetBase") or "").rstrip("/")
+    rel = str(rec.get("spritesheet") or "").lstrip("/")
+    if not base or not rel:
+        raise HTTPException(status_code=404, detail=f"「{slug}」没有精灵图")
+    blob = _http_get_bytes(f"{base}/{rel}")
+    if len(blob) > _PETDEX_THUMB_MAX_BYTES:
+        raise HTTPException(status_code=502, detail=f"「{slug}」精灵图过大,不生成封面")
+
+    from PIL import Image  # 延迟导入:只有看商店封面时才需要
+
+    with Image.open(io.BytesIO(blob)) as im:
+        im = im.convert("RGBA")
+        # Codex 契约:8 列,单帧 192x208。按宽度推列宽,避免不同作者的图尺寸不一致。
+        cell_w = max(1, im.width // 8)
+        cell_h = max(1, round(cell_w * 208 / 192))
+        frame = im.crop((0, 0, min(cell_w, im.width), min(cell_h, im.height)))
+        frame = frame.resize(_PETDEX_THUMB_SIZE, Image.LANCZOS)
+        buf = io.BytesIO()
+        frame.save(buf, "WEBP", quality=82, method=4)
+    data = buf.getvalue()
+
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+    except Exception as e:  # noqa: BLE001
+        print(f"[pet-store] 写封面缓存失败(忽略): {e}")
+    return data
+
+
+def _petdex_item_view(rec: dict, asset_base: str = "") -> dict:
+    slug = str(rec.get("slug") or "")
+    # 预览图直接指向 assets.petdex.dev 上的 sprite.webp(CSP 已放开 img-src https:)
+    sprite_rel = str(rec.get("spritesheet") or "").lstrip("/")
+    sprite_url = f"{asset_base}/{sprite_rel}" if (asset_base and sprite_rel) else ""
+    return {
+        "slug": slug,
+        "display_name": str(rec.get("displayName") or slug),
+        "kind": rec.get("kind") or "",
+        "author": rec.get("submittedBy") or "",
+        "sprite_version": rec.get("spriteVersionNumber"),
+        "spritesheet": sprite_url,
+        "page_url": f"https://petdex.dev/pets/{slug}" if slug else "",
+        "installed": bool(slug) and _petdex_installed(slug),
+    }
+
+
+def _petdex_resolve(man: dict, query: str) -> dict:
+    """按 slug 精确 → slug 前缀 → 显示名 模糊 的顺序找人,匹配不到就报 404。"""
+    q = (query or "").strip().lower()
+    if not q:
+        raise HTTPException(status_code=400, detail="请填写宠物 slug 或名字")
+    items = man.get("items") or []
+    for rec in items:
+        if str(rec.get("slug") or "").lower() == q:
+            return rec
+    for rec in items:
+        if str(rec.get("slug") or "").lower().startswith(q):
+            return rec
+    for rec in items:
+        if q in str(rec.get("displayName") or "").lower():
+            return rec
+    raise HTTPException(status_code=404, detail=f"Petdex 里没找到「{query}」")
+
+
+def _extract_pet_zip(blob: bytes, dest: Path) -> Path:
+    """解压桌宠 zip 并返回 pet.json 所在目录。只接受一级文件,拒绝路径穿越。"""
+    total = 0
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        for info in zf.infolist():
+            name = info.filename.replace("\\", "/")
+            if name.endswith("/"):
+                continue
+            parts = [p for p in name.split("/") if p not in ("", ".")]
+            base = parts[-1] if parts else ""
+            if not base or base.startswith("._") or parts[0] == "__MACOSX":
+                continue
+            if ".." in parts or name.startswith("/") or re.match(r"^[A-Za-z]:", name):
+                raise HTTPException(status_code=400, detail=f"压缩包内路径不安全: {name}")
+            total += int(info.file_size or 0)
+            if total > _PETDEX_MAX_BYTES:
+                raise HTTPException(status_code=400, detail="压缩包解压后过大,已中止")
+            target = dest.joinpath(*parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(target, "wb") as out:
+                shutil.copyfileobj(src, out)
+
+    pet_json = next(iter(dest.rglob("pet.json")), None)
+    if pet_json is None:
+        raise HTTPException(status_code=400, detail="压缩包里没找到 pet.json")
+    return pet_json.parent
+
+
+@router.get("/pet/store/search")
+async def pet_store_search(
+    q: str = Query("", description="slug 或名字片段,留空列出前几条"),
+    limit: int = Query(24, ge=1, le=100),
+    refresh: bool = Query(False, description="强制刷新清单缓存"),
+):
+    """搜索 Petdex 宠物商店。"""
+    try:
+        man = await asyncio.to_thread(_petdex_manifest, refresh)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Petdex 不可用: {e}") from e
+
+    items = man.get("items") or []
+    key = _petdex_parse_query(q).strip().lower()
+    picked: list[dict] = []
+    seen: set[str] = set()
+
+    def take(rec: dict) -> None:
+        slug = str(rec.get("slug") or "")
+        if not slug or slug in seen:
+            return
+        seen.add(slug)
+        picked.append(rec)
+
+    if key:
+        for rec in items:
+            if str(rec.get("slug") or "").lower() == key:
+                take(rec)
+        for rec in items:
+            if str(rec.get("slug") or "").lower().startswith(key):
+                take(rec)
+        for rec in items:
+            name = str(rec.get("displayName") or "").lower()
+            if key in name or key in str(rec.get("submittedBy") or "").lower():
+                take(rec)
+    else:
+        for rec in items:
+            take(rec)
+        picked = picked[: limit // 3 or 1]
+
+    return {
+        "status": "ok",
+        "total": len(items),
+        "generated_at": man.get("generatedAt"),
+        "items": [
+            _petdex_item_view(rec, str(man.get("assetBase") or "").rstrip("/"))
+            for rec in picked[:limit]
+        ],
+    }
+
+
+@router.get("/pet/store/thumb")
+async def pet_store_thumb(slug: str = Query(..., description="商店里的 slug")):
+    """商店列表的小封面:首帧缩略图(缓存后 ~5KB)。"""
+    try:
+        data = await asyncio.to_thread(_petdex_thumb_bytes, slug)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"取封面失败: {e}") from e
+    return Response(
+        content=data,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.post("/pet/store/install")
+async def pet_store_install(req: PetStoreInstallRequest):
+    """从 Petdex 直接安装宠物:下载 zip → 校验 → 落进 codex_pet/<slug>。"""
+    query = _petdex_parse_query(req.slug)
+    if not query:
+        raise HTTPException(status_code=400, detail="请填写宠物 slug 或名字")
+
+    def _fetch() -> tuple[dict, str]:
+        man = _petdex_manifest()
+        rec = _petdex_resolve(man, query)
+        slug = str(rec.get("slug") or "")
+        if not _PETDEX_SLUG_RE.match(slug):
+            raise HTTPException(status_code=400, detail=f"slug 不合法: {slug}")
+        rel = str(rec.get("zip") or "").lstrip("/")
+        if not rel:
+            raise HTTPException(status_code=400, detail=f"「{slug}」没有可下载的 zip")
+        base = str(man.get("assetBase") or "").rstrip("/")
+        url = f"{base}/{rel}" if base else rel
+        return rec, url
+
+    rec, url = await asyncio.to_thread(_fetch)
+    slug = str(rec.get("slug") or "")
+
+    try:
+        blob = await asyncio.to_thread(_http_get_bytes, url)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"下载「{slug}」失败: {e}") from e
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="symbix_petdex_"))
+    try:
+        src_dir = _extract_pet_zip(blob, tmp_dir)
+        meta = _validate_pet_folder(src_dir)
+        target_dir = _CODEX_PET_DIR / slug
+        if target_dir.exists():
+            if not req.overwrite:
+                raise HTTPException(status_code=409, detail=f"皮肤「{slug}」已存在")
+            shutil.rmtree(target_dir, ignore_errors=True)
+        _CODEX_PET_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src_dir, target_dir)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    preview = "spritesheet.webp"
+    if not (target_dir / preview).is_file():
+        for cand in ("spritesheet.png", "preview.webp", "preview.png"):
+            if (target_dir / cand).is_file():
+                preview = cand
+                break
+
+    display_name = (
+        (meta or {}).get("displayName")
+        or (meta or {}).get("display_name")
+        or rec.get("displayName")
+        or slug
+    )
+    return {
+        "status": "ok",
+        "slug": slug,
+        "folder_name": slug,
+        "display_name": display_name,
+        "author": rec.get("submittedBy") or "",
+        "preview": f"/codex_pet/{slug}/{preview}",
+        "files_saved": sum(1 for p in target_dir.rglob("*") if p.is_file()),
+        "message": f"「{display_name}」安装完成",
+    }
+
+
+@router.get("/pet/store/local")
+async def pet_store_local():
+    """扫描本机已通过 petdex CLI 装好的宠物(~/.petdex/pets、~/.codex/pets)。"""
+    home = Path.home()
+    roots = [
+        ("petdex", home / ".petdex" / "pets"),
+        ("codex", home / ".codex" / "pets"),
+    ]
+    items: list[dict] = []
+    seen: set[str] = set()
+    for origin, root in roots:
+        if not root.is_dir():
+            continue
+        for folder in sorted(root.iterdir()):
+            if not folder.is_dir() or not (folder / "pet.json").is_file():
+                continue
+            name = folder.name
+            if name in seen:
+                continue
+            seen.add(name)
+            meta = _read_json_quiet(folder / "pet.json")
+            items.append(
+                {
+                    "folder": name,
+                    "display_name": str(
+                        meta.get("displayName") or meta.get("display_name") or name
+                    ),
+                    "origin": origin,
+                    "path": str(folder),
+                    "installed": (_CODEX_PET_DIR / name / "pet.json").is_file(),
+                }
+            )
+    return {"status": "ok", "roots": [str(r) for _, r in roots], "items": items}
