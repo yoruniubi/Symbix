@@ -41,5 +41,16 @@
     "resources": {
       "../../backend/dist/SymbixBackend": "backend"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzNTk1Mzk3QTgwQThFMjcKUldRbmpncW9sMU5aa3pSMnZ4d2ZiZVVPY0Z5YXZoYVErNWsxSzJ1ZTUvMno5YUtzb1R0V1BhakMK",
+      "endpoints": [
+        "https://github.com/yoruniubi/Symbix/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

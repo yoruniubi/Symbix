@@ -27,10 +27,14 @@ tauri-plugin-notification = "2.3.3"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-os = "2.3.2"
+# 应用内更新:updater 负责下载+验签+装包,process 负责装完 relaunch
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
-# 只用到 SetWindowPos / HWND_TOPMOST,与 tauri 自身的 windows 依赖同版本,可直接复用
+# 只用到 SetWindowPos / HWND_TOPMOST,版本必须与 tauri 实际解析到的 windows crate 一致,
+# 否则两边的 HWND 是不同类型(升级 tauri 依赖后这里要跟着抬)
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
 ] }

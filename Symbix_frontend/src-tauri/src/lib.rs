@@ -36,6 +36,22 @@ fn set_tray_locale(app: tauri::AppHandle, locale: String) -> Result<(), String> 
 
 mod backend;
 
+/// 装更新前收掉后端(前端在 `update.install()` 之前调)。
+///
+/// 冻结后端正跑在安装目录里(`backend/SymbixBackend.exe`),Windows 上文件被占用时
+/// 安装器覆盖不了它,更新会装成半新半旧;而 updater 一拉完安装器就 `process::exit(0)`,
+/// 等不到我们平时走的 `RunEvent::Exit` 收尾,所以这里必须同步收干净。
+#[tauri::command]
+fn stop_backend_for_update(app: tauri::AppHandle) {
+    // Windows:安装器要覆盖正在运行的 exe,必须先把后端连根收掉并等它死透。
+    // mac / linux:更新是整包替换,运行中的进程不锁文件;这里收掉反而会让用户
+    // 「稍后重启」期间连不上后端,所以不动。
+    #[cfg(target_os = "windows")]
+    backend::shutdown_blocking(&app);
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
+}
+
 use tauri::{Manager, menu::{MenuBuilder, MenuItemBuilder}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton}};
 
 /// 让本机回环地址绕过系统代理。
@@ -125,8 +141,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
+        // 应用内更新:下载安装包 → 验签 → 拉起安装器;装完由前端调 relaunch。
+        // 插件自带的 on_before_exit 只有手写 Rust Updater 时能用,命令链路里拿不到,
+        // 所以前端在 install() 之前主动调 stop_backend_for_update。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(backend::BackendState::default())
-        .invoke_handler(tauri::generate_handler![greet, backend::backend_status, set_tray_locale])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            backend::backend_status,
+            set_tray_locale,
+            stop_backend_for_update
+        ])
         .setup(|app| {
             // 接管后端生命周期:已在跑就只观察,否则自己拉起并等它就绪。
             // 放最前面是为了让第一条 backend-status 事件(至少 starting)早于

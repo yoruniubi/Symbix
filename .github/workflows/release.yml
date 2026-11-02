@@ -21,9 +21,9 @@ jobs:
       fail-fast: false        # 一个平台失败不连坐,其余产物照出
       matrix:
         include:
-          - { os: windows-latest, plat: windows-x64, bundles: nsis }
-          - { os: ubuntu-22.04,   plat: linux-x64,   bundles: deb }
-          - { os: macos-latest,   plat: macos-arm64, bundles: dmg }   # Apple Silicon
+          - { os: windows-latest, plat: windows-x64, bundles: nsis,    updater: "true" }
+          - { os: ubuntu-22.04,   plat: linux-x64,   bundles: deb,     updater: "false" }
+          - { os: macos-latest,   plat: macos-arm64, bundles: "app,dmg", updater: "true" }   # Apple Silicon
           # Intel Mac(macos-13)已移除:STT 原生栈没有 x64 产物(无 Intel Mac 可构建,
           # fork CI 也出不了),assets-v1 里没有 stt-native-macos-x64.zip,fetch 步骤必挂。
           # 将来若弄到 x64 产物,上传资产后把这行加回来即可:
@@ -124,16 +124,40 @@ jobs:
           tail -50 backend_smoke.log
           exit 1
 
+      # 应用内更新(tauri-plugin-updater)只在 win/mac 生效:
+      # - 需要 minisign 私钥签名,私钥走 GitHub secret,绝不进仓库
+      # - linux deb 不受 updater 支持,照旧只出安装包
+      # --config 用内联 JSON 叠在 tauri.conf.json 上:本地 `tauri build` 不传它,
+      # 所以日常构建不需要私钥;CI 传它才产 .sig + 更新包。
       - name: Build app (Tauri bundle)
         working-directory: Symbix_frontend
-        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATER: ${{ matrix.updater }}
+          BUNDLES: ${{ matrix.bundles }}
+        run: |
+          set -euo pipefail
+          args=(build --bundles "$BUNDLES")
+          if [ "$UPDATER" = "true" ]; then
+            if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+              echo "::error::缺少 secret TAURI_SIGNING_PRIVATE_KEY,无法生成更新包(见 当前已实现的功能.md §6)"
+              exit 1
+            fi
+            args+=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
+          fi
+          npm run tauri -- "${args[@]}"
 
+      # 更新包(.sig 的兄弟文件)也要收进来,否则发版 job 拼不出 latest.json
       - name: Collect bundles
         shell: bash
         run: |
           mkdir -p out
           find Symbix_frontend/src-tauri/target/release/bundle -type f \
-            \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
+            \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \
+               -o -name '*.nsis.zip' -o -name '*.app.tar.gz' \
+               -o -name '*.nsis.zip.sig' -o -name '*.app.tar.gz.sig' \) \
             -exec cp {} out/ \;
           ls -la out
 
@@ -153,6 +177,20 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - uses: actions/checkout@v4        # 下面要用仓库里的 latest.json 生成脚本
+
+      # 把各平台的 .sig 合并成 updater 插件要的 latest.json:
+      # 插件端固定读 releases/latest/download/latest.json,地址里不能带平台名。
+      # 没有签名的平台(linux deb)自动缺席,插件在那类机器上 check() 失败,前端退回打开发布页。
+      - name: Build updater manifest (latest.json)
+        shell: bash
+        run: |
+          python3 .github/scripts/make_latest_json.py \
+            --dist dist \
+            --version "${GITHUB_REF_NAME#v}" \
+            --repo "${{ github.repository }}" \
+            --tag "$GITHUB_REF_NAME"
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2

@@ -649,6 +649,20 @@ fn exited_detail(app: &AppHandle) -> Option<String> {
 
 /// 退出时收尸。只管自己拉起来的那个(state=external 时 child 是 None)。
 pub fn shutdown(app: &AppHandle) {
+    shutdown_impl(app, false);
+}
+
+/// 同 [`shutdown`],但阻塞到进程真的死透。
+///
+/// 只给「应用内更新」用:updater 在 Windows 上拉完安装器会直接 `std::process::exit(0)`,
+/// 不等我们收尾;而冻结后端正跑在安装目录 `backend/SymbixBackend.exe` 上,文件被占用时
+/// NSIS 覆盖不了它,更新会装成半新半旧。这里必须等到进程树清空再放安装器进去。
+#[allow(dead_code)] // 只有 Windows 的更新安装前会用它
+pub fn shutdown_blocking(app: &AppHandle) {
+    shutdown_impl(app, true);
+}
+
+fn shutdown_impl(app: &AppHandle, wait: bool) {
     let state = app.state::<BackendState>();
     let mut guard = state.child.lock().unwrap();
     let Some(mut child) = guard.take() else { return };
@@ -664,12 +678,17 @@ pub fn shutdown(app: &AppHandle) {
         // spawn 而不是 status:整棵树枚举 + 强杀可能要 1~2 秒,而这里跑在
         // RunEvent::Exit 的主线程上,阻塞等待会让用户觉得「点了退出没反应」。
         // taskkill 是独立进程,本进程退出后它照样跑完,孤儿照样被收。
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/F", "/T", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
+            .creation_flags(CREATE_NO_WINDOW);
+        if wait {
+            // 更新前收尾:必须等 taskkill 返回,否则安装器和后端抢同一个 exe
+            let _ = cmd.status();
+        } else {
+            let _ = cmd.spawn();
+        }
     }
     let _ = child.kill();
     let _ = child.wait();
