@@ -85,6 +85,64 @@ jobs:
           npm ci
           npm run build
 
+      # ── 私钥预检:让 CI 自己把病因说出来,别等十几分钟构建完才炸 ─────────
+      # minisign 把「私钥截断 / 贴成公钥 / 密码 secret 非空」全报成同一句
+      # "Wrong password for that key",从报错完全看不出是哪一步坏了。
+      # 这里在构建前做三件事:结构自检、打印 key 的 sha256 指纹(可与本地
+      # .tauri\symbix.key 比对;哈希不可逆,不泄漏 key 内容)、用与正式构建
+      # 完全相同的环境变量真签一个探针文件 —— 有问题 10 秒暴露并给出方向。
+      - name: Preflight updater signing key
+        if: matrix.updater == 'true'
+        working-directory: Symbix_frontend
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const crypto = require('crypto');
+          const key = (process.env.TAURI_SIGNING_PRIVATE_KEY || '').trim();
+          const pass = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '';
+          const die = (msg, ...hints) => {
+            console.log(`::error::${msg}`);
+            for (const h of hints) console.log(h);
+            process.exit(1);
+          };
+
+          if (!key) die('secret TAURI_SIGNING_PRIVATE_KEY 为空(需要 .key 私钥全文,不是 .key.pub)');
+          const sha = crypto.createHash('sha256').update(key).digest('hex');
+          console.log(`私钥 secret: ${key.length} 字符, sha256 ${sha}`);
+          console.log(`密码 secret: ${pass ? `已设置(长度 ${pass.length})` : '未设置'}`);
+
+          const body = key.replace(/\s+/g, '');
+          if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body) || body.length % 4 !== 0) {
+            die(
+              `私钥 secret 不是合法 base64(有效字符 ${body.length},模 4 余 ${body.length % 4}),复制时被截断或夹带了脏字符`,
+              '用 PowerShell 整份复制后重贴:',
+              '  Get-Content -Raw "$env:USERPROFILE\\.tauri\\symbix.key" | Set-Clipboard',
+            );
+          }
+          const head = (Buffer.from(body, 'base64').toString('utf8').split(/\r?\n/)[0]) || '';
+          console.log(`解码头部: ${head}`);
+          if (/public key/i.test(head)) die('贴的是公钥(.key.pub),CI 需要私钥 .key');
+          if (!/secret key/i.test(head)) die(`不是 minisign 密钥文件(头部: ${head})`);
+          NODE
+
+          # 真签探针:环境变量与正式构建完全一致,失败时保留 minisign 原始报错
+          probe=.updater-key-probe
+          echo probe > "$probe"
+          if ! npm run --silent tauri -- signer sign "$probe"; then
+            rm -f "$probe" "$probe.sig"
+            echo "::error::私钥实签失败。minisign 把所有密钥解析问题都报成 Wrong password,实际可能:"
+            echo "  1) TAURI_SIGNING_PRIVATE_KEY 内容不完整/被截断 —— 对比上面打印的 sha256 与本地 .key"
+            echo "  2) TAURI_SIGNING_PRIVATE_KEY_PASSWORD 非空 —— 本仓库私钥无密码(空密码签名已验证),该 secret 必须删除"
+            echo "  3) secret 里存的是另一份旧 key —— 对比 sha256,或重贴本地 .tauri\\symbix.key 全文"
+            exit 1
+          fi
+          rm -f "$probe" "$probe.sig"
+          echo "私钥预检通过"
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
