@@ -662,6 +662,8 @@ pub fn shutdown_blocking(app: &AppHandle) {
     shutdown_impl(app, true);
 }
 
+// wait 只在 Windows 分支里消费(taskkill 需要等返回);mac/linux 上不读它,关掉未使用警告
+#[cfg_attr(not(windows), allow(unused_variables))]
 fn shutdown_impl(app: &AppHandle, wait: bool) {
     let state = app.state::<BackendState>();
     let mut guard = state.child.lock().unwrap();
