@@ -113,7 +113,13 @@ jobs:
           if (!key) die('secret TAURI_SIGNING_PRIVATE_KEY 为空(需要 .key 私钥全文,不是 .key.pub)');
           const sha = crypto.createHash('sha256').update(key).digest('hex');
           console.log(`私钥 secret: ${key.length} 字符, sha256 ${sha}`);
-          console.log(`密码 secret: ${pass ? `已设置(长度 ${pass.length})` : '未设置'}`);
+          if (!pass) {
+            die(
+              'secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD 为空 —— 本仓库私钥带非空密码,必须配置该 secret',
+              '注: minisign 无法通过环境变量接收「空密码」(会误报 Wrong password),所以私钥必须带密码',
+            );
+          }
+          console.log(`密码 secret: 已设置(长度 ${pass.length})`);
 
           const body = key.replace(/\s+/g, '');
           if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body) || body.length % 4 !== 0) {
@@ -135,11 +141,33 @@ jobs:
           if ! npm run --silent tauri -- signer sign "$probe"; then
             rm -f "$probe" "$probe.sig"
             echo "::error::私钥实签失败。minisign 把所有密钥解析问题都报成 Wrong password,实际可能:"
-            echo "  1) TAURI_SIGNING_PRIVATE_KEY 内容不完整/被截断 —— 对比上面打印的 sha256 与本地 .key"
-            echo "  2) TAURI_SIGNING_PRIVATE_KEY_PASSWORD 非空 —— 本仓库私钥无密码(空密码签名已验证),该 secret 必须删除"
+            echo "  1) 私钥 secret 内容不完整/被截断 —— 对比上面打印的 sha256 与本地 .key"
+            echo "  2) 密码 secret 与私钥不配对 —— 确认 TAURI_SIGNING_PRIVATE_KEY_PASSWORD 就是生成该 key 时设的密码"
             echo "  3) secret 里存的是另一份旧 key —— 对比 sha256,或重贴本地 .tauri\\symbix.key 全文"
             exit 1
           fi
+
+          # 配对校验:私钥实签出的 keyid 必须等于配置的 updater.pubkey keyid(防贴错 key 或忘改 pubkey)
+          node - <<'NODE'
+          const fs = require('fs');
+          const confPub = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8')).plugins.updater.pubkey;
+          const confText = Buffer.from(confPub, 'base64').toString('utf8');
+          const confHex = (confText.match(/minisign public key: ([0-9A-F]{16})/i) || [])[1];
+          const sigText = Buffer.from(fs.readFileSync('.updater-key-probe.sig', 'utf8').trim(), 'base64').toString('utf8');
+          const sigLine = sigText.split(/\r?\n/)[1] || '';
+          const raw = Buffer.from(sigLine, 'base64');
+          const sigHex = raw.length >= 10 ? Buffer.from(raw.subarray(2, 10)).reverse().toString('hex').toUpperCase() : '';
+          console.log(`pubkey keyid: ${confHex || '?'} | 私钥签名 keyid: ${sigHex || '?'}`);
+          if (!confHex || !sigHex) {
+            console.log('::warning::keyid 解析失败,跳过 pubkey 配对校验');
+          } else if (confHex !== sigHex) {
+            console.log('::error::私钥与 tauri.conf.json 的 plugins.updater.pubkey 不配对,客户端会拒绝所有更新包');
+            process.exit(1);
+          } else {
+            console.log('私钥与配置 pubkey 配对校验通过');
+          }
+          NODE
+
           rm -f "$probe" "$probe.sig"
           echo "私钥预检通过"
 
