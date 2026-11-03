@@ -21,6 +21,7 @@ from application.state import (
     unregister_session_task,
 )
 from application.services.risk_context import classify_for_chat, maybe_apply_trust_command
+from application.services import injection as chat_injection
 from application.services.round_digest import build_recent_tool_digest
 from application.services.memory_ops import (
     maybe_compress_session,
@@ -107,6 +108,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         # 注册本会话进行中任务:删除对话时可一并取消,终止 chat/action。
         _gen_task = asyncio.current_task()
         register_session_task(request.session_id, _gen_task)
+        # 插话:本流可接收注入,POST /chat/inject 才找得到这里
+        await chat_injection.set_injection_target(request.session_id)
         try:
             # ── 重试标记：如果前端传了 superseded_round_id，标记旧 round ──
             if request.superseded_round_id:
@@ -333,6 +336,15 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 if await http_request.is_disconnected():
                     print(f"[stream] client disconnected at round {round_count}, stopping generation")
                     break
+                # 插话:轮间隙取用户补充,拼进上下文让模型下一轮看到(取不到是常态,零开销)
+                _inject = await chat_injection.take_injection(request.session_id)
+                if _inject:
+                    running_msgs.append({
+                        "role": "user",
+                        "content": f"[用户在任务进行中补充] {_inject}",
+                    })
+                    yield format_sse({"type": "user_injected", "text": _inject, "round": round_count + 1})
+                    print(f"[chat_stream] round {round_count}: injected user message")
                 round_count += 1
                 # 本轮实际执行(拿到结果)的工具,供轮末累积进 running_msgs。
                 round_results: list[dict] = []
@@ -803,6 +815,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             yield format_sse({"type": "error", "content": str(e)})
             yield "data: [DONE]\n\n"
         finally:
+            # 插话:流结束,清注入槽并唤醒还在等投递的 POST(让它走 no_stream 退路)
+            await chat_injection.clear_injection_target(request.session_id)
             unregister_session_task(request.session_id, _gen_task)
 
     return StreamingResponse(
@@ -827,3 +841,19 @@ async def get_history(session_id: str, limit: int = 20):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/chat/inject")
+async def inject_message(payload: dict):
+    """运行中插话:把补充消息送进正在跑的 chat 流(工具轮间隙被消费)。
+
+    status: delivered=流已取走 / no_stream=没有在跑的流(前端退回排队) /
+            busy=上一条还没消费 / timeout
+    """
+    from application.services import injection as chat_injection
+
+    session_id = str((payload or {}).get("session_id") or "")
+    text = str((payload or {}).get("message") or "")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    return await chat_injection.submit_injection(session_id, text)

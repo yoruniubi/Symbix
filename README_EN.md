@@ -1,14 +1,22 @@
-[中文](README.md) | English
-
 <div align="center">
+  <img src="Symbix_frontend/public/logo/logo.png" alt="Symbix Logo" width="120"/>
 
-**Symbix — an AI companion that lives with you, and works for you.** 🐾
+# Symbix 🐾
 
-</div>
-
----
+**An AI companion that lives with you, and works for you.**
 
 Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and it finds the tools, does the work, and hands you a finished, formatted Word / PPT / Excel / PDF file. Everything is conversation-driven, every step is logged and reversible — and all chats and memories stay on your machine.
+
+[![Release](https://img.shields.io/github/v/release/yoruniubi/Symbix?label=release)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/yoruniubi/Symbix/total?label=downloads)](../../releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](../../releases/latest)
+
+**[⬇️ Download](../../releases/latest)** · [Feature log (Chinese)](./当前已实现的功能.md) · [中文](README.md)
+
+<img src="docs/screenshots/demo.gif" alt="Symbix main UI: a pet that lives on your desktop, click-through, and strikes up conversation when idle" width="560"/>
+
+</div>
 
 **Stack**: Tauri 2 desktop shell (Vue 3 + PixiJS) + FastAPI backend + a custom Python Agent SDK (31 tools / memory / skills / MCP / scheduled jobs).
 
@@ -17,18 +25,20 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 - 📦 **Delivers finished files, not just answers** — formatted Word / PPT / Excel / PDF, ready to send
 - 🧬 **Reads and writes any format** — papers, reports, spreadsheets, handouts; scanned PDFs fall back to OCR
 - 🤖 **One sentence, whole pipeline** — search → download → deep-read → summarize → deliver, fully unattended
+- 🔍 **Every step is out in the open** — which tool was called, what went in, what came back, how long it took, why it failed: all logged in the chat stream, no black box
 - 🎭 **Multi-agent teamwork** — complex tasks spawn parallel sub-agents, each with its own model
 - 🙋 **Asks before it acts** — multi-step plans need your approval; file edits and commands pop a confirmation card; or flip on auto-pilot and let it run
 - 🗂️ **Everything is traceable** — every step logged with a readable diff; undo any step, even newly created files
-- 🔍 **Every step is out in the open** — which tool was called, what went in, what came back, how long it took, why it failed: all logged in the chat stream, no black box
 - 💾 **Remembers you** — long-term memory + daily journal; no re-introductions after restart
 - ⏰ **Scheduled jobs in plain words** — "remind me to take my meds at 8 every morning" just works; failures auto-retry
 - 📊 **Token usage at a glance** — per-round usage, daily / weekly / monthly charts
 - 🎨 **Makes its own skins** — describe a look; it draws, animates, and packages an importable pet skin
 - 🔊 **Listens and speaks** — local speech recognition (nothing leaves your machine); streaming sentence-by-sentence TTS
+- 🧩 **Extensible** — skill packs + MCP tools plug in with the same permissions and approvals as built-ins
+- 🗣️ **Interject while it works** — type additions while a task is running ("make the title blue", "add a chart too") and the agent acts on them on its next step — no need to wait it out
 - 💬 **It comes to you** — it strikes up conversation on its own; half the time it digs up an old memory ("that pet you wanted to make — how did it go?"); click the bubble and it opens the chat, having spoken first, waiting for you 💛
 - ☕ **Warmth in the details** — completion sounds are soft and soothing (breeze, dew, ember… over a dozen gentle presets, not a shrill "ding"); the UI theme is warm cream, and even dark mode stays warm charcoal — no cold tech gray
-- 🧩 **Extensible** — skill packs + MCP tools plug in with the same permissions and approvals as built-ins
+- 🛡️ **Approvals, your call** — from strict review to full auto-pilot, you set the safety boundary
 
 ## 🎯 What sets it apart
 
@@ -45,7 +55,7 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 
 ## 🧪 What it can do — a few examples
 
-- 📚 Say "catch me up on recent work in XX field" → it searches, downloads, deep-reads papers (parallel sub-agents), and hands you a formatted Chinese review with comparison tables
+- 📚 Say "catch me up on recent work in XX field" → it searches, downloads, deep-reads papers (parallel sub-agents), and hands you a formatted review with comparison tables
 - 📁 Say "summarize the reports in this folder into one PPT slide deck" → it reads everything and delivers
 - ⏰ Casually mention "remind me to take my meds at 8 every morning" → remembered and executed on time, with auto-retry on failure
 - 🎨 "I want a blue pixel-art cat pet" → it draws the sprite, animates it, and packages an importable skin
@@ -94,6 +104,12 @@ In most agent harnesses all you see is "it thought for a while" — which tool i
 
 ## 🚀 Getting Started
 
+Up and running in three steps:
+
+1. **Download** — pick your platform from the table below
+2. **Paste an API key** — Model Setting panel on the left of the chat window, 9 vendor presets built in
+3. **Just talk** — "catch me up on…" / "remind me every morning at 8…"
+
 ### Download (recommended)
 
 Grab an installer from [Releases](../../releases) — speech models and runtimes are bundled:
@@ -126,9 +142,39 @@ npm run tauri dev    # desktop app
 
 Pick a provider in the Model Setting panel and paste your API key. 9 vendor presets built in; any OpenAI-compatible gateway works via a custom `base_url`. TTS supports Edge TTS, OpenAI-compatible APIs, and self-hosted servers (GPT-SoVITS one-click packages connect directly).
 
+### 📁 Files & workspaces
+
+The agent's file access is scoped to **workspaces** — it cannot read wherever it likes:
+
+- Default workspace = the program directory + files you upload in chat
+- To let it work on another folder, open the **Files** panel on the left and click **Open Directory** — *browsing is authorizing*. Only folders you have opened in the panel are readable/writable by the agent; everything else is rejected
+- System directories (`Windows`, `Program Files`, `.ssh`, `.gnupg`, the recycle bin, …) are never accessible no matter what — a hard-coded last line of defense against hallucinations and prompt injection
+- Authorization lives with the backend process: after restarting the app, just open the folder once more. The panel remembers where you last browsed, so closing and reopening it puts you back in place
+
+## 🔒 Where your data lives
+
+| Data | Where it goes |
+| --- | --- |
+| Chats, memory, journal, attachments | All local; deleting a session wipes its attachments |
+| API keys | Local `providers.json`, sealed with Windows DPAPI (bound to your user), never uploaded |
+| Model requests | Sent directly from your machine to the provider/gateway you configured — no relay (this project has no cloud service) |
+| Speech recognition | Local inference by default — audio never leaves the machine; cloud STT only if not configured |
+| Update check | Only fetches the version number from the GitHub Releases API; sends nothing |
+| Telemetry | None |
+
 ## 📚 Docs
 
 - [`当前已实现的功能.md`](./当前已实现的功能.md) — feature changelog & engineering notes (development log, in Chinese)
 - Landing page: [`docs/index.html`](./docs/index.html) (GitHub Pages)
 
+## 🙏 Acknowledgements
+
+- [PixiJS](https://pixijs.com/) · [Tauri](https://tauri.app/) · [naive-ui](https://www.naiveui.com/) · [FastAPI](https://fastapi.tiangolo.com/) · [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
+- Friends: [Linux Do community](https://linux.do)
+- Built as a human + AI pair — requirements, judgment and taste from the human; the million-plus tokens of code and prose from the models.
+
+Issues and PRs are welcome.
+
 **Symbix — an AI companion that lives with you, and works for you.** 🐾
+
+</div>

@@ -139,6 +139,7 @@
         @update:model="setModel"
         @stop="handleStopGeneration"
         @reserve-session="pendingSessionId = $event"
+        @queued="handleQueuedMessage"
       />
     </div>
 
@@ -213,6 +214,8 @@ const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
 const pendingSessionId = ref<string>('')
+/** 排队的插话:流结束/无流可注入时存这里,轮末自动作为下一条消息发出 */
+const queuedMessage = ref<string>('')
 const { readAloud } = useReadAloud()
 let userAborted = false
 let ttsStreaming = false
@@ -955,6 +958,13 @@ function hideDuringLoading(msg: any): boolean {
   return true
 }
 
+/** 排队:ChatInput 在流不可注入时转来;轮末(loading 变 false)自动发送,只保一条 */
+function handleQueuedMessage(text: string) {
+  if (!text) return
+  queuedMessage.value = text
+  messageUi.success(t('chatInput.injectFallbackQueued'))
+}
+
 async function sendMessage(text: string, files: any[], supersededRoundId?: string) {
   console.log('=== sendMessage 开始(SSE 流式)===')
   safeLog('settings:', settings.value)
@@ -1082,6 +1092,12 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     // 同步当前会话消息,避免侧边栏停留在旧内容
     const active = sessions.value.find(s => s.id === currentSessionId)
     if (active) active.messages = [...messages.value]
+    // 排队的插话:本轮跑完自动作为下一条消息发出
+    if (queuedMessage.value && !assistantMsg.approval_id) {
+      const q = queuedMessage.value
+      queuedMessage.value = ''
+      setTimeout(() => sendMessage(q, []), 200)
+    }
     await saveSessionToLocalMarkdown()
     // 流式结束且不在等待审批时，触发任务完成提醒
     if (!assistantMsg.approval_id) {
@@ -1158,6 +1174,14 @@ function handleSSEEvent(
     case 'reasoning':
       msg.reasoning = (msg.reasoning || '') + (evt.content || '')
       break
+
+    case 'user_injected': {
+      // 运行中插话已被后端消费:把用户的话即时上屏,跟上任务进度
+      msg.injected = msg.injected || []
+      msg.injected.push(evt.text || '')
+      nextTick(() => scrollToBottom())
+      break
+    }
 
     case 'tool_call': {
       const id = evt.id || ''

@@ -38,6 +38,16 @@
       </template>
       <template v-else>
         <!-- Reasoning (思维过程) — 仅非空内容时展示 -->
+        <!-- 运行中插话:任务进行中补充的话,小气泡原样上屏 -->
+        <div v-if="msg.injected && msg.injected.length" class="injected-block">
+          <div v-for="(it, i2) in msg.injected" :key="i2" class="injected-bubble">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>{{ it }}</span>
+          </div>
+        </div>
+
         <div v-if="hasReasoning" class="reasoning-block">
           <div class="reasoning-header" @click="toggleReasoning">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1123,6 +1133,27 @@ onMounted(() => {
 }
 
 /* ---- Reasoning Block ---- */
+.injected-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 6px;
+}
+.injected-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: 10px 10px 2px 10px;
+  word-break: break-word;
+}
+
 .reasoning-block {
   max-width: min(72%, 760px);
   margin-bottom: 8px;

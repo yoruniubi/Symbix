@@ -32,9 +32,41 @@
         :autosize="{ minRows: 1, maxRows: 5 }"
         :placeholder="t('chatInput.placeholder')"
         @keydown="handleInputKeydown"
-        :disabled="loading"
         class="chat-input"
       />
+      <!-- 运行中插话提示:生成期间输入仍可用,Enter 把补充送进正在跑的任务 -->
+      <transition name="inject-slide">
+        <div v-if="loading && injectState === 'idle' && inputValue.trim()" class="inject-hint">
+          <span class="inject-dot"></span>{{ t('chatInput.injectHint') }}
+        </div>
+      </transition>
+
+      <!-- @ 文件引用下拉:输入 @ 触发,列出工作区内文件,选中把路径插进输入框 -->
+      <transition name="inject-slide">
+        <div v-if="atFiles.show" class="at-files-pop">
+          <div class="at-files-title">{{ t('chatInput.atFileHint') }}</div>
+          <div v-if="atFiles.items.length === 0" class="at-files-empty">{{ t('chatInput.atFileEmpty') }}</div>
+          <button
+            v-for="(f, i) in atFiles.items"
+            :key="f.path"
+            type="button"
+            class="at-file-item"
+            :class="{ active: i === atFiles.active }"
+            @mousedown.prevent="pickAtFile(i)"
+            @mouseenter="atFiles.active = i"
+          >
+            <svg v-if="f.type === 'directory'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--accent-300,#F7A85B);">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <span class="at-file-name">{{ f.name }}</span>
+            <small v-if="f.type === 'directory'" class="at-file-dir">{{ f.relDir }}</small>
+          </button>
+        </div>
+      </transition>
 
       <!-- 停止按钮 (loading 时显示) -->
       <n-button
@@ -128,6 +160,7 @@
         </div>
       </n-popover>
       <span class="footer-hint" v-if="!loading">{{ t('chatInput.enterToSend') }}</span>
+      <span class="footer-hint inject-state-hint" v-else-if="injectState === 'sent'">{{ t('chatInput.injectSent') }}</span>
       <span class="footer-hint recording-hint" v-else-if="isRecording">{{ t('chatInput.listening') }}</span>
     </div>
   </div>
@@ -167,12 +200,16 @@ const emit = defineEmits<{
   send: [text: string, files: AttachmentItem[]]
   'update:model': [model: string]
   stop: []
+  /** 生成中输入但流已结束:排队,父组件在轮末自动发送 */
+  queued: [text: string]
   /** 无实际会话时首次上传/发声会生成预留会话 id,通知父组件建会话时复用 */
   'reserve-session': [id: string]
 }>()
 
 const messageUi = useMessage()
 const inputValue = ref('')
+/** 插话状态机: idle=可输入 / sending=POST /chat/inject 中 / sent=已送达本轮 */
+const injectState = ref<'idle' | 'sending' | 'sent'>('idle')
 const inputRef = ref<any>(null)
 const attachments = ref<AttachmentItem[]>([])
 const isRecording = ref(false)
@@ -182,6 +219,75 @@ const showModelPopover = ref(false)
 const reservedSessionId = ref<string>('')
 
 const { t } = useI18n()
+
+/** @ 文件引用:输入 @ 触发文件下拉,选中把工作区路径插入输入框 */
+type AtFile = { name: string; path: string; type: string; relDir: string }
+const atFiles = ref<{
+  show: boolean
+  items: AtFile[]
+  active: number
+  anchor: number   // @ 字符在 inputValue 里的下标
+  query: string    // @ 之后已敲的筛选词
+}>({ show: false, items: [], active: 0, anchor: -1, query: '' })
+
+/** 唤起下拉:取 FilePanel 记住的浏览目录(= Agent 工作区),列出其中文件 */
+async function openAtList(anchor: number) {
+  atFiles.value = { show: true, items: [], active: 0, anchor, query: '' }
+  try {
+    let dir = ''
+    try { dir = localStorage.getItem('symbix-filepanel-last-path') || '' } catch { dir = '' }
+    if (!dir) dir = '.'
+    const res = await fetch(`${BACKEND_URL}/files/list?path=${encodeURIComponent(dir)}`)
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    atFiles.value.items = (data.entries || []).slice(0, 50).map((e: any) => ({
+      name: e.name,
+      path: e.path,
+      type: e.type,
+      relDir: dir === '.' ? '' : String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
+    }))
+  } catch {
+    atFiles.value.show = false
+  }
+}
+
+function closeAtList() {
+  atFiles.value.show = false
+  atFiles.value.anchor = -1
+}
+
+/** 选中一项:替换掉「@+筛选词」,插入带空格的引用路径 */
+function pickAtFile(idx: number) {
+  const item = atFiles.value.items[idx]
+  if (!item) return
+  const before = inputValue.value.slice(0, atFiles.value.anchor)
+  const after = inputValue.value.slice(atFiles.value.anchor + 1 + atFiles.value.query.length)
+  const insert = `@${item.path} `
+  inputValue.value = before + insert + after
+  closeAtList()
+  nextTick(() => inputRef.value?.focus?.())
+}
+
+/** 监听输入:最后一个字符敲出 @ 且前一行首/空白 → 唤起;下拉开着时按筛选词过滤 */
+watch(inputValue, (v) => {
+  if (atFiles.value.show) {
+    // 下拉开着:重算筛选词(用户可能删掉 @ 或继续输入)
+    const seg = v.slice(atFiles.value.anchor + 1)
+    const spaceAt = seg.search(/[\s\u4e00-\u9fa5]/)  // 空格或中文断词 → 关闭
+    if (atFiles.value.anchor < 0 || spaceAt >= 0) { closeAtList(); return }
+    atFiles.value.query = seg
+    const q = seg.toLowerCase()
+    atFiles.value.items = atFiles.value.items.filter(
+      (f) => !q || f.name.toLowerCase().includes(q),
+    )
+    atFiles.value.active = 0
+    return
+  }
+  // 新唤起:光标前刚敲了一个独立的 @
+  if (v.endsWith('@') && (v.length === 1 || /\s@$/.test(v))) {
+    openAtList(v.length - 1)
+  }
+})
 
 /** 图片扩展名集合 */
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
@@ -249,12 +355,62 @@ const currentModelLabel = computed(() => {
 
 function handleSend() {
   const text = inputValue.value.trim()
-  if (!canSend.value || props.loading) return
+  if (!canSend.value) return
+  // 生成中:走插话(注入优先,后端没在跑就自动退回排队),附件不动、只送文本
+  if (props.loading) {
+    handleInject(text)
+    return
+  }
   const files = attachments.value.filter(a => a.status === 'ok' || (!!a.path && a.status !== 'error'))
   attachments.value.forEach(revokePreview)
   attachments.value = []
   emit('send', text || '', files)
   inputValue.value = ''
+}
+
+/**
+ * 运行中插话:POST /chat/inject 把补充送进正在跑的流。
+ * delivered → 清空输入,显示「已送达」;no_stream → 转排队(父组件收 queued 事件);
+ * busy → 提示上一条还在送。输入框只在真正投递成功后清空,
+ * 失败时保留内容让用户决定重试还是等。
+ */
+async function handleInject(text: string) {
+  if (!text || injectState.value === 'sending') return
+  const sid = props.sessionId
+  if (!sid) return
+  injectState.value = 'sending'
+  try {
+    const res = await fetch(`${BACKEND_URL}/chat/inject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sid, message: text }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    if (data.status === 'delivered') {
+      injectState.value = 'sent'
+      inputValue.value = ''
+      setTimeout(() => { if (injectState.value === 'sent') injectState.value = 'idle' }, 4000)
+    } else if (data.status === 'no_stream') {
+      // 流刚好结束/还没开始:转排队,父组件把它存起来轮末自动发
+      emit('queued', text)
+      inputValue.value = ''
+      injectState.value = 'idle'
+    } else if (data.status === 'busy') {
+      messageUi.warning(t('chatInput.injectBusy'))
+      injectState.value = 'idle'
+    } else {
+      // timeout / 其他:退回排队,不丢用户的话
+      emit('queued', text)
+      inputValue.value = ''
+      injectState.value = 'idle'
+    }
+  } catch {
+    // 后端不可达(旧版后端没有该端点等):退回排队
+    emit('queued', text)
+    inputValue.value = ''
+    injectState.value = 'idle'
+  }
 }
 
 /** 释放 blob URL,避免内存泄漏 */
@@ -560,6 +716,29 @@ function handleModelSelect(modelValue: string) {
 }
 
 function handleInputKeydown(e: KeyboardEvent) {
+  // @ 文件下拉优先消费按键
+  if (atFiles.value.show) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      atFiles.value.active = Math.min(atFiles.value.active + 1, atFiles.value.items.length - 1)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      atFiles.value.active = Math.max(atFiles.value.active - 1, 0)
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      pickAtFile(atFiles.value.active)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeAtList()
+      return
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
@@ -594,6 +773,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .input-container {
+  position: relative;
   flex: 0 0 auto;
   flex-shrink: 0;
   width: 100%;
@@ -676,6 +856,102 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   gap: 6px;
+}
+/* 运行中插话提示条:出现在输入行上方,浅色小字 + 呼吸点 */
+.inject-hint {
+  position: absolute;
+  top: -24px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--accent-300, #F7A85B);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 2px 8px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.inject-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-500, #EF6B6E);
+  animation: inject-pulse 1.4s ease-in-out infinite;
+}
+@keyframes inject-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.inject-slide-enter-active,
+.inject-slide-leave-active {
+  transition: all var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+.inject-slide-enter-from,
+.inject-slide-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.inject-state-hint {
+  color: var(--accent-300, #F7A85B);
+}
+/* @ 文件引用下拉 */
+.at-files-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.18));
+  padding: 4px;
+  z-index: 30;
+}
+.at-files-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 4px 8px 2px;
+}
+.at-files-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 10px 8px;
+  text-align: center;
+}
+.at-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  padding: 6px 8px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  transition: background 0.12s ease;
+}
+.at-file-item:hover,
+.at-file-item.active {
+  background: var(--surface-hover);
+}
+.at-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.at-file-dir {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 .tool-btn {
   width: 36px;

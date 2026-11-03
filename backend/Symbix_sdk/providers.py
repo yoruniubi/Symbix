@@ -4,6 +4,8 @@ import os
 import json
 import shutil
 
+from Symbix_sdk import secret_box
+
 
 # 模板/占位密钥：providers.json.example 首启复制过来时带的是这些占位串，
 # 它们不应当被当成「已配置密钥」，否则刚安装时界面会误以为已配好（告警一闪而过），
@@ -148,6 +150,10 @@ class ProviderRegistry:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for name, cfg in data.get("providers", {}).items():
+                    cfg = dict(cfg)
+                    # 落盘密文 → 内存明文(旧版明文数据原样通过)
+                    if cfg.get("api_key"):
+                        cfg["api_key"] = secret_box.unseal(cfg["api_key"])
                     self.providers[name] = ProviderConfig(name=name, **cfg)
                 self.active = data.get("active")
 
@@ -157,7 +163,7 @@ class ProviderRegistry:
             "providers": {
                 name: {
                     "model": p.model,
-                    "api_key": p.api_key,
+                    "api_key": secret_box.seal(p.api_key),
                     "api_base": p.api_base,
                     "supports_streaming": p.supports_streaming,
                     "supports_tools": p.supports_tools,

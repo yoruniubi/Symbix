@@ -1,35 +1,27 @@
+<div align="center">
+  <img src="Symbix_frontend/public/logo/logo.png" alt="Symbix Logo" width="120"/>
+
 # Symbix 🐾
 
-<p align="center">
-  <img src="Symbix_frontend/public/logo/logo.png" alt="Symbix Logo" width="200"/>
-</p>
+**让 AI 陪你生活,也替你干活。**
 
-<p align="center">
-  <a href="README_EN.md">English</a> | <a href="#中文">中文</a>
-</p>
+把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己找工具、干完活,交给你排版好的 Word / PPT / Excel / PDF 成品文件。全程对话驱动,每步留痕、可回溯;所有对话与记忆都留在本地。
 
+[![Release](https://img.shields.io/github/v/release/yoruniubi/Symbix?label=release)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/yoruniubi/Symbix/total?label=downloads)](../../releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](../../releases/latest)
 
-<!-- 技术栈 -->
-[![Python](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white)]()
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.137-009688?logo=fastapi&logoColor=white)]()
-[![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)]()
-[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)]()
-[![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)]()
-[![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)]()
-[![PixiJS](https://img.shields.io/badge/PixiJS-8-e11d74?logo=pixi.js&logoColor=white)]()
-[![naive-ui](https://img.shields.io/badge/naive--ui-2-0080ff)]()
+**[⬇️ 下载安装](../../releases/latest)** · [功能与开发日志](./当前已实现的功能.md) · [English](README_EN.md)
 
----
+<img src="docs/screenshots/demo.gif" alt="Symbix 主界面:桌宠常驻桌面,鼠标穿透,空闲时会主动搭话" width="560"/>
+
+</div>
 
 <div id="中文">
 
-Symbix 把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己找工具、干完活,交给你排版好的 Word / PPT / Excel / PDF 成品文件。全程对话驱动,每步留痕、可回溯;所有对话与记忆都留在本地。
-
 **技术形态**:Tauri 2 桌面壳(Vue 3 + PixiJS 渲染桌宠)+ FastAPI 后端 + 自研 Python Agent SDK(31 工具 / 记忆 / 技能 / MCP / 定时任务)。
 
-欢迎各位提出建议和贡献
 ## ✨ 核心亮点
 
 - 📦 **交付成品,不只是答案** —— 直接给你排好版的 Word / PPT / Excel / PDF,拿到手就能发出去
@@ -46,9 +38,11 @@ Symbix 把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己�
 - 🔊 **能听会说** —— 语音识别跑在本地开销小不上传;朗读一句一句流着念
 - 🧩 **能力没有上限** —— 技能包 + MCP 外部工具随时接，与内置工具同权同审批
 - 📕 **生态齐全** —— 支持多种形式的MCP，包括stdio MCP以及远程MCP oauth等配置
+- 🗣️ **干活时也能插话** —— 任务跑着的时候直接打字补充:「标题改成蓝色」「顺便加个图表」,Agent 下一步就照办,不用等它做完再说
 - 💬 **会主动来找你** —— 没事搭句话,一半概率翻你的记忆聊旧事(「你之前想画的桌宠,后来呢?」);点一下气泡直接进聊天,它先开口、你来接 💛
 - ☕ **温柔感做在细节里** —— 完成提示音是十几种柔和预设(轻风、晨露、余烬…),不是刺耳的"叮";界面是暖调奶油色主题,暗色模式也走暖炭色,不用冷冰冰的科技灰
 - 🛡️ **审批机制随你调** —— 从严格审批到火力全开，安全边界由你决定
+
 ## 🎯 和别的 Agent 差在哪
 
 | | 普通 Agent / 聊天机器人 | Symbix |
@@ -95,7 +89,7 @@ Symbix 把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己�
 | | | |
 | --- | --- | --- |
 | <img src="docs/screenshots/settings-general.png" width="440"> | <img src="docs/screenshots/settings-voice.png" width="440"> | <img src="docs/screenshots/settings-prompt.png" width="440"> |
-| <img src="docs/screenshots/settings-model.png" width="440"> | <img src="docs/screenshots/settings-misc.png" width="440"> | |
+| <img src="docs/screenshots/settings-model.png" width="440"> | <img src="docs/screenshots/settings-misc.png" width="440"> | | |
 
 **模型设置**
 
@@ -113,6 +107,12 @@ Symbix 把 **AI Agent** 装进一只**桌面宠物**里:你说需求,它自己�
 </details>
 
 ## 🚀 快速开始
+
+装好就能用,一共三步:
+
+1. **下载安装** —— 按下面表格选平台
+2. **填一个 API Key** —— 聊天窗左侧 Model Setting 面板,内置 9 家厂商预设
+3. **开聊** —— 「帮我整理…」「每天早上八点提醒我…」,直接说
 
 ### 下载安装(推荐)
 
@@ -146,6 +146,26 @@ npm run tauri dev    # 桌面应用
 
 聊天界面左侧 Model Setting 面板选 Provider,填 API Key 即可。内置 9 家厂商预设,支持自定义 `base_url` 接任意 OpenAI 兼容网关。TTS 支持 Edge TTS / OpenAI 兼容 / 自建(GPT-SoVITS 等本地一键包可直连)。
 
+### 📁 文件与工作区
+
+Agent 的文件读写被限制在**工作区**内,不是想读哪就读哪:
+
+- 默认工作区 = 程序所在目录 + 聊天上传的文件
+- 想让它处理别的文件夹,在聊天窗左侧「文件」面板点 **打开目录** 选一下,**浏览即授权** —— 面板里打开过的目录 Agent 才能读写,没打开过的一律拒绝
+- 系统目录(`Windows`、`Program Files`、`.ssh`、`.gnupg`、回收站等)无论怎么选都不可访问,这是硬编码的最后防线,防的是模型幻觉和提示注入
+- 授权跟着后端进程走:重启应用后到文件面板再开一次即可;面板会记住上次浏览的目录,关掉再开还在原地
+
+## 🔒 数据在哪,说清楚
+
+| 数据 | 去向 |
+| --- | --- |
+| 对话、记忆、手账、附件 | 全部存在本地;删会话连附件一起清 |
+| API Key | 本地 `providers.json`,密钥以 Windows DPAPI 密文落盘(绑定当前用户),不上传任何服务器 |
+| 模型请求 | 本机直连你配置的厂商 / 网关,不经第三方中转(本项目没有云服务) |
+| 语音识别 | 默认本地推理,音频不出机器;不配置才走云端 STT |
+| 更新检查 | 只访问 GitHub Releases API 拿版本号,不传任何数据 |
+| 遥测 / 埋点 | 无 |
+
 ## 📚 文档
 
 - [`当前已实现的功能.md`](./当前已实现的功能.md) —— 功能变更与踩坑记录,也是开发日志
@@ -156,7 +176,8 @@ npm run tauri dev    # 桌面应用
 - [PixiJS](https://pixijs.com/) · [Tauri](https://tauri.app/) · [naive-ui](https://www.naiveui.com/) · [FastAPI](https://fastapi.tiangolo.com/) · [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
 - 友链: [linux do 社区](https://linux.do)
 
+欢迎 Issue 与 PR,建议和贡献都欢迎。
+
 **Symbix — 让 AI 陪你生活,也替你干活。** 🐾
 
 </div>
-

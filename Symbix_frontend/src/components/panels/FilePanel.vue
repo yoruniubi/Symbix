@@ -127,8 +127,22 @@ const emit = defineEmits<{
 }>()
 
 const backendUrl = 'http://127.0.0.1:8000'
+
+// 面板一关组件就销毁,浏览位置放模块级 + localStorage:
+// 关了再开要回到上次所在的目录,而不是每次都弹回项目根。
+const LS_LAST_PATH = 'symbix-filepanel-last-path'
+const LS_EXTERNAL_ROOT = 'symbix-filepanel-external-root'
+function lsGet(key: string): string {
+  try {
+    return localStorage.getItem(key) || ''
+  } catch {
+    return ''
+  }
+}
+const currentPath = ref(lsGet(LS_LAST_PATH) || '.')
+const externalRoot = ref(lsGet(LS_EXTERNAL_ROOT))
+
 const entries = ref<FileEntry[]>([])
-const currentPath = ref('.')
 const selectedFile = ref<SelectedFile | null>(null)
 const loading = ref(false)
 const savingFile = ref(false)
@@ -140,7 +154,6 @@ const { width: panelWidth, isResizing, startResize } = useResizablePanel({
 
 const pathParts = computed(() => currentPath.value === '.' ? [] : currentPath.value.split('/'))
 const isExternalPath = computed(() => /^[a-zA-Z]:[\\/]/.test(currentPath.value) || currentPath.value.startsWith('\\\\'))
-const externalRoot = ref('')
 const externalRootName = computed(() => externalRoot.value.split(/[\\/]/).filter(Boolean).pop() || t('filePanel.computerDir'))
 
 /** 面包屑段：每段 { name, path }，点击可跳转。首段是根（项目根 / 盘符或外部根）。 */
@@ -195,7 +208,17 @@ async function loadDirectory(path: string) {
     const data = await request(`/api/files/list?path=${encodeURIComponent(path)}`)
     currentPath.value = data.path || path
     entries.value = data.entries || []
+    // 记住当前位置,关面板/重启后回到这里;浏览外部目录同时会向后端注册工作区授权
+    try {
+      localStorage.setItem(LS_LAST_PATH, currentPath.value)
+      localStorage.setItem(LS_EXTERNAL_ROOT, externalRoot.value)
+    } catch {}
   } catch (err: any) {
+    // 记住的位置打不开了(移动盘拔了/目录被删):退回项目根,别让面板死在错误页
+    if (path !== '.' && path === currentPath.value) {
+      await loadDirectory('.')
+      return
+    }
     error.value = err.message || t('filePanel.loadError')
   } finally {
     loading.value = false
@@ -273,7 +296,8 @@ watch(() => props.activePanel, (panel) => {
 })
 
 onMounted(() => {
-  if (props.activePanel === 'files') loadDirectory('.')
+  // 恢复上次浏览的目录(没有记录时是项目根)
+  if (props.activePanel === 'files') loadDirectory(currentPath.value)
 })
 </script>
 
