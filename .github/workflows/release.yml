@@ -251,6 +251,7 @@ jobs:
         with:
           name: symbix-${{ matrix.plat }}
           path: out/*
+          if-no-files-found: error   # 产物为空就直接失败,别到发版 job 才报错
           retention-days: 7
 
   release:
@@ -259,12 +260,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # checkout 必须在 download 之前:checkout 默认 clean 工作区(git clean -ffdx),
+      # 顺序反了会把刚下载好的 dist/ 删掉,导致 make_latest_json.py 读不到目录。
+      - uses: actions/checkout@v4        # 下面要用仓库里的 latest.json 生成脚本
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-
-      - uses: actions/checkout@v4        # 下面要用仓库里的 latest.json 生成脚本
 
       # 把各平台的 .sig 合并成 updater 插件要的 latest.json:
       # 插件端固定读 releases/latest/download/latest.json,地址里不能带平台名。

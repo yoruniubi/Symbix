@@ -57,6 +57,15 @@ def main() -> int:
     ap.add_argument("--out", default="", help="输出路径,默认 <dist>/latest.json")
     args = ap.parse_args()
 
+    if not os.path.isdir(args.dist):
+        print(
+            f"[latest.json] 目录不存在: {args.dist}\n"
+            "  这个目录应该由 actions/download-artifact 填满(各平台 out/* 合并而来)。\n"
+            "  建议检查:产物是否上传成功、checkout 是否放在了 download-artifact 之前(默认会 clean 工作区)",
+            file=sys.stderr,
+        )
+        return 1
+
     sigs = sorted(f for f in os.listdir(args.dist) if f.endswith(".sig"))
     if not sigs:
         print("[latest.json] 没找到任何 .sig,无法生成清单", file=sys.stderr)
