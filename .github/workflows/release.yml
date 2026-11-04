@@ -238,13 +238,39 @@ jobs:
       # 更新包(.sig 的兄弟文件)也要收进来,否则发版 job 拼不出 latest.json
       - name: Collect bundles
         shell: bash
+        env:
+          PLAT: ${{ matrix.plat }}
         run: |
           mkdir -p out
+          echo "== bundle 目录下的全部文件(排错用) =="
+          find Symbix_frontend/src-tauri/target/release/bundle -type f | sort
           find Symbix_frontend/src-tauri/target/release/bundle -type f \
             \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \
-               -o -name '*.nsis.zip' -o -name '*.app.tar.gz' \
-               -o -name '*.nsis.zip.sig' -o -name '*.app.tar.gz.sig' \) \
+               -o -name '*.nsis.zip' -o -name '*.app.tar.gz' -o -name '*.sig' \) \
             -exec cp {} out/ \;
+
+          # 统一更新包命名。上游各平台不一致:
+          #   Windows(v2 updater) -> <product>_<ver>_<arch>-setup.exe  本体即更新包,配 .exe.sig
+          #                         (只有 createUpdaterArtifacts="v1Compatible" 才额外产 .nsis.zip)
+          #   macOS              -> <product>.app.tar.gz               (不含版本/架构,多架构会撞名)
+          # latest.json 靠文件名里的平台标识归类,所以统一改成 symbix_<ver>_<plat>.<ext>。
+          # 签名只覆盖文件内容、不覆盖文件名,改名不影响验签。
+          VER=$(node -p "require('./Symbix_frontend/src-tauri/tauri.conf.json').version")
+          [ -n "$VER" ] || { echo "::error::读不到 tauri.conf.json 的 version"; exit 1; }
+          shopt -s nullglob
+          for f in out/*.exe out/*.exe.sig out/*.app.tar.gz out/*.app.tar.gz.sig \
+                   out/*.nsis.zip out/*.nsis.zip.sig; do
+            case "$f" in
+              *.app.tar.gz.sig) ext="app.tar.gz.sig" ;;
+              *.app.tar.gz)     ext="app.tar.gz" ;;
+              *.nsis.zip.sig)   ext="nsis.zip.sig" ;;
+              *.nsis.zip)       ext="nsis.zip" ;;
+              *.exe.sig)        ext="exe.sig" ;;
+              *.exe)            ext="exe" ;;
+            esac
+            target="out/symbix_${VER}_${PLAT}.${ext}"
+            [ "$f" = "$target" ] || mv -f "$f" "$target"
+          done
           ls -la out
 
       - uses: actions/upload-artifact@v4
@@ -279,7 +305,8 @@ jobs:
             --dist dist \
             --version "${GITHUB_REF_NAME#v}" \
             --repo "${{ github.repository }}" \
-            --tag "$GITHUB_REF_NAME"
+            --tag "$GITHUB_REF_NAME" \
+            --require windows-x86_64,darwin-aarch64
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2

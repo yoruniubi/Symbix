@@ -12,7 +12,8 @@
   python .github/scripts/make_latest_json.py --dist dist --version 0.1.1 \
       --repo yoruniubi/Symbix --tag v0.1.1 [--notes "..."]
 
-输入: dist/ 下的 <安装包>.sig(与签名对象同名,内容为 minisign 签名串)
+输入: dist/ 下的 symbix_<ver>_<plat>.<ext>.sig(Collect bundles 已统一命名,内容为 minisign 签名串)
+      <ext> 可能是 exe(Windows NSIS 安装器即更新包)/ app.tar.gz(macOS)/ nsis.zip(v1 兼容模式)
 输出: dist/latest.json
 """
 
@@ -25,25 +26,38 @@ import os
 import sys
 from datetime import datetime, timezone
 
-# 文件名片段 -> 清单里的 platform 键(tauri 的 os-arch 命名,连字符)
-RULES: list[tuple[str, str]] = [
-    # Windows NSIS 更新包: Symbix_0.1.1_x64-setup.nsis.zip
-    ("x64-setup.nsis.zip", "windows-x86_64"),
-    ("aarch64-setup.nsis.zip", "windows-aarch64"),
-    # macOS 应用包: Symbix_aarch64.app.tar.gz / Symbix_x64.app.tar.gz
-    ("aarch64.app.tar.gz", "darwin-aarch64"),
-    ("x64.app.tar.gz", "darwin-x86_64"),
-    # Linux(目前不发 AppImage,留着以备将来)
-    ("amd64.appimage.tar.gz", "linux-x86_64"),
-]
+# 平台标签(Collect bundles 归一化后的文件名里带有) -> 清单里的 platform 键(tauri 的 os-arch 命名)
+PLATFORM_KEYS: dict[str, str] = {
+    "windows-x64": "windows-x86_64",
+    "windows-arm64": "windows-aarch64",
+    "macos-arm64": "darwin-aarch64",
+    "macos-x64": "darwin-x86_64",
+    "linux-x64": "linux-x86_64",
+}
+
+# 更新包后缀(长后缀在前,避免 .sig / .tar.gz 被截错)。
+# v2 updater 里 Windows NSIS 的更新包就是安装器 .exe 本体,所以 .exe 也算更新包。
+UPDATER_SUFFIXES: tuple[str, ...] = (
+    ".appimage.tar.gz",
+    ".nsis.zip",
+    ".app.tar.gz",
+    ".appimage",
+    ".msi",
+    ".deb",
+    ".exe",
+)
 
 
 def classify(filename: str) -> str | None:
-    """按文件名判断属于哪个 platform;不认识返回 None。"""
+    """按 symbix_<ver>_<plat>.<ext> 命名判断 platform;不认识返回 None。"""
     lowered = filename.lower()
-    for needle, platform in RULES:
-        if lowered.endswith(needle):
-            return platform
+    for suffix in UPDATER_SUFFIXES:
+        if lowered.endswith(suffix):
+            stem = lowered[: -len(suffix)]
+            for tag, platform in PLATFORM_KEYS.items():
+                if stem.endswith("_" + tag):
+                    return platform
+            return None
     return None
 
 
@@ -55,6 +69,7 @@ def main() -> int:
     ap.add_argument("--tag", required=True, help="Release tag,如 v0.1.1")
     ap.add_argument("--notes", default="", help="清单里的更新说明(可空)")
     ap.add_argument("--out", default="", help="输出路径,默认 <dist>/latest.json")
+    ap.add_argument("--require", default="", help="必须存在的 platform 键(逗号分隔),缺失即失败")
     args = ap.parse_args()
 
     if not os.path.isdir(args.dist):
@@ -65,6 +80,8 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    print(f"[latest.json] {args.dist} 内容: {', '.join(sorted(os.listdir(args.dist)))}")
 
     sigs = sorted(f for f in os.listdir(args.dist) if f.endswith(".sig"))
     if not sigs:
@@ -89,6 +106,14 @@ def main() -> int:
         url = f"https://github.com/{args.repo}/releases/download/{args.tag}/{asset}"
         platforms[platform] = {"signature": signature, "url": url}
         print(f"[latest.json] {platform:16} <- {asset}")
+
+    missing = [p for p in (s.strip() for s in args.require.split(",")) if p and p not in platforms]
+    if missing:
+        print(
+            f"[latest.json] 缺少必需的平台: {', '.join(missing)}（该平台的更新包或 .sig 没生成/没上传）",
+            file=sys.stderr,
+        )
+        return 1
 
     if not platforms:
         print("[latest.json] 一份可用的更新包都没有,无法生成清单", file=sys.stderr)
