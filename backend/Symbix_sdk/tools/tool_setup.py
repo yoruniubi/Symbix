@@ -9,6 +9,7 @@ from Symbix_sdk.tools.builtin.interaction_tools import INTERACTION_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.agent_tools import AGENT_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.job_tools import JOB_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.memory_tools import MEMORY_TOOLS_SCHEMAS
+from Symbix_sdk.tools.builtin.extension_tools import EXTENSION_TOOLS_SCHEMAS
 ALL_TOOL_SCHEMAS = {}
 ALL_TOOL_SCHEMAS.update(FILE_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(DOC_TOOLS_SCHEMAS)
@@ -20,6 +21,7 @@ ALL_TOOL_SCHEMAS.update(INTERACTION_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(AGENT_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(JOB_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(MEMORY_TOOLS_SCHEMAS)
+ALL_TOOL_SCHEMAS.update(EXTENSION_TOOLS_SCHEMAS)
 
 def setup_builtin_tools(toolkit) -> None:
     """将定义在所有子模块中的工具注册到给定的 NativeToolkit 实例。
@@ -60,6 +62,43 @@ def setup_builtin_tools(toolkit) -> None:
             toolkit.register_tool(
                 name=name,
                 func=_make_bound_create_skill(func),
+                description=desc,
+                parameters=params,
+            )
+        # 特殊处理: skill 安装/卸载工具需要绑定注册表 + 默认目录 + 重注册回调
+        elif name in ("install_skill", "remove_skill"):
+
+            def _make_bound_skill_action(raw_func):
+                # 包装函数必须是 async:外层据 iscoroutinefunction 判定是否走 execute_async,
+                # 同步包装会把协程对象直接当结果返回
+                async def _bound(**kwargs):
+                    return await raw_func(
+                        _skill_registry=toolkit._skill_registry,
+                        _skills_dir=_DEFAULT_SKILLS_DIR,
+                        _on_skills_changed=toolkit.register_skill_tools,
+                        **kwargs,
+                    )
+
+                return _bound
+
+            toolkit.register_tool(
+                name=name,
+                func=_make_bound_skill_action(func),
+                description=desc,
+                parameters=params,
+            )
+        # 特殊处理: MCP 安装/删除/查询工具需要绑定应用侧的配置与连接管理器
+        elif name in ("install_mcp_server", "remove_mcp_server", "list_mcp_servers"):
+
+            def _make_bound_mcp_action(raw_func):
+                async def _bound(**kwargs):
+                    return await raw_func(_mcp_binding=toolkit._mcp_binding, **kwargs)
+
+                return _bound
+
+            toolkit.register_tool(
+                name=name,
+                func=_make_bound_mcp_action(func),
                 description=desc,
                 parameters=params,
             )

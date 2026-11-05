@@ -207,6 +207,9 @@ threading.Thread(
 # ============ 工具注册 ============
 tool_registry = ToolRegistry(mcp_manager=mcp_manager)
 tool_registry.set_skill_registry(skill_registry)
+# 扩展工具(install_mcp_server / list_mcp_servers 等)需要操作应用侧的
+# 配置与连接活实例，在此注入(必须在 initialize_mcp_servers 启动前完成)
+tool_registry.native.set_mcp_binding(mcp_config, mcp_manager, mcp_oauth_store)
 _pending_approvals: dict[str, dict] = {}
 # 交互型工具(ask_clarifying_question)挂起的额外信息:id → {question, suggestions, context}
 _pending_questions: dict[str, dict] = {}

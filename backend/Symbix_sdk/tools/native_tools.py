@@ -15,6 +15,22 @@ class NativeToolkit:
         self.tool_schemas: dict[str, dict] = {}
         self._skill_registry = None  # 关联的 SkillRegistry，用于注册 skill 为工具
         self._skill_tool_names: set[str] = set()  # 追踪哪些工具名来自 skill
+        # 应用侧 MCP 单例注入位（扩展工具用）:
+        # {"config": McpConfig, "manager": McpServerManager, "oauth_store": TokenStore}
+        # SDK 层不依赖 application，由应用启动时通过 set_mcp_binding 传入
+        self._mcp_binding: dict | None = None
+
+    def set_mcp_binding(self, mcp_config, mcp_manager, oauth_store=None) -> None:
+        """注入应用侧的 MCP 配置 / 连接管理器 / OAuth 令牌库。
+
+        扩展工具（install_mcp_server 等）必须操作这两个**活实例**：
+        McpConfig 的 data 是内存缓存，另建实例直写文件会让内存态与磁盘漂移。
+        """
+        self._mcp_binding = {
+            "config": mcp_config,
+            "manager": mcp_manager,
+            "oauth_store": oauth_store,
+        }
 
     def set_skill_registry(self, registry):
         """关联 SkillRegistry，把每个已加载 skill 注册为可调用工具"""
