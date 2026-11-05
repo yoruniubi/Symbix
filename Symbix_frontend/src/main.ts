@@ -29,7 +29,39 @@ listen<AppLocale>("locale-changed", (event) => {
 // (纯浏览器里 resolveBackendUrl 直接返回默认 8000,不会多等)
 installLegacyUrlRewrite();
 
+/**
+ * 把桌宠主窗口从「最小化」还原出来。
+ *
+ * 启动方式不同(安装器「立即运行」、快捷方式,或上个会话残留),窗口交给我们时可能
+ * 已经是最小化状态,tao 不会自动还原。桌宠没有标题栏,用户看到的就是「启动了但
+ * 宠物不出现,点一下任务栏图标才冒出来」。
+ *
+ * 只对 label === "main" 生效(聊天/皮肤/弹幕窗各有自己的显隐时机)。打两发:挂载后
+ * 立刻一次,再延迟一次兜住「最小化在首次 show 之后才生效」的情况。
+ */
+async function ensureMainWindowVisible() {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    if (win.label !== "main") return;
+    const reveal = async () => {
+      try {
+        if (await win.isMinimized()) await win.unminimize();
+        await win.show();
+        await win.setFocus();
+      } catch (e) {
+        console.warn("[window] 还原桌宠窗口失败:", e);
+      }
+    };
+    await reveal();
+    setTimeout(() => void reveal(), 800);
+  } catch {
+    /* 非 Tauri 环境(纯浏览器 dev)没有窗口 API */
+  }
+}
+
 void (async () => {
   await resolveBackendUrl();
   createApp(App).use(router).use(i18n).mount("#app");
+  void ensureMainWindowVisible();
 })();

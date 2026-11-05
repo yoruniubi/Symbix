@@ -25,6 +25,7 @@ export default {
     petGreetingList: 'Good to see you again!',
     skinSwitched: 'Skin switched to "{name}"',
     skinSwitchFailed: 'Skin switch failed, please check the skin files',
+    skinLoadFailed: 'Skin failed to load, please retry later or restart the app',
     windowChat: 'Symbix - Chat',
     windowSkin: 'Symbix - Skins',
     windowSetting: 'Symbix - Settings',

@@ -164,6 +164,13 @@ pub fn run() {
             {
                 let window = app.get_webview_window("main").unwrap();
                 window.set_decorations(false).unwrap();
+                // 有些启动方式(安装器「立即运行」、快捷方式自带的最小化显示状态,或上一
+                // 个会话残留)把窗口交给我们时就已经是最小化的,tao 不会自动还原。桌宠
+                // 没标题栏,表现就是「启动了但宠物不出现,点一下任务栏图标才冒出来」。
+                // 这里主动还原并抬到前面;前端 main.ts 里还有一次延迟兜底。
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
                 // 桌宠需长期压在任务栏之上,原因见 pet_zorder 模块注释
                 if let Ok(hwnd) = window.hwnd() {
                     pet_zorder::keep_on_top(hwnd);

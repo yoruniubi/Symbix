@@ -38,6 +38,34 @@ export async function resolveBackendUrl(tries = 8): Promise<string> {
   return BACKEND_URL
 }
 
+/**
+ * 等后端**真的能收请求**再返回(state=ready/external)。
+ *
+ * Rust 侧是「先挑端口、再把 url 写进状态」,然后才 spawn + 等探测通过;
+ * 而 `resolveBackendUrl()` 只要 url 非空就返回 —— 冻结版后端 import 要好几秒,
+ * 这段时间里发出的请求会撞上连接拒绝(fetch 抛 `TypeError: Failed to fetch`)。
+ * 只给「一次失败就留个空窗口」的地方用(桌宠贴图),别在挂载前全局等。
+ *
+ * 返回 null = 不在 Tauri 里(纯浏览器 dev,后端早就在跑);其余情况返回最后一次状态,
+ * 超时/失败由调用方自己决定要不要继续。
+ */
+export async function waitBackendReady(timeoutMs = 20000): Promise<BackendStatus | null> {
+  const deadline = Date.now() + timeoutMs
+  let last: BackendStatus | null = null
+  for (;;) {
+    const status = await fetchBackendStatus()
+    if (status === null) return null
+    last = status
+    // ready/external 才是「在监听」;failed/exited/missing 再等也不会好
+    if (status.state !== 'starting') return status
+    if (Date.now() >= deadline) {
+      console.warn('[backend] 等待后端就绪超时,状态仍为', status.state)
+      return status
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+}
+
 /** 把请求地址里的旧常量换成当前 base;不是自家地址的原样返回 */
 export function rewriteLegacyUrl(url: string): string {
   for (const base of LEGACY_BASES) {

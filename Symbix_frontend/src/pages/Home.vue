@@ -73,7 +73,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
 import { useI18n } from 'vue-i18n'
-import { speak, assetUrl } from '@/utils/backend'
+import { speak, assetUrl, waitBackendReady } from '@/utils/backend'
 import { fitsSheetContract, SHEET_COLS, SHEET_FRAME_H, SHEET_FRAME_W, SHEET_MIN_ROWS } from '@/utils/petSheet'
 import {
   PET_FRAME_SEQUENCES,
@@ -1053,6 +1053,25 @@ let unlistenPetSwitched: UnlistenFn | null = null
 let onPetStorage: ((e: StorageEvent) => void) | null = null
 let lastPetSwitchKey = ''
 
+/**
+ * 带退避的重试(0.6s / 1.2s)。
+ *
+ * 打包版后端是独立进程,冷启动那几秒 fetch 会直接抛 `TypeError: Failed to fetch`;
+ * Pixi 的 Assets 失败后会丢掉 promise 缓存,所以原样再来一次就行,不用换 URL。
+ */
+async function loadWithRetry<T>(load: () => Promise<T>, tries = 3): Promise<T> {
+  let lastErr: unknown
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await load()
+    } catch (e) {
+      lastErr = e
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 600 * (i + 1)))
+    }
+  }
+  throw lastErr
+}
+
 async function loadPetTexture(spritesheetPath: string) {
   if (!app || !sprite) return
 
@@ -1073,8 +1092,8 @@ async function loadPetTexture(spritesheetPath: string) {
     }
   } catch { /* ignore */ }
 
-  // 加载新纹理
-  const texture = await Assets.load<Texture>(loadPath)
+  // 加载新纹理(后端刚起来时前几次会 Failed to fetch,重试几次)
+  const texture = await loadWithRetry(() => Assets.load<Texture>(loadPath))
   baseSource = texture.source as TextureSource
   applyPetScaleMode(currentPetStyle(path))
 
@@ -1154,9 +1173,13 @@ onMounted(async () => {
     }
   } catch { /* fallback to default */ }
 
-  let texture: Texture
+  // 端口早于「后端真的在监听」就交给前端了:先等它就绪,否则第一发贴图请求
+  // 会撞上连接拒绝(表现就是桌宠空白 + console 里 Failed to fetch)
+  await waitBackendReady()
+
+  let texture: Texture | null = null
   try {
-    texture = await Assets.load<Texture>(assetUrl(spritesheetPath))
+    texture = await loadWithRetry(() => Assets.load<Texture>(assetUrl(spritesheetPath)))
     // 尺寸不符同样会「加载成功」,但切出来是错位马赛克 —— 当作失败回退,不把坏皮肤播出去
     if (!fitsSheetContract(texture.width, texture.height)) {
       throw new Error(
@@ -1169,18 +1192,29 @@ onMounted(async () => {
     console.warn(`[pet] 加载 ${spritesheetPath} 失败，回退到 frieren`, e)
     spritesheetPath = '/codex_pet/frieren/spritesheet.webp'
     try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
-    texture = await Assets.load<Texture>(assetUrl(spritesheetPath))
+    texture = await loadWithRetry(() => Assets.load<Texture>(assetUrl(spritesheetPath))).catch(
+      (e2) => {
+        // 连内置皮肤都拿不到(后端没起来/资源缺失)。这里绝不能抛:onMounted 后面还有
+        // ticker 兜底、桌宠 SSE、弹幕窗口要装,抛出去它们就全不执行了
+        console.error('[pet] 内置皮肤也加载失败，桌面暂时留空:', e2)
+        showBubble(t('home.skinLoadFailed'), 3000)
+        return null
+      },
+    )
   }
-  baseSource = texture.source as TextureSource
-  applyPetScaleMode(currentPetStyle(spritesheetPath))
-  const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
-  sprite = new AnimatedSprite(frames)
-  sprite.animationSpeed = animationSpeedFor('idle')
-  sprite.scale.set(1)
-  sprite.loop = true
-  sprite.play()
 
-  app.stage.addChild(sprite)
+  if (texture) {
+    baseSource = texture.source as TextureSource
+    applyPetScaleMode(currentPetStyle(spritesheetPath))
+    const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
+    sprite = new AnimatedSprite(frames)
+    sprite.animationSpeed = animationSpeedFor('idle')
+    sprite.scale.set(1)
+    sprite.loop = true
+    sprite.play()
+
+    app.stage.addChild(sprite)
+  }
   // 遮挡时 WebView2 会停止投递 rAF → Pixi ticker 停摆 → 动画卡住。装一层兜底:
   // 检测到停摆就手动按 60Hz 推进 ticker,帧回来了再交还浏览器。
   tickerGuard = installTickerResilience(app.ticker)

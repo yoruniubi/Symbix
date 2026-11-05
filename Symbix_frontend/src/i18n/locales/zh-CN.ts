@@ -25,6 +25,7 @@ export default {
     petGreetingList: '又见面了!',
     skinSwitched: '已换装「{name}」',
     skinSwitchFailed: '换装失败,请检查皮肤文件',
+    skinLoadFailed: '皮肤加载失败,请稍后重试或重启应用',
     windowChat: 'Symbix - 对话',
     windowSkin: 'Symbix - 换肤',
     windowSetting: 'Symbix - 设置',
