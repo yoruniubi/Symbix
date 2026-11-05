@@ -34,11 +34,9 @@ def setup_builtin_tools(toolkit) -> None:
     import sys
     import os
 
-    # 计算默认 skill 安装目录（供 create_skill 回退使用）
-    _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
-    _DEFAULT_SKILLS_DIR = os.path.normpath(
-        os.path.join(_TOOLS_DIR, "..", "skill", "installed_skills")
-    )
+    # 默认 skill 安装目录(供 create_skill 回退使用):属于用户数据,走 app_paths
+    from Symbix_sdk.app_paths import data_path
+    _DEFAULT_SKILLS_DIR = data_path("Symbix_sdk/skill/installed_skills")
 
     for name, spec in ALL_TOOL_SCHEMAS.items():
         func = spec["func"]

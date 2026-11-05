@@ -43,8 +43,8 @@ from application.routers.chat.helpers import (
     _assert_tool_pairing,
     _execute_tool,
     _stream_tool_events,
-    MAX_CUM_TOOL_TOKENS,
-    MAX_TOOL_ROUNDS,
+    max_cum_tool_tokens,
+    max_tool_rounds,
     MAX_REPEAT_BLOCKED_STREAK,
     check_repeat_tool_call,
     build_usage_payload,
@@ -259,7 +259,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             })
 
         last_reasoning = ctx.get("last_reasoning")
-        max_tool_rounds = MAX_TOOL_ROUNDS
+        rounds_cap = max_tool_rounds()
         session_id = ctx["session_id"]
 
         # ---- 流式生成后续回复（SSE） ----
@@ -387,7 +387,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 cum_tool_tokens = 0
                 # 连续被拦次数:模型无视提示原地打转时靠它收尾
                 repeat_blocked_streak = 0
-                while tool_calls_raw and round_count_local < max_tool_rounds:
+                while tool_calls_raw and (not rounds_cap or round_count_local < rounds_cap):
                     # 客户端断连检测：前端 abort / 删 session 会断 SSE 连接，后端需主动停。
                     if await http_request.is_disconnected():
                         print(f"[approve] client disconnected at round {round_count_local}, stopping")
@@ -592,7 +592,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     cum_tool_tokens += sum(
                         _estimate_tool_tokens(str(tr.get("content", ""))) for tr in new_results
                     )
-                    if cum_tool_tokens > MAX_CUM_TOOL_TOKENS:
+                    token_cap = max_cum_tool_tokens()
+                    if token_cap and cum_tool_tokens > token_cap:
                         print(f"[approve] 工具结果累积超限({cum_tool_tokens} tok),终止工具循环")
                         tool_calls_raw = None
                         full_text = full_text or (

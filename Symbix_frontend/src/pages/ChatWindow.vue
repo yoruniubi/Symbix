@@ -541,6 +541,17 @@ onMounted(async () => {
       return
     }
     if (ts) lastProactiveSeedTs = ts
+    // 兜底去重:窗口在重发窗口期内被重建(计数器归零)、或同一条搭话被点两次时,ts 挡不住。
+    // 只要「最后一条就是这句搭话」且是刚插的,就不再插第二条(30s 外允许同句重复出现)。
+    const lastMsg = messages.value[messages.value.length - 1]
+    if (
+      lastMsg && lastMsg.role === 'assistant' && lastMsg.proactive
+      && String(lastMsg.content || '').trim() === line
+      && Date.now() - lastProactivePushAt < 30000
+    ) {
+      ackProactiveSeed(ts)
+      return
+    }
     // 无活跃会话时先建一个,保证气泡有落点且后续用户发言归入同一会话
     if (!activeSessionId.value) {
       const newId = crypto.randomUUID()
@@ -558,6 +569,7 @@ onMounted(async () => {
       content: line,
       proactive: true,   // 标记为搭话气泡(非回复),前端可按需区分样式
     })
+    lastProactivePushAt = Date.now()
     // 必须把 messages 回写进 session:侧边历史列表读的是 session.messages,
     // 只 persistSessions() 会把「只有一条搭话」的会话存成空会话(点进去是欢迎页)。
     const active = sessions.value.find(s => s.id === activeSessionId.value)
@@ -879,6 +891,9 @@ let unlistenSkinGen: (() => void) | null = null
 let unlistenProactiveSeed: (() => void) | null = null
 // 已处理过的搭话种子 ts:同一个种子被重发时只认第一次
 let lastProactiveSeedTs = 0
+// 上一次真插入搭话气泡的时间:窗口重发期间被重建时计数器会归零,ts 去重失效,
+// 用「最后一条就是同一句话 + 刚插入不久」做内容级兜底
+let lastProactivePushAt = 0
 
 
 /** 处理 SkinWindow 传过来的皮肤生成请求 payload（发一条预设消息给 AI） */

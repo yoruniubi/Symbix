@@ -719,6 +719,20 @@ export default {
     companionProactiveTriggered: '已触发一条主动搭话,点它的气泡试试~',
     companionTestTriggered: '已触发一条测试弹幕~',
     companionTestFailed: '测试弹幕发送失败,请检查后端',
+
+    // 长任务(轮次上限 / 工具结果预算)
+    longTask: '长任务',
+    longTaskMode: '工具循环上限',
+    longTaskMode_standard: '标准(40 轮 / 300k)',
+    longTaskMode_relaxed: '宽松(80 轮 / 1M)',
+    longTaskMode_unlimited: '不限制',
+    longTaskHint:
+      '单次请求最多 {rounds} 轮,累积工具结果预算 {tokens} token。改宽对「读源码 → 改 → 跑测试」这类任务更友好;选「不限制」后没有预算止损,跑飞了只能手动停止。',
+    longTaskHintFallback:
+      '工具循环上限与累积工具结果预算,改宽后长任务不容易被拦腰收尾。',
+    longTaskNoLimit: '不限制',
+    longTaskSaved: '已保存,下一个任务生效',
+    longTaskSaveFailed: '保存失败,请检查后端',
   },
 
   // ===== Model Setting Page =====

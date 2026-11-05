@@ -1,61 +1,63 @@
 import os
 import threading
 from Symbix_sdk.client import SymbixClient
-from Symbix_sdk.providers import ProviderRegistry
+from Symbix_sdk.provider_store import ProviderRegistry
 from Symbix_sdk.memory import ConversationMemory
 from Symbix_sdk.memory.memory_store import MemoryStore
 from Symbix_sdk.config.mcp_config import McpConfig
 from Symbix_sdk.mcp.connector import McpServerManager
 from Symbix_sdk.mcp.oauth import TokenStore, ensure_oauth_token
-from Symbix_sdk.tools.registry import ToolRegistry
-from Symbix_sdk.skill.registry import SkillRegistry
+from Symbix_sdk.tools.tool_registry import ToolRegistry
+from Symbix_sdk.skill.skill_registry import SkillRegistry
 from Symbix_sdk.checkpoint import init_recorder as _init_checkpoint_recorder
 from Symbix_sdk.job_schedule import JobManager
-from Symbix_sdk.mcp.installer import McpInstaller
+from Symbix_sdk.mcp.mcp_installer import McpInstaller
 from Symbix_sdk.act_mode import ActModeController
 from application.services.usage_store import UsageStore
+from Symbix_sdk.app_paths import data_path
 
 # ============ 路径 ============
-# backend/ 目录（application 的上一级）
+# backend/ 目录（application 的上一级）= 程序资源根(只读)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SDK_CONFIG_DIR = os.path.join(BASE_DIR, "Symbix_sdk", "config", "history_list")
+# 可写数据一律走 data_path:开发态=backend/,打包态=<安装目录>/data(见 app_paths)
+SDK_CONFIG_DIR = data_path("Symbix_sdk/config", "history_list")
 os.makedirs(SDK_CONFIG_DIR, exist_ok=True)
 SESSION_INDEX_PATH = os.path.join(SDK_CONFIG_DIR, "sessions_index.json")
 
 # ============ 核心组件 ============
 provider_registry = ProviderRegistry(
-    config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "providers.json")
+    config_path=data_path("Symbix_sdk/config", "providers.json")
 )
 symbix_client = SymbixClient(registry=provider_registry)
 act_mode_controller = ActModeController(symbix_client)
 memory = ConversationMemory(
-    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db")
+    db_path=data_path("Symbix_sdk/memory", "memory.db")
 )
 
 memory_store = MemoryStore(
-    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
+    db_path=data_path("Symbix_sdk/memory", "memory.db"),
     llm_client=symbix_client,    # 指向下方已初始化的 symbix_client
 )
 
 # Checkpoint recorder：同 memory.db 同库，跨表 join 方便。
 # 记录 Agent 对外部世界的副作用 (工具/文件/命令/MCP)，与对话文本 (memory) 正交。
 checkpoint_recorder = _init_checkpoint_recorder(
-    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "memory.db"),
+    db_path=data_path("Symbix_sdk/memory", "memory.db"),
 )
 
 # Job schedule:同 memory.db 同级目录,独立 jobs.db + apscheduler 内置表。
 # build() 会在 main.py lifespan startup 时注入业务依赖。
 job_manager = JobManager(
-    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "jobs.db"),
+    db_path=data_path("Symbix_sdk/memory", "jobs.db"),
 )
 
 # Token 用量库:同 memory.db 同级目录,每轮 done 记一行
 usage_store = UsageStore(
-    db_path=os.path.join(BASE_DIR, "Symbix_sdk", "memory", "token_usage.db"),
+    db_path=data_path("Symbix_sdk/memory", "token_usage.db"),
 )
 
 skill_registry = SkillRegistry(
-    skills_dir=os.path.join(BASE_DIR, "Symbix_sdk", "skill", "installed_skills")
+    skills_dir=data_path("Symbix_sdk/skill/installed_skills")
 )
 
 try:
@@ -66,15 +68,15 @@ except RuntimeError:
 
 # ============ MCP ============
 mcp_config = McpConfig(
-    path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json")
+    path=data_path("Symbix_sdk/config", "mcp_config.json")
 )
 mcp_installer = McpInstaller(
-    config_path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_config.json")
+    config_path=data_path("Symbix_sdk/config", "mcp_config.json")
 )
 mcp_manager = McpServerManager()
 # OAuth token 持久化(含 access/refresh token,不入 git)
 mcp_oauth_store = TokenStore(
-    path=os.path.join(BASE_DIR, "Symbix_sdk", "config", "mcp_oauth.json")
+    path=data_path("Symbix_sdk/config", "mcp_oauth.json")
 )
 # OAuth 连接任务状态(server_id -> 状态 dict)
 _mcp_oauth_tasks: dict = {}

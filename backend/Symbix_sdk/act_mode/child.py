@@ -163,7 +163,7 @@ async def run_child_agent(
             pass
 
     async def _run() -> dict:
-        from Symbix_sdk.providers import resolve_capabilities
+        from Symbix_sdk.provider_store import resolve_capabilities
 
         provider = llm_client.registry.get_active()
         raw_model = override_model or provider.model

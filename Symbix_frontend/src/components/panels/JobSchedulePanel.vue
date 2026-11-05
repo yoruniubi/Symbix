@@ -242,7 +242,7 @@ const emit = defineEmits<{
   (e: 'update:activePanel', value: Panel | null): void
   /**
    * 请求把「建任务」交给聊天里的 Agent。
-   * 面板只递出一句模板话,关面板与预填输入框由父组件负责(见 chat_window 的同名处理)。
+   * 面板只递出一句模板话,关面板与预填输入框由父组件负责(见 ChatWindow.vue 的同名处理)。
    */
   (e: 'askAgent', draft: string): void
 }>()

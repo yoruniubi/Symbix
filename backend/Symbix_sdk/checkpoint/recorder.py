@@ -3,7 +3,7 @@ import os
 import uuid
 from typing import Optional
 
-from .schema import (
+from .checkpoint_schema import (
     CheckpointRecord,
     RecordKind,
     ToolCallRecord,

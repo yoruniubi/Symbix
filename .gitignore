@@ -15,6 +15,9 @@ backend/Symbix_sdk/config/voice_config.json
 backend/Symbix_sdk/config/mcp_oauth.json
 backend/Symbix_sdk/config/mcp_oauth.json.tmp
 backend/Symbix_sdk/config/mcp_config.json
+# 运行期调参(长任务档位等,因人而异,不进仓库)
+backend/Symbix_sdk/config/runtime_config.json
+backend/Symbix_sdk/config/runtime_config.json.tmp
 # Petdex 商店清单缓存(5209 条,按需重新拉取)
 backend/Symbix_sdk/config/petdex_manifest.json
 backend/Symbix_sdk/config/petdex_thumbs/

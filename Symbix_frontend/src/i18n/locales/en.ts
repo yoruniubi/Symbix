@@ -720,6 +720,20 @@ export default {
     companionProactiveTriggered: 'Proactive chat fired — try clicking its bubble~',
     companionTestTriggered: 'A test danmaku fired~',
     companionTestFailed: 'Failed to send test danmaku, check backend',
+
+    // Long tasks (tool loop cap / tool output budget)
+    longTask: 'Long tasks',
+    longTaskMode: 'Tool loop cap',
+    longTaskMode_standard: 'Standard (40 rounds / 300k)',
+    longTaskMode_relaxed: 'Relaxed (80 rounds / 1M)',
+    longTaskMode_unlimited: 'Unlimited',
+    longTaskHint:
+      'Up to {rounds} rounds per request and {tokens} tokens of accumulated tool output. A wider setting suits read → edit → test flows; Unlimited removes the token stop-loss, so a runaway loop can only be stopped by hand.',
+    longTaskHintFallback:
+      'Tool loop cap and accumulated tool-output budget; widening them keeps long tasks from being cut short.',
+    longTaskNoLimit: 'no limit',
+    longTaskSaved: 'Saved — takes effect on the next task',
+    longTaskSaveFailed: 'Failed to save, check the backend',
   },
 
   // ===== Model Setting Page =====

@@ -379,7 +379,7 @@ def _parse_raw_cron(text: str) -> dict:
     if len(parts) != 5:
         raise ValueError("cron 需要 5 段:分 时 日 月 星期,例如 0 9 * * mon-fri")
     minute, hour, day, month, dow = parts
-    from .schema import validate_trigger
+    from .job_schema import validate_trigger
     # 用户写 cron 用的是 Unix 直觉(0=周日/7=周日),这里归一成系统语义
     cfg = normalize_cron_config(_cron_cfg(minute, hour, day, month, dow))
     try:

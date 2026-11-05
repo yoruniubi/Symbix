@@ -73,7 +73,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
 import { useI18n } from 'vue-i18n'
-import { speak } from '@/utils/backend'
+import { speak, assetUrl } from '@/utils/backend'
 import { fitsSheetContract, SHEET_COLS, SHEET_FRAME_H, SHEET_FRAME_W, SHEET_MIN_ROWS } from '@/utils/petSheet'
 import {
   PET_FRAME_SEQUENCES,
@@ -888,7 +888,7 @@ async function openOrCreateWindow(
 
 async function openChatWindow() {
   await openOrCreateWindow('chat', {
-    url: '/chat_window',
+    url: '/chat-window',
     title: t('home.windowChat'),
     width: 900,
     height: 700,
@@ -1005,35 +1005,46 @@ let unlistenDanmakuCfg: UnlistenFn | null = null
 let unlistenProactiveChat: UnlistenFn | null = null
 
 // 点击弹幕窗里的主动搭话气泡 → 打开聊天窗,并把搭话内容作为开场上下文
+// 正在补发的搭话内容:同一条被重复触发时只跑一次,避免插两条一样的气泡
+let proactiveInFlight = ''
 async function openChatFromProactive(payload: { text?: string; memory?: string }) {
-  const { emit, listen: listenEv } = await import('@tauri-apps/api/event')
-  await openChatWindow()
-  const seed = {
-    text: payload.text || '',
-    memory: payload.memory || '',
-    ts: Date.now(),
-  }
-  // 聊天窗刚建时可能还没注册监听,所以隔一段时间重发几次。
-  // 但重发不能变成「多插几条」:聊天窗处理完会回 ack(带同一个 ts),收到就停;
-  // 聊天窗侧另有同 ts 去重做兜底(见 chat_window.vue)。
-  let acked = false
-  let unlistenAck: UnlistenFn | null = null
+  // 同一条搭话可能被重复触发(双击 / 两路事件 / 聊天窗重建)时只跑一次;
+  // 内容相同才合并,不同内容(连点两个气泡)仍然各走各的。
+  const line0 = String(payload.text || '').trim()
+  if (line0 && line0 === proactiveInFlight) return
+  proactiveInFlight = line0
   try {
-    unlistenAck = await listenEv<{ ts?: number }>('proactive-seed-ack', (ev) => {
-      if (ev.payload?.ts === seed.ts) acked = true
-    })
-  } catch (e) {
-    console.warn('[proactive] ack listen failed:', e)
-  }
-  try {
-    for (const delay of [300, 900, 1800]) {
-      if (acked) break
-      await new Promise((r) => setTimeout(r, delay))
-      if (acked) break
-      await emit('proactive-chat-seed', seed).catch(() => undefined)
+    const { emit, listen: listenEv } = await import('@tauri-apps/api/event')
+    await openChatWindow()
+    const seed = {
+      text: payload.text || '',
+      memory: payload.memory || '',
+      ts: Date.now(),
+    }
+    // 聊天窗刚建时可能还没注册监听,所以隔一段时间重发几次。
+    // 但重发不能变成「多插几条」:聊天窗处理完会回 ack(带同一个 ts),收到就停;
+    // 聊天窗侧另有同 ts 去重做兜底(见 ChatWindow.vue)。
+    let acked = false
+    let unlistenAck: UnlistenFn | null = null
+    try {
+      unlistenAck = await listenEv<{ ts?: number }>('proactive-seed-ack', (ev) => {
+        if (ev.payload?.ts === seed.ts) acked = true
+      })
+    } catch (e) {
+      console.warn('[proactive] ack listen failed:', e)
+    }
+    try {
+      for (const delay of [300, 900, 1800]) {
+        if (acked) break
+        await new Promise((r) => setTimeout(r, delay))
+        if (acked) break
+        await emit('proactive-chat-seed', seed).catch(() => undefined)
+      }
+    } finally {
+      unlistenAck?.()
     }
   } finally {
-    unlistenAck?.()
+    if (proactiveInFlight === line0) proactiveInFlight = ''
   }
 }
 
@@ -1052,7 +1063,7 @@ async function loadPetTexture(spritesheetPath: string) {
   }
   // 加 cache-bust,避免同路径换图后 Pixi 命中旧缓存
   const cacheBust = path.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`
-  const loadPath = `${path}${cacheBust}`
+  const loadPath = `${assetUrl(path)}${cacheBust}`
 
   // 卸载旧纹理(失败忽略)
   try {
@@ -1145,7 +1156,7 @@ onMounted(async () => {
 
   let texture: Texture
   try {
-    texture = await Assets.load<Texture>(spritesheetPath)
+    texture = await Assets.load<Texture>(assetUrl(spritesheetPath))
     // 尺寸不符同样会「加载成功」,但切出来是错位马赛克 —— 当作失败回退,不把坏皮肤播出去
     if (!fitsSheetContract(texture.width, texture.height)) {
       throw new Error(
@@ -1158,7 +1169,7 @@ onMounted(async () => {
     console.warn(`[pet] 加载 ${spritesheetPath} 失败，回退到 frieren`, e)
     spritesheetPath = '/codex_pet/frieren/spritesheet.webp'
     try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
-    texture = await Assets.load<Texture>(spritesheetPath)
+    texture = await Assets.load<Texture>(assetUrl(spritesheetPath))
   }
   baseSource = texture.source as TextureSource
   applyPetScaleMode(currentPetStyle(spritesheetPath))

@@ -84,7 +84,7 @@ def create_schedule_job(name: str, schedule: str, prompt: str) -> str:
     except Exception:
         session_id = ""
 
-    from Symbix_sdk.job_schedule.schema import JobCreate
+    from Symbix_sdk.job_schedule.job_schema import JobCreate
 
     dup = [j["id"] for j in mgr.storage.list_meta() if (j.get("name") or "") == name]
     try:

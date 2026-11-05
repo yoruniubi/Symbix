@@ -1,3 +1,3 @@
 from .connector import Connector
-from .installer import McpInstaller
+from .mcp_installer import McpInstaller
 __all__ = ["Connector", "McpInstaller"]

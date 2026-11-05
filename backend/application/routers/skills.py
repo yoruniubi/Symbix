@@ -2,8 +2,23 @@ import os
 from fastapi import APIRouter, HTTPException
 from application.schemas import CreateSkillRequest, InstallSkillCliRequest, InstallSkillGithubRequest
 from application.state import BASE_DIR, skill_registry, tool_registry
+from Symbix_sdk.app_paths import data_path
 
 router = APIRouter(tags=["skills"])
+
+
+def _skill_creator_script(name: str) -> str:
+    """定位内置 skill-creator 的脚本:可写数据目录优先,兜回打包内置副本。"""
+    roots = (
+        data_path("Symbix_sdk/skill/installed_skills"),
+        os.path.join(BASE_DIR, "Symbix_sdk", "skill", "installed_skills"),
+    )
+    for root in roots:
+        candidate = os.path.join(root, "skill-creator", "scripts", name)
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
 
 @router.get("/native/tools")
 async def list_native_tools():
@@ -39,7 +54,7 @@ async def get_skills():
 @router.post("/skills/install/github")
 async def install_skill_github(req: InstallSkillGithubRequest):
     """从 GitHub 安装 skill"""
-    from Symbix_sdk.skill.installer import install_skill_from_github
+    from Symbix_sdk.skill.skill_installer import install_skill_from_github
 
     if not (req.repo_url or "").strip():
         raise HTTPException(status_code=400, detail="repo_url 不能为空")
@@ -70,7 +85,7 @@ async def install_skill_github(req: InstallSkillGithubRequest):
 @router.post("/skills/install/cli")
 async def install_skill_cli(req: InstallSkillCliRequest):
     """通过官方 skills CLI 直接安装(对标: npx skills add <name>,支持包名/仓库短名/URL)"""
-    from Symbix_sdk.skill.installer import SkillCliError, install_skill_via_cli
+    from Symbix_sdk.skill.skill_installer import SkillCliError, install_skill_via_cli
 
     if not (req.package or "").strip():
         raise HTTPException(status_code=400, detail="package 不能为空")
@@ -106,7 +121,7 @@ async def install_skill_cli(req: InstallSkillCliRequest):
 @router.delete("/skills/{skill_name}")
 async def delete_skill(skill_name: str):
     """删除已安装 skill 并热刷新。"""
-    from Symbix_sdk.skill.installer import uninstall_skill
+    from Symbix_sdk.skill.skill_installer import uninstall_skill
 
     result = uninstall_skill(skill_name, skill_registry.skills_dir)
     if not result.get("ok"):
@@ -128,15 +143,7 @@ async def create_skill(req: CreateSkillRequest):
     # 因此走 importlib 按文件路径加载，避免 import 语句拼包名时被逐字识别。
     import importlib.util
 
-    init_path = os.path.join(
-        BASE_DIR,
-        "Symbix_sdk",
-        "skill",
-        "installed_skills",
-        "skill-creator",
-        "scripts",
-        "init_skill.py",
-    )
+    init_path = _skill_creator_script("init_skill.py")
     if not os.path.exists(init_path):
         raise HTTPException(
             status_code=500, detail=f"init_skill.py 不存在: {init_path}"

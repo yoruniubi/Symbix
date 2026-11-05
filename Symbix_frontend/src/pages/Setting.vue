@@ -216,6 +216,25 @@
         </n-form>
       </n-card>
 
+      <!-- 长任务设置卡片(轮次上限 / 累积工具结果预算) -->
+      <n-card :title="t('setting.longTask')" class="setting-card">
+        <n-form label-placement="top">
+          <n-form-item :label="t('setting.longTaskMode')">
+            <n-select
+              v-model:value="longTaskMode"
+              :options="longTaskOptions"
+              :loading="longTaskLoading"
+              :disabled="longTaskLoading"
+              style="max-width: 280px;"
+              @update:value="onLongTaskModeChange"
+            />
+          </n-form-item>
+          <n-text depth="3" style="font-size: 12px; display: block;">
+            {{ longTaskHint }}
+          </n-text>
+        </n-form>
+      </n-card>
+
       <!-- STT 设置卡片 -->
       <n-card :title="t('setting.stt')" class="setting-card">
         <n-space justify="space-between" align="center" style="padding: 0 0 12px 0">
@@ -453,6 +472,7 @@ import {
   listSttDevices,
   previewTts as previewTtsApi,
   type VoiceConfigResp,
+  BACKEND_URL,
 } from '@/utils/backend'
 import { useUpdateCheck } from '@/composables/useUpdateCheck'
 import { openUpdateWindow } from '@/composables/useUpdateWindow'
@@ -490,6 +510,69 @@ const {
 const companion = useCompanion()
 const companionForm = ref<CompanionSettings>({ ...companion.defaultSettings })
 const companionLoading = ref(false)
+
+/* ---------- 长任务:轮次上限 / 累积工具结果预算 ----------
+ * 存后端 config/runtime_config.json,改完下一个请求就生效(不用重启 App)。 */
+interface LongTaskPreset {
+  mode: string
+  max_tool_rounds: number
+  max_cum_tool_tokens: number
+}
+
+const longTaskMode = ref('relaxed')
+const longTaskLoading = ref(false)
+const longTaskPresets = ref<LongTaskPreset[]>([])
+
+const longTaskOptions = computed(() =>
+  longTaskPresets.value.map((p) => ({
+    label: t(`setting.longTaskMode_${p.mode}`),
+    value: p.mode,
+  })),
+)
+
+/** 提示行直接报当前档位的真实数字,避免「档位名和实际行为对不上」 */
+const longTaskHint = computed(() => {
+  const p = longTaskPresets.value.find((it) => it.mode === longTaskMode.value)
+  if (!p) return t('setting.longTaskHintFallback')
+  const rounds = p.max_tool_rounds
+    ? String(p.max_tool_rounds)
+    : t('setting.longTaskNoLimit')
+  const tokens = p.max_cum_tool_tokens
+    ? `${Math.round(p.max_cum_tool_tokens / 1000)}k`
+    : t('setting.longTaskNoLimit')
+  return t('setting.longTaskHint', { rounds, tokens })
+})
+
+async function loadLongTask() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/settings/long-task`)
+    if (!res.ok) return
+    const data = await res.json()
+    longTaskPresets.value = data.modes || []
+    longTaskMode.value = data.config?.mode || 'relaxed'
+  } catch (e) {
+    console.debug('[setting] 读取长任务档位失败:', e)
+  }
+}
+
+async function onLongTaskModeChange(mode: string) {
+  longTaskLoading.value = true
+  try {
+    const res = await fetch(`${BACKEND_URL}/settings/long-task`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    message.success(t('setting.longTaskSaved'))
+  } catch (e) {
+    console.debug('[setting] 保存长任务档位失败:', e)
+    message.error(t('setting.longTaskSaveFailed'))
+    await loadLongTask()
+  } finally {
+    longTaskLoading.value = false
+  }
+}
 
 async function loadCompanionForm() {
   companionLoading.value = true
@@ -771,6 +854,7 @@ onMounted(() => {
   loadVoiceConfig()
   loadSttDevices()
   void loadCompanionForm()
+  void loadLongTask()
   // 版本信息(含自动检查开关)；不在这里主动检查，避免进设置页就发请求
   void initCurrentVersion()
   loadAutoCheck()

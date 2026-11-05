@@ -4,7 +4,7 @@ import os
 import uuid
 from datetime import datetime
 from typing import Optional
-from .schema import (
+from .job_schema import (
     JobBase,
     JobCreate,
     JobUpdate,

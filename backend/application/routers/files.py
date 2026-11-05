@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 from fastapi import APIRouter, HTTPException
-import Symbix_sdk
+from Symbix_sdk.app_paths import data_path
 from Symbix_sdk.tools.file_pipeline import (
     get_project_root,
     add_workspace_root,
@@ -13,7 +13,7 @@ from Symbix_sdk.tools.file_pipeline import (
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 MAX_EDIT_BYTES = 5 * 1024 * 1024
-SKILL_ROOTS_DIR = Path(Symbix_sdk.__file__).resolve().parent / "skill" / "installed_skills"
+SKILL_ROOTS_DIR = Path(data_path("Symbix_sdk/skill/installed_skills"))
 
 
 def _resolve(path: str = ".") -> Path:

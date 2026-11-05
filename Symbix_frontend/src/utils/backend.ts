@@ -49,6 +49,22 @@ export function rewriteLegacyUrl(url: string): string {
 }
 
 /**
+ * 后端托管的静态资源(桌宠图 /codex_pet/... 与 /pixiv_pet/...)的绝对地址。
+ *
+ * 打包版前端来自 tauri.localhost —— 那是编译进二进制的 dist 快照,运行期
+ * 新装的宠物只存在于后端,必须走后端地址;根相对路径会 404 成 index.html,
+ * 表现就是「列表里有,但图加载失败」。
+ *
+ * 只用于最终拿去加载/展示的地方,状态与 localStorage 里仍存逻辑路径
+ * (currentPetStyle、按前缀匹配的服务端约定都依赖它)。
+ */
+export function assetUrl(path: string): string {
+  if (!path) return path
+  if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(path)) return path
+  return BACKEND_URL + (path.startsWith('/') ? path : '/' + path)
+}
+
+/**
  * 让写死 8000 的老代码也跟上动态端口:包一层 fetch,把第一个参数里的旧地址
  * 改写成当前 base。只在这一处施展魔法,好过改六十多个调用点(而且以后新代码
  * 写回字面量也不会隐性失效)。

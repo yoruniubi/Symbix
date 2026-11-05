@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from Symbix_sdk.job_schedule.schema import JobCreate, JobUpdate, validate_trigger
+from Symbix_sdk.job_schedule.job_schema import JobCreate, JobUpdate, validate_trigger
 from Symbix_sdk.job_schedule.humanize import describe_trigger, next_run_times, parse_schedule
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 

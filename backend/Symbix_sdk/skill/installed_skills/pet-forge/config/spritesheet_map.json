@@ -1,5 +1,5 @@
 {
-  "$comment": "pet-forge SVG 主题 → Home.vue spritesheet 的显式映射契约(勿随意改动,Home.vue ROWS 硬编码)。rows 顺序 = spritesheet 行序(row 0..8),frames = Home.vue ROWS 每行帧数,source = pet-forge 状态来源。mode 定义烘焙方式:direct=直采;mirror+scroll-x / mirror-back+scroll-x=PNG 层镜像+水平往复(running 系);amplify-bounce=复用 source 的 bounce 曲线并放大 amplitude_factor;cycle=把行内帧映射到 cycles 个虚拟循环的相位上(让与同一 source 的另一行观感不同);head-frames=只取 source 前 head_frames 帧缓动,其余帧复用最后一帧。",
+  "$comment": "pet-forge SVG 主题 → 桌宠 spritesheet 的显式映射契约(勿随意改动;行名/帧数必须与前端 src/utils/petRows.ts 的 PET_ROWS 一致)。rows 顺序 = spritesheet 行序(row 0..8),frames = 该行帧数,source = pet-forge 状态来源。mode 定义烘焙方式:direct=直采;mirror+scroll-x / mirror-back+scroll-x=PNG 层镜像+水平往复(running 系);amplify-bounce=复用 source 的 bounce 曲线并放大 amplitude_factor;cycle=把行内帧映射到 cycles 个虚拟循环的相位上(让与同一 source 的另一行观感不同);head-frames=只取 source 前 head_frames 帧缓动,其余帧复用最后一帧(当前无行使用,实现保留)。",
   "frame_width": 192,
   "frame_height": 208,
   "rows": [
@@ -40,22 +40,22 @@
       "mode": "direct"
     },
     {
-      "home": "waiting",
+      "home": "progress",
       "frames": 6,
       "source": "listening",
       "mode": "direct"
     },
     {
-      "home": "running",
+      "home": "patrol",
+      "frames": 6,
+      "source": "idle",
+      "mode": "mirror+scroll-x"
+    },
+    {
+      "home": "coding",
       "frames": 6,
       "source": "listening",
       "mode": "cycle"
-    },
-    {
-      "home": "review",
-      "frames": 6,
-      "source": "sleeping",
-      "mode": "head-frames"
     }
   ],
   "variants": {
@@ -72,13 +72,13 @@
       "mirror": true,
       "comment": "同上,镜像后向左滚动。"
     },
-    "running": {
-      "cycles": 2,
-      "comment": "无对应状态:复用 listening,但用 cycle(2 个虚拟循环)与 waiting 区分开(否则两行逐帧一样)。"
+    "patrol": {
+      "scroll_dx": 18,
+      "comment": "无对应状态:原地走两步(Home.vue 只在窗口内播一次,不移动窗口)。用 idle 配更小的 scroll_dx,与 runningRight 的 28 区分开,免得两行逐帧一样。"
     },
-    "review": {
-      "head_frames": 4,
-      "comment": "取 sleeping 前 4 帧缓动,表示思考待机(agent thinking 时循环)。"
+    "coding": {
+      "cycles": 2,
+      "comment": "无对应状态:思考/写代码时循环。复用 listening 的两倍速相位,和 progress 共用一个 source 但节奏不同(progress 是 direct,按已完成步数取帧)。"
     }
   }
 }

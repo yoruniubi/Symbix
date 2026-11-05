@@ -1,9 +1,9 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import HomePage from '../pages/Home.vue'
 import SettingPage from '../pages/Setting.vue'
-import ChatWindowPage from '../pages/chat_window.vue'
+import ChatWindowPage from '../pages/ChatWindow.vue'
 import SkinWindowPage from '../pages/SkinWindow.vue'
-import ModelSettingPage from '../pages/model_setting.vue'
+import ModelSettingPage from '../pages/ModelSetting.vue'
 import DanmakuWindowPage from '../pages/DanmakuWindow.vue'
 import JournalWindowPage from '../pages/JournalWindow.vue'
 import UpdateWindowPage from '../pages/UpdateWindow.vue'
@@ -20,7 +20,7 @@ const routes: RouteRecordRaw[] = [
     component: SettingPage,
   },
   {
-    path: '/chat_window',
+    path: '/chat-window',
     name: 'ChatWindow',
     component: ChatWindowPage,
   },
@@ -30,7 +30,7 @@ const routes: RouteRecordRaw[] = [
     component: SkinWindowPage,
   },
   {
-    path: '/model_setting',
+    path: '/model-setting',
     name: 'ModelSetting',
     component: ModelSettingPage,
   },

@@ -10,10 +10,19 @@ for _s in (_sys.stdout, _sys.stderr):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
 import uvicorn
+
+# 可写数据目录就位:建目录 → 迁移旧版数据 → 同步内置 skill。
+# 必须早于 application.state 的导入 —— 那里在模块级就把 db/config 的路径定下来了,
+# 迁移要赶在第一个数据库连接打开之前完成。
+from Symbix_sdk.app_paths import bootstrap_data_dirs, data_root
+
+bootstrap_data_dirs()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from uvicorn.server import Server as UvicornServer
 from application.services.pet_action import pet_action
+from application.services.pet_assets import ensure_pet_dirs, codex_pet_dir, pixiv_pet_dir
 from application.state import (
     mcp_manager,
     job_manager,
@@ -27,7 +36,7 @@ from application.state import (
 )
 import sys
 import os
-from application.routers import chat, providers, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku, usage
+from application.routers import chat, providers_api, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku, usage, settings
 
 
 def _ensure_bundled_runtime_on_path() -> None:
@@ -76,6 +85,7 @@ def _log_frozen_paths() -> None:
         from Symbix_sdk.resource_path import resource_root
         print(f"[runtime] frozen BASE_DIR = {BASE_DIR}")
         print(f"[runtime] resource_root() = {resource_root()}")
+        print(f"[runtime] data_root() = {data_root()}")
     except Exception as e:
         print(f"[runtime] 路径自检失败: {e}")
 
@@ -208,7 +218,7 @@ app.add_middleware(
 
 # ============ 挂载路由 ============
 app.include_router(chat.router)
-app.include_router(providers.router)
+app.include_router(providers_api.router)
 app.include_router(mcp.router)
 app.include_router(skills.router)
 app.include_router(sessions.router)
@@ -221,6 +231,16 @@ app.include_router(voice.router)
 app.include_router(journal.router)
 app.include_router(danmaku.router)
 app.include_router(usage.router)
+app.include_router(settings.router)
+
+# ============ 挂载静态资源(桌宠) ============
+# 打包后前端 dist 编译进二进制,运行期新装的宠物(Codex 导入 / Petdex 安装 /
+# pet-forge 烘焙)不可能出现在里面,只能由后端静态提供(见 services/pet_assets.py)
+ensure_pet_dirs()
+app.mount("/codex_pet", StaticFiles(directory=str(codex_pet_dir())), name="codex_pet")
+app.mount("/pixiv_pet", StaticFiles(directory=str(pixiv_pet_dir())), name="pixiv_pet")
+# pet-forge 的 build_theme.py 输出目录:打包态没有源码树,让它落进可写宠物目录
+os.environ.setdefault("SYMBIX_PIXIV_PET_DIR", str(pixiv_pet_dir()))
 
 
 @app.get("/")

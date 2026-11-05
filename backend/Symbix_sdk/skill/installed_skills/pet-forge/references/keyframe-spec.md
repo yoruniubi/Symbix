@@ -91,7 +91,7 @@
 | `direct` | 按上面的方式均匀采样 |
 | `mirror+scroll-x` / `mirror-back+scroll-x` | PNG 层镜像 + 水平往复(奔跑行) |
 | `amplify-bounce` | 复用来源状态的 bounce 曲线,位移乘 `variants.<home>.amplitude_factor` |
-| `cycle` | 把行内帧映射到 `variants.<home>.cycles` 个虚拟循环的相位上:同样来源的两行(如 `running` 思考中 / `waiting` 等待)必须长得不一样,否则前端两个状态画面完全一样 |
+| `cycle` | 把行内帧映射到 `variants.<home>.cycles` 个虚拟循环的相位上:同样来源的两行(如 `coding` 思考中 / `progress` 进度)必须长得不一样,否则前端两个状态画面完全一样 |
 | `head-frames` | 只取来源状态前 `variants.<home>.head_frames` 帧缓动,其余帧复用最后一帧 |
 
 ## 4. 镜像策略（重要）

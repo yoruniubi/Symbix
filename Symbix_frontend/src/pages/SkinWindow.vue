@@ -87,7 +87,7 @@
             @click="handlePetClick(pet)"
           >
             <div class="skin-preview-wrap">
-              <img :src="pet.preview" :alt="pet.displayName" />
+              <img :src="assetUrl(pet.preview)" :alt="pet.displayName" />
               <div v-if="currentPetId === pet.id" class="active-check">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                   <polyline points="20 6 9 17 4 12" />
@@ -299,6 +299,7 @@ import { Assets, Texture } from 'pixi.js'
 import { useI18n } from 'vue-i18n'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { fitsSheetContract } from '@/utils/petSheet'
+import { BACKEND_URL, assetUrl } from '@/utils/backend'
 
 const { t } = useI18n()
 const skillList = ref([])
@@ -464,7 +465,6 @@ const skillForm = ref<{
 })
 
 // ── Skill 生成 ──────────────────────────────────────────────
-const BACKEND_URL = 'http://127.0.0.1:8000'
 
 const canGenerateSkill = computed(() => {
   return !!skillForm.value.name.trim() && !!skillForm.value.prompt.trim()
@@ -570,7 +570,7 @@ async function triggerSkillGenerate() {
 
   // 打开聊天窗口（复用或新建都依赖于 event/listener）
   await openOrCreateWindow('chat', {
-    url: '/chat_window',
+    url: '/chat-window',
     title: t('home.windowChat'),
     width: 900,
     height: 700,
@@ -1025,7 +1025,7 @@ async function bakeTheme(pet: PetSkin) {
 async function switchPet(pet: PetSkin) {
   try {
     // 预检纹理是否可加载、尺寸是否符合切片契约(不符则不切、不提示成功)
-    const tex = await Assets.load<Texture>(pet.preview)
+    const tex = await Assets.load<Texture>(assetUrl(pet.preview))
     if (!fitsSheetContract(tex.width, tex.height)) {
       throw new Error(t('skinWindow.sheetMismatch', { w: tex.width, h: tex.height }))
     }

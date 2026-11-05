@@ -7,7 +7,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
-from .schema import validate_trigger
+from .job_schema import validate_trigger
 
 log = logging.getLogger("job_schedule")
 

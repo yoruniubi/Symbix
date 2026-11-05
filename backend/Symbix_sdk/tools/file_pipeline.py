@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 from ..color_extract import extract_palette_bytes
+from ..app_paths import data_path
 from .ocr_fallback import _ocr_image_bytes, ocr_available
 
 # ── 配置 ──────────────────────────────────────────────
@@ -47,7 +48,8 @@ def _backend_dir() -> str:
 
 
 def get_uploads_root() -> str:
-    root = os.path.join(_backend_dir(), "uploads")
+    # 上传件与 Agent 生成物属于用户数据:打包态落 <安装目录>/data/uploads
+    root = data_path("uploads")
     os.makedirs(root, exist_ok=True)
     return os.path.abspath(root)
 

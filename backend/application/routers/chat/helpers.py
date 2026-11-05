@@ -11,6 +11,7 @@ from application.schemas import ChatRequest
 from application.services.memory_ops import format_sse
 from Symbix_sdk.client import build_tool_result_messages
 from Symbix_sdk.model_capabilities import check_vision
+from Symbix_sdk.config.runtime_config import runtime_config
 from application.state import checkpoint_recorder
 
 # 交互型工具:执行后返回 pending_user_input,需挂起等待用户回答。
@@ -316,15 +317,18 @@ def _emit_round_summary(
 # 这是「长任务」与「上下文爆掉」之间的闸门,两个方向都有坑:
 # - 太小 → 正经的多步任务(读源码 → 改 → 跑测试)跑不完就被收尾;
 # - 太大 → prompt 超过模型上下文,上游直接 400,比优雅收尾更难懂。
-# 默认按「单条结果已裁剪(见 Symbix_sdk/client.py: TOOL_RESULT_MAX_CHARS)」估算:
-# 24k 字符 ≈ 7k token/条,300k 够跑 40 条左右的重活,再长的任务适合拆子代理(delegate_task)。
-# 需要更长可在环境变量里调:SYMBIX_MAX_CUM_TOOL_TOKENS=600000
-MAX_CUM_TOOL_TOKENS = int(os.environ.get("SYMBIX_MAX_CUM_TOOL_TOKENS") or 300_000)
+#
+# 具体数字不写死在这里:设置页的「长任务」档位(标准 / 宽松 / 不限制)改了就
+# 立即生效,环境变量优先级最高。见 Symbix_sdk/config/runtime_config.py。
+def max_cum_tool_tokens() -> int:
+    """累积工具结果 token 预算(0 = 不限制)。"""
+    return runtime_config.cfg.max_cum_tool_tokens()
 
-# 单次请求里最多跑几轮「模型 → 工具 → 模型」。
-# 25 轮对「读源码 → 改 → 跑测试 → 再改」这种较真的任务偏紧,放宽到 40;
-# 死循环由下面的重复调用拦截 + MAX_CUM_TOOL_TOKENS 兜着,不靠轮次硬砍。
-MAX_TOOL_ROUNDS = int(os.environ.get("SYMBIX_MAX_TOOL_ROUNDS") or 40)
+
+def max_tool_rounds() -> int:
+    """单次请求最多跑几轮「模型 → 工具 → 模型」(0 = 不限制)。"""
+    return runtime_config.cfg.max_tool_rounds()
+
 
 # 同一个(工具 + 参数)在一次请求里最多真执行几次。
 # 旧策略是「见过就拦」,于是「改完代码再跑一次 npm test」这种长任务刚需会被误杀;

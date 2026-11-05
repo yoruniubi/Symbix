@@ -1,7 +1,7 @@
 from .blob_store import BlobStore, MAX_BLOB_BYTES
 from .context import set_current, get_current, reset_current
 from .recorder import CheckpointRecorder, get_recorder, init_recorder
-from .schema import (
+from .checkpoint_schema import (
     CheckpointRecord,
     ToolCallRecord,
     FileOpRecord,

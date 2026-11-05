@@ -342,7 +342,7 @@ def bake_row(
     amplitude = float(var.get("amplitude_factor", 1.0)) if mode == "amplify-bounce" else 1.0
     scroll_dx = float(var.get("scroll_dx", 0.0) or 0.0)
     # cycle:把行内帧映射到 cycles 个虚拟循环的相位上,让与同一 source 的另一行观感不同
-    # (例:running(思考中) 与 waiting(等待) 同用 listening,不区分就长得一模一样)。
+    # (例:coding(思考中) 与 progress(进度) 同用 listening,不区分就长得一模一样)。
     cycles = max(1, int(var.get("cycles") or 2)) if mode == "cycle" else 1
 
     def _t_of(f: int) -> float:

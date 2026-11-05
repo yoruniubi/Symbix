@@ -7,9 +7,11 @@ import subprocess
 from pathlib import Path
 from Symbix_sdk.tools.file_pipeline import (
     assert_path_allowed,
+    get_project_root,
     parse_file_path,
     sandbox_roots,
 )
+from Symbix_sdk.app_paths import data_path, is_frozen
 from Symbix_sdk.checkpoint import get_recorder, get_current
 
 _RG_CANDIDATES = [
@@ -625,6 +627,22 @@ def search_file_with_name(
 # 工具 schema 注册表 (供 tool_setup.py 统一注册)
 # ---------------------------------------------------------------------------
 
+_WORKDIR = get_project_root()
+
+
+def _workdir_hint() -> str:
+    """给模型看的工作目录描述。
+
+    打包态没有源码树(以前这里写死 `F:\\Symbix`,装到别的盘/机器上就变成
+    「文件找不到」的假路径);所以分两种描述,并给出真实的上传/数据目录。
+    """
+    if is_frozen():
+        return (
+            f"{_WORKDIR}(安装目录;上传与生成物在 {data_path('uploads')})"
+        )
+    return f"{_WORKDIR}(源码仓库,backend/ 与 Symbix_frontend/ 都在其中)"
+
+
 FILE_TOOLS_SCHEMAS = {
     "create_file": {
         "risk_channel": "write",
@@ -672,13 +690,13 @@ FILE_TOOLS_SCHEMAS = {
     "list_files": {
         "risk_channel": "read",
         "func": list_files,
-        "description": "列出指定目录下的文件和文件夹。如果不知道要读什么文件,先调用此工具浏览目录结构。工作目录是 F:\\Symbix,源代码在 backend/ 和 Symbix_frontend/ 中。",
+        "description": f"列出指定目录下的文件和文件夹。如果不知道要读什么文件,先调用此工具浏览目录结构。工作目录是 {_workdir_hint()}。",
         "parameters": {
             "type": "object",
             "properties": {
                 "directory": {
                     "type": "string",
-                    "description": "要浏览的目录路径,默认为当前工作目录 (F:\\Symbix)",
+                    "description": f"要浏览的目录路径,默认为当前工作目录 ({_WORKDIR})",
                     "default": ".",
                 },
                 "recursive": {
@@ -698,13 +716,13 @@ FILE_TOOLS_SCHEMAS = {
     "read_file": {
         "risk_channel": "read",
         "func": read_file,
-        "description": "读取指定路径的文本文件(md/txt/代码/配置/json 等)内容。先用 list_files 浏览目录结构确定文件路径,再用本工具读取。工作目录是 F:\\Symbix。注意:docx/xlsx/pptx/pdf/图片等二进制文件不要用本工具,请用 doc_to_markdown。",
+        "description": f"读取指定路径的文本文件(md/txt/代码/配置/json 等)内容。先用 list_files 浏览目录结构确定文件路径,再用本工具读取。工作目录是 {_WORKDIR}。注意:docx/xlsx/pptx/pdf/图片等二进制文件不要用本工具,请用 doc_to_markdown。",
         "parameters": {
             "type": "object",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "要读取的文件路径(相对于工作目录 F:\\Symbix 的路径或绝对路径)",
+                    "description": f"要读取的文件路径(相对于工作目录 {_WORKDIR} 的路径或绝对路径)",
                 },
             },
             "required": ["file_path"],
@@ -716,7 +734,8 @@ FILE_TOOLS_SCHEMAS = {
         "description": (
             "结构化解析本地/上传文件内容并返回文本摘要。"
             "支持 txt/md/json/csv/代码、PDF、DOCX、图片元信息。"
-            "用户附件路径一般在 backend/uploads/<session_id>/ 下；"
+            "用户附件路径一般在 "
+            f"{data_path('uploads')}/<session_id>/ 下；"
             "比 read_file 更适合 PDF/表格/二进制文档。"
         ),
         "parameters": {

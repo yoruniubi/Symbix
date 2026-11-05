@@ -18,18 +18,24 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from application.services.memory_ops import format_sse
 from application.services.pet_action import LOOP_ACTIONS, SSE_SHUTDOWN, normalize_pet_action, pet_action
+from application.services.pet_assets import codex_pet_dir, pixiv_pet_dir
+from Symbix_sdk.app_paths import data_path
 
-# 前端静态资源目录(相对于 backend 运行目录)
+# 宠物目录:打包态落在用户数据目录(安装目录不可写),由后端静态服务提供
+# (前端 dist 编译进二进制,运行期新装的宠物不会被 tauri.localhost 命中,见 pet_assets)
 # codex_pet:Codex 桌宠导入(pet.json + spritesheet 位图动画)
 # pixiv_pet:pet-forge 生成(base.svg + states.json,烘焙出 spritesheet 后可切换)
-_PUBLIC_DIR = Path(os.environ.get("PET_PUBLIC_DIR", "../Symbix_frontend/public")).resolve()
-_CODEX_PET_DIR = Path(os.environ.get("PET_CODEX_DIR", str(_PUBLIC_DIR / "codex_pet"))).resolve()
-_PIXIV_PET_DIR = Path(os.environ.get("PET_PIXIV_DIR", str(_PUBLIC_DIR / "pixiv_pet"))).resolve()
+_CODEX_PET_DIR = codex_pet_dir()
+_PIXIV_PET_DIR = pixiv_pet_dir()
 # pet-forge skill 脚本目录(校验/烘焙/打包);按后端仓库结构推导,不写死盘符
 _FORGE_SCRIPTS = Path(
     os.environ.get(
         "PET_FORGE_SCRIPTS",
-        str(Path(__file__).resolve().parents[2] / "Symbix_sdk" / "skill" / "installed_skills" / "pet-forge" / "scripts"),
+        str(
+            Path(data_path("Symbix_sdk/skill/installed_skills"))
+            / "pet-forge"
+            / "scripts"
+        ),
     )
 ).resolve()
 
@@ -556,10 +562,10 @@ PETDEX_MANIFEST_URL = os.environ.get(
     "SYMBIX_PETDEX_MANIFEST", "https://petdex.dev/api/manifest/v2"
 )
 _PETDEX_CACHE_TTL = 6 * 3600
-_PETDEX_CACHE = Path(__file__).resolve().parents[2] / "Symbix_sdk" / "config" / "petdex_manifest.json"
+_PETDEX_CACHE = Path(data_path("Symbix_sdk/config", "petdex_manifest.json"))
 # 商店封面图缓存:官方 sprite.webp 每张 ~1.9MB,直接给 <img> 当缩略图会拖死列表,
 # 所以后端裁出首帧缩成小图落盘,一张 ~5KB。
-_PETDEX_THUMB_DIR = Path(__file__).resolve().parents[2] / "Symbix_sdk" / "config" / "petdex_thumbs"
+_PETDEX_THUMB_DIR = Path(data_path("Symbix_sdk/config", "petdex_thumbs"))
 _PETDEX_THUMB_SIZE = (96, 104)
 _PETDEX_THUMB_MAX_BYTES = 12 * 1024 * 1024
 _PETDEX_MAX_BYTES = 40 * 1024 * 1024

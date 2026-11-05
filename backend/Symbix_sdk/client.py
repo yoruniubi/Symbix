@@ -3,7 +3,7 @@ import json
 import asyncio
 import httpx
 from typing import AsyncGenerator, Optional
-from .providers import ProviderRegistry, ProviderConfig, resolve_capabilities
+from .provider_store import ProviderRegistry, ProviderConfig, resolve_capabilities
 from .color_extract import extract_palette_b64, palette_to_hint
 from .retry_policy import (
     DEFAULT_MAX_RETRIES,
@@ -12,6 +12,7 @@ from .retry_policy import (
     reset_reason,
     retry_delay,
 )
+from .app_paths import data_path
 
 # 自动匹配到的技能指南:超过该体积就不整篇塞进「当轮用户消息」,
 # 改为提示模型用 `skill__<name>` 工具按需加载(如 skill-creator 的 33.6KB SKILL.md)。
@@ -24,7 +25,7 @@ DEFAULT_READ_TIMEOUT = 300.0
 # 单条工具结果**进上下文**时的字符上限(保头保尾,中间省略并给模型指路)。
 # 只裁送给模型的那份:SSE 推给前端的 tool_result、检查点记录仍是完整内容。
 # 起因:读一个 500KB 的 SVG / 整份日志,单条结果就能吃掉十几万 token,
-# 一次就把多轮工具链的预算耗尽(见 MAX_CUM_TOOL_TOKENS),长任务被迫腰斩。
+# 一次就把多轮工具链的预算耗尽(见 config/runtime_config.py 的累积预算),长任务被迫腰斩。
 TOOL_RESULT_MAX_CHARS = int(os.environ.get("SYMBIX_TOOL_RESULT_MAX_CHARS") or 24000)
 TOOL_RESULT_KEEP_TAIL = int(os.environ.get("SYMBIX_TOOL_RESULT_KEEP_TAIL") or 4000)
 
@@ -280,7 +281,9 @@ class SymbixClient:
             "`paths=[\"文件#标题\"]` / `paths=[\"文件:100-180\"]` 精读,或 `paths=[...]` **一次读多个**;"
             "不要逐个 `read_file`,更不要猜技能目录里的路径。\n\n"
             "## Skill 创建规则(必须遵守)\n"
-            "- 创建新 skill 时,**必须**写入目录:`backend/Symbix_sdk/skill/installed_skills/<skill-name>/`\n"
+            "- 创建新 skill 时,**必须**写入目录:`"
+            + data_path("Symbix_sdk/skill/installed_skills")
+            + "/<skill-name>/`\n"
             "- **优先使用 `create_skill` 工具**生成完整骨架（SKILL.md + agents/scripts/references/assets），"
             "不要在其他路径手动建目录\n"
             "- skill 名称使用英文小写 + 连字符（如 `pdf-helper`）；"

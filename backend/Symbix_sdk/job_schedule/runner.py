@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 
 from Symbix_sdk.time_context import current_time_line
+from Symbix_sdk.config.runtime_config import runtime_config
 
 # 定时任务「整次模型调用」的重试次数与退避基数(秒)。
 # 内层 _stream_with_retry 已经会重试单次调用,这里再叠一层「整次调用重试」;
@@ -163,8 +164,8 @@ class JobRunner:
             )
             last_reasoning = response.get("reasoning")
 
-            # 轮次上限:无人值守任务通常步骤更多,默认放宽到 40(可用环境变量调)
-            max_tool_rounds = int(os.environ.get("SYMBIX_MAX_TOOL_ROUNDS") or 40)
+            # 轮次上限:与流式那条路共用设置页的「长任务」档位(0 = 不限制)
+            rounds_cap = runtime_config.cfg.max_tool_rounds()
             round_count = 0
             write_counts: dict[str, int] = {}
             NONSTREAM_WRITE_TOOLS = {"edit_file", "write_to_file", "replace_in_file",
@@ -174,7 +175,7 @@ class JobRunner:
 
             final_text = response["content"] or ""
 
-            while response.get("tool_calls") and round_count < max_tool_rounds:
+            while response.get("tool_calls") and (not rounds_cap or round_count < rounds_cap):
                 round_count += 1
                 tool_results = []
 

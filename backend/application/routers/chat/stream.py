@@ -53,8 +53,8 @@ from application.routers.chat.helpers import (
     _stream_tool_events,
     _is_read_only_parallel_tool,
     run_tools_parallel,
-    MAX_CUM_TOOL_TOKENS,
-    MAX_TOOL_ROUNDS,
+    max_cum_tool_tokens,
+    max_tool_rounds,
     MAX_REPEAT_BLOCKED_STREAK,
     check_repeat_tool_call,
     build_usage_payload,
@@ -271,7 +271,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             if flushed is not None:
                 yield format_sse(flushed)
 
-            max_rounds = MAX_TOOL_ROUNDS
+            max_rounds = max_tool_rounds()
             round_count = 0
             # last_reasoning 已在首轮循环前初始化,这里不再覆盖。
             attempted_tool_calls = set()
@@ -322,7 +322,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             _usage_recorded = False
 
             # 子 Agent 委派所需的请求级模型参数(不同模型/网关时与主 Agent 保持一致)
-            # 子 Agent 可单独配置模型(model_setting 页「子 Agent 模型」),未配置则沿用主模型;
+            # 子 Agent 可单独配置模型(ModelSetting 页「子 Agent 模型」),未配置则沿用主模型;
             # api_key / api_base 仍与主模型共用。
             _delegate_ctx = {
                 "api_key": api_key,
@@ -331,7 +331,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 "session_id": request.session_id,
             }
 
-            while tool_calls_raw and round_count < max_rounds:
+            while tool_calls_raw and (not max_rounds or round_count < max_rounds):
                 # 客户端断连检测:前端 abort / 删 session 会断 SSE 连接,后端需主动停、避免后端继续跑 tool。
                 if await http_request.is_disconnected():
                     print(f"[stream] client disconnected at round {round_count}, stopping generation")
@@ -690,7 +690,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 cum_tool_tokens += sum(
                     _estimate_tool_tokens(str(tr.get("content", ""))) for tr in round_results
                 )
-                if cum_tool_tokens > MAX_CUM_TOOL_TOKENS:
+                token_cap = max_cum_tool_tokens()
+                if token_cap and cum_tool_tokens > token_cap:
                     print(f"[chat_stream] 工具结果累积超限({cum_tool_tokens} tok),终止工具循环")
                     tool_calls_raw = None
                     full_text = full_text or (
