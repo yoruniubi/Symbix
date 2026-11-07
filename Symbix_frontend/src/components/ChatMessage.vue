@@ -96,6 +96,9 @@
           </div>
         </div>
 
+        <!-- 本轮产物:Agent 写出/下载的文件直接列成卡片,免得照着路径去翻 -->
+        <MessageArtifactBar :steps="msg.steps" />
+
         <!-- pet-forge 预览:Agent 写一次 base.svg 就刷新一次,方便直观看到形象 -->
         <div v-if="rigPath && !rigMissing" class="rig-preview">
           <div class="rig-preview-head">
@@ -306,6 +309,7 @@ import { useTheme } from '@/composables/useTheme'
 import { useI18n } from 'vue-i18n'
 import { BACKEND_URL } from '@/utils/backend'
 import { pickPreviewRigPath, pickPreviewImagePath, rigFolderName } from '@/utils/petRig'
+import MessageArtifactBar from '@/components/MessageArtifactBar.vue'
 import { toolIconSvg } from '@/utils/toolIcons'
 import { getMcpToolI18n } from '@/utils/mcpToolI18n'
 

@@ -33,6 +33,26 @@ export default {
     windowJournal: 'Symbix - Journal',
   },
 
+  // ===== Message Artifacts =====
+  artifact: {
+    title: 'Files from this turn',
+    open: 'Open',
+    reveal: 'Show',
+    preview: 'Preview',
+    collapse: 'Hide',
+    loading: 'Loading…',
+    opCreate: 'created',
+    opEdit: 'updated',
+    opDownload: 'downloaded',
+    opImage: 'image saved',
+    copied: 'Path copied to clipboard',
+    truncated: '…(truncated, content too long)',
+    previewEmpty: 'Nothing to preview',
+    previewFailed: 'Preview failed: {err}',
+    openFailed: 'Failed to open: {err}',
+    revealFailed: 'Failed to reveal: {err}',
+  },
+
   // ===== Chat Window =====
   chat: {
     noApiKey: 'API Key not set, please configure your API key first',
@@ -933,7 +953,34 @@ export default {
     sectionMemories: "Today's memories",
     sectionTips: "AI's little notes",
     sectionHighlights: 'Conversation highlights',
-    empty: 'Nothing recorded on this day yet~',
+    empty: 'No records for this day yet~',
+    // Memory library (search + category summary)
+    tabDaily: 'Journal',
+    tabLibrary: 'Memory',
+    searchPlaceholder: 'Search what I remember…',
+    libLoading: 'Digging through memories...',
+    libCount: '{num} memories',
+    libExact: '{num} exact matches',
+    libTruncated: 'Showing first {shown} of {total} — add a keyword to narrow down~',
+    searchEmpty: 'No matching memories~',
+    resetFilter: 'Reset',
+    matchLiteral: 'exact',
+    matchSemantic: 'related',
+    groupAll: 'All',
+    group: {
+      constraint: 'Constraints',
+      personal: 'Personal',
+      project: 'Project',
+      other: 'Other',
+    },
+    cat: {
+      identity: 'Identity',
+      preference: 'Preference',
+      habit: 'Habit',
+      goal: 'Goal',
+      constraint: 'Constraint',
+      other: 'Other',
+    },
   },
   backend: {
     failed: 'Backend failed to start',

@@ -21,6 +21,7 @@ declare module 'vue' {
     FilePanel: typeof import('./src/components/panels/FilePanel.vue')['default']
     JobSchedulePanel: typeof import('./src/components/panels/JobSchedulePanel.vue')['default']
     McpPanel: typeof import('./src/components/panels/McpPanel.vue')['default']
+    MessageArtifactBar: typeof import('./src/components/MessageArtifactBar.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
     NativeToolsPanel: typeof import('./src/components/panels/NativeToolsPanel.vue')['default']
     NButton: typeof import('naive-ui')['NButton']

@@ -33,6 +33,26 @@ export default {
     windowJournal: 'Symbix - 手账',
   },
 
+  // ===== Message Artifacts (本轮产物卡片) =====
+  artifact: {
+    title: '本轮产物',
+    open: '打开',
+    reveal: '定位',
+    preview: '预览',
+    collapse: '收起',
+    loading: '加载中…',
+    opCreate: '已生成',
+    opEdit: '已修改',
+    opDownload: '已下载',
+    opImage: '已生成图片',
+    copied: '路径已复制到剪贴板',
+    truncated: '…（内容过长，已截断）',
+    previewEmpty: '没有可预览的内容',
+    previewFailed: '预览失败：{err}',
+    openFailed: '打开失败：{err}',
+    revealFailed: '定位失败：{err}',
+  },
+
   // ===== Chat Window =====
   chat: {
     noApiKey: '未设置 API Key,请先配置 API 密钥',
@@ -932,6 +952,33 @@ export default {
     sectionTips: 'AI 的小巧思',
     sectionHighlights: '对话亮点',
     empty: '这一天还没有记录~',
+    // 记忆库（搜索 + 分类汇总）
+    tabDaily: '手账',
+    tabLibrary: '记忆库',
+    searchPlaceholder: '搜一搜我记住了什么…',
+    libLoading: '翻找记忆中...',
+    libCount: '{num} 条记忆',
+    libExact: '{num} 条精确匹配',
+    libTruncated: '只显示前 {shown} 条（共 {total} 条）,再补个关键词缩小范围~',
+    searchEmpty: '没找到相关的记忆~',
+    resetFilter: '重置',
+    matchLiteral: '精确',
+    matchSemantic: '相关',
+    groupAll: '全部',
+    group: {
+      constraint: '约束',
+      personal: '个人信息',
+      project: '项目记忆',
+      other: '其他',
+    },
+    cat: {
+      identity: '身份',
+      preference: '偏好',
+      habit: '习惯',
+      goal: '目标',
+      constraint: '约束',
+      other: '其他',
+    },
   },
   backend: {
     failed: '后端启动失败',
