@@ -92,6 +92,8 @@ export default {
     approve: '同意执行',
     reject: '拒绝',
     generating: 'AI 正在生成回复...',
+    generatingSlow: '上游暂无输出，已等待 {n}s（可能在跑工具）',
+    streamStalled: '上游 {n}s 没有任何输出，已中断本次生成，可以直接重试',
     retrying: '上游中断,正在重新生成',
     proactiveBadge: '它先来找你',
     tapToChat: '点击开聊',

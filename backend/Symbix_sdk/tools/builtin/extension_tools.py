@@ -335,6 +335,11 @@ async def install_mcp_server(
       - package + package_type：npm 包（如 @playwright/mcp）或 uvx 包
       - command + args：本地可执行文件
 
+    注意：本工具**没有幂等保护以外的重建语义** —— 已存在同名 server 时
+    连接层会先 kill 旧进程再拉起新进程。所以调用前先确认当轮上下文里的
+    「你已经装好的扩展」里没有它；用终端跑 uv/pip/npm 装 MCP 相关包同理，
+    会替换正在运行的依赖并把连接打断。
+
     :return: JSON 字符串（status/connected/tools_count/error）
     """
     binding = _mcp_binding or {}
@@ -553,6 +558,10 @@ EXTENSION_TOOLS_SCHEMAS = {
             "③ package + package_type 传包名（npm 如 @playwright/mcp，或 uvx 的 python 包）；"
             "④ command + args 传本地可执行文件。"
             "当用户要求「装个 MCP」「接入 xx 的 MCP server」时调用。"
+            "**装之前先看当轮上下文里的「你已经装好的扩展」；那不是空的就先别装** ——"
+            "同一个 server 再装一次会顶掉正在跑的进程（先杀后起），"
+            "而用终端跑 npx/uvx/pip 装包会替换它的依赖，连接直接断掉。"
+            "确实要换成另一份配置时，先 remove_mcp_server 再装。"
             "会拉起外部进程 / 连接外部服务，属高风险操作，普通模式下需用户批准。"
             "装完的新工具下一轮对话才可见，且需要该会话开启 MCP。"
         ),

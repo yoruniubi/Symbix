@@ -218,6 +218,50 @@ const pendingSessionId = ref<string>('')
 const queuedMessages = ref<string[]>([])
 const { readAloud } = useReadAloud()
 let userAborted = false
+
+/** SSE 静默超过这么多秒:文案从「正在生成」换成「已等待 Ns」 */
+const STREAM_IDLE_SOFT_SEC = 20
+/** SSE 静默超过这么多秒:判定上游卡死,主动收尾让用户能重试。
+ *  取 600 而非 300:terminal 工具单次上限就是 300s,阈值设 300 会误杀正常的长命令;
+ *  而后端 read timeout 也是 300s、还会重试 3 次,真卡死时前端比它早收尾反而打断重连。 */
+const STREAM_IDLE_HARD_SEC = 600
+
+/**
+ * 给一条 SSE 流装静默看门狗。
+ *
+ * 后端只在「出字 / 换工具 / 工具结果」时发事件,所以「上游不吐字」和
+ * 「单个长工具在跑」这两段时间是完全静默的;`reader.read()` 又没有超时,
+ * 界面就会一直转圈且停不下来 —— 这就是用户说的「卡死」。
+ * 这里只负责计时,想怎么显示、什么时候放弃由调用方决定。
+ *
+ * Args:
+ *   onTick: 每秒回调一次,参数为已静默的秒数(0 表示刚有数据)
+ *   onStall: 静默达到 STREAM_IDLE_HARD_SEC 时回调一次
+ *
+ * Returns:
+ *   { touch, stop } —— touch 收到数据时调用重置计时;stop 收尾时清理定时器
+ */
+function watchStreamIdle(
+  onTick: (sec: number) => void,
+  onStall: () => void,
+): { touch: () => void; stop: () => void } {
+  let sec = 0
+  const timer = window.setInterval(() => {
+    sec += 1
+    onTick(sec)
+    if (sec >= STREAM_IDLE_HARD_SEC) {
+      clearInterval(timer)
+      onStall()
+    }
+  }, 1000)
+  return {
+    touch: () => {
+      sec = 0
+      onTick(0)
+    },
+    stop: () => clearInterval(timer),
+  }
+}
 let ttsStreaming = false
 interface Skill {
   name: string
@@ -1019,9 +1063,25 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
   await nextTick()
   scrollToBottom()
   let assistantMsgIndex = -1
+  let streamAbortedByTimeout = false
+  let idleWatch: { touch: () => void; stop: () => void } | null = null
+  const stopIdleWatch = () => {
+    idleWatch?.stop()
+    idleWatch = null
+  }
   try {
     assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
     const assistantMsg = messages.value[assistantMsgIndex] as any
+
+    // 不打断正常的慢任务,只把「已经等了多久」显示出来;超过硬阈值才收尾
+    idleWatch = watchStreamIdle(
+      (sec) => { assistantMsg.idleSec = sec >= STREAM_IDLE_SOFT_SEC ? sec : 0 },
+      () => {
+        streamAbortedByTimeout = true
+        stopIdleWatch()
+        if (abortController.value) abortController.value.abort()
+      },
+    )
 
     const attachments = ready.map((f: any) => ({
       path: f.path || '',
@@ -1068,6 +1128,8 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     while (!done) {
       const { value, done: readerDone } = await reader.read()
       if (readerDone) break
+      // 只要后端还有任何字节流动(含心跳/工具结果),就说明没卡住
+      idleWatch?.touch()
       buffer += decoder.decode(value, { stream: true })
 
       // 按行解析 SSE
@@ -1103,6 +1165,7 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
       }
     }
 
+    stopIdleWatch()
     loading.value = false
     abortController.value = null
     // 同步当前会话消息,避免侧边栏停留在旧内容
@@ -1131,11 +1194,26 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     }
 
   } catch (e: any) {
+    stopIdleWatch()
     loading.value = false
     abortController.value = null
     // 流异常/中断时同步打断句子级朗读,避免残留队列继续播旧回复
     stopSpeak()
     ttsStreaming = false
+    // 静默超时是我们自己 abort 的,别当成「用户点了停止」:要说清楚发生了什么
+    if (streamAbortedByTimeout) {
+      streamAbortedByTimeout = false
+      userAborted = false
+      publishAgentStatus('error', t('chat.errorOccurred'))
+      if (assistantMsgIndex !== -1 && !messages.value[assistantMsgIndex]?.content) {
+        messages.value.splice(assistantMsgIndex, 1)
+      } else if (assistantMsgIndex !== -1) {
+        messages.value[assistantMsgIndex].content +=
+          `\n\n[错误] ${t('chat.streamStalled', { n: STREAM_IDLE_HARD_SEC })}`
+      }
+      messageUi.error(t('chat.streamStalled', { n: STREAM_IDLE_HARD_SEC }))
+      return
+    }
     // 检查是否是用户主动中断(通过标志位或 AbortError 兼容不同浏览器)
     if (userAborted || e.name === 'AbortError' || e.code === 20 || e.message?.includes('abort') || e.message?.includes('fetch')) {
       console.log('=== 流被用户中断 ===')
@@ -1767,6 +1845,15 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
   msg.generating = true
   loading.value = true
   publishAgentStatus('thinking', approved ? t('chat.continueProcessing') : t('chat.processingResult'))
+  // 审批通过后要真的跑那个工具(可能几十秒到几分钟),同样是静默窗口,照样装看门狗
+  msg.idleSec = 0
+  const idleWatch = watchStreamIdle(
+    (sec) => { msg.idleSec = sec >= STREAM_IDLE_SOFT_SEC ? sec : 0 },
+    () => {
+      if (abortController.value) abortController.value.abort()
+      messageUi.error(t('chat.streamStalled', { n: STREAM_IDLE_HARD_SEC }))
+    },
+  )
   try {
     const res = await fetch(`${BACKEND_URL}/chat/approve`, {
       method: 'POST',
@@ -1803,6 +1890,7 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
     while (!done) {
       const { value, done: readerDone } = await reader.read()
       if (readerDone) break
+      idleWatch.touch()
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
@@ -1824,6 +1912,7 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
       }
     }
 
+    idleWatch.stop()
     loading.value = false
     abortController.value = null
     msg.generating = false
@@ -1845,6 +1934,7 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
     }
 
   } catch (e: any) {
+    idleWatch.stop()
     loading.value = false
     msg.generating = false
     // 审批流异常/中断:同步打断句子级朗读,避免残留队列

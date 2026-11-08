@@ -92,6 +92,8 @@ export default {
     approve: 'Approve',
     reject: 'Reject',
     generating: 'AI is generating response...',
+    generatingSlow: 'No output yet — waiting {n}s (a tool may be running)',
+    streamStalled: 'Upstream sent nothing for {n}s — generation aborted, you can retry',
     retrying: 'Upstream interrupted, regenerating',
     proactiveBadge: 'It came to say hi',
     tapToChat: 'Tap to chat',

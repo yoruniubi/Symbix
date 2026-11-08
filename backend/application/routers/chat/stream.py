@@ -11,6 +11,8 @@ from application.state import (
     memory,
     provider_registry,
     skill_registry,
+    mcp_config,
+    mcp_manager,
     symbix_client,
     act_mode_controller,
     tool_registry,
@@ -23,6 +25,7 @@ from application.state import (
 from application.services.risk_context import classify_for_chat, maybe_apply_trust_command
 from application.services import injection as chat_injection
 from application.services.round_digest import build_recent_tool_digest
+from application.services.extension_status import build_extension_status
 from application.services.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
@@ -181,6 +184,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             tool_digest = build_recent_tool_digest(request.session_id)
             if tool_digest:
                 dyn_parts.append(tool_digest)
+            # 「你已经装好的扩展」:MCP 连上后它的工具本来就在 tools 里,但连接失败/
+            # 未连接/本会话没开 MCP 时模型一个都看不到,就会误以为自己没装,
+            # 转身重装甚至直接在终端跑 uv/pip 装包 —— 那会把正在跑的 server 依赖换掉。
+            ext_status = build_extension_status(mcp_config, mcp_manager, skill_registry)
+            if ext_status:
+                dyn_parts.append(ext_status)
             if act_mode == "reactive":
                 dyn_parts.append(
                     "[Act Mode: reactive]\n"
