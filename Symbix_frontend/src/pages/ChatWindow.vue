@@ -241,6 +241,19 @@ const STREAM_IDLE_HARD_SEC = 600
  * Returns:
  *   { touch, stop } —— touch 收到数据时调用重置计时;stop 收尾时清理定时器
  */
+/**
+ * 工具返回的到底是不是错误。
+ *
+ * 后端各工具的错误文案没有统一协议,但都以 `Error` / `[Error]` 开头
+ * (`file_tools` 用 `Error: ...`、`terminal_tools` 用 `[Error] ...`)。
+ * 只认**开头**,不能全文搜 —— 读文件/贴日志的结果里完全可能含 "Error" 字样。
+ */
+function toolResultFailed(content: unknown): boolean {
+  const text = typeof content === 'string' ? content.trim() : ''
+  if (!text) return false
+  return /^(?:\[?Error\]?\b|工具执行异常|工具执行失败)/i.test(text)
+}
+
 function watchStreamIdle(
   onTick: (sec: number) => void,
   onStall: () => void,
@@ -1303,8 +1316,12 @@ function handleSSEEvent(
     }
 
     case 'tool_result': {
-      // 拒绝审批的 tool_result 带 approved:false → 标 rejected，否则会覆盖掉 steps 事件里的 rejected 状态
-      const status = evt.approved === false ? 'rejected' : 'done'
+      // 拒绝审批的 tool_result 带 approved:false → 标 rejected，否则会覆盖掉 steps 事件里的 rejected 状态。
+      // 工具返回错误(如 create_file 撞到「文件已存在」)也必须标 error 而不是 done：
+      // 否则这一步会被后续产物卡片当成「真的写盘了」，点预览直接 404。
+      const status = evt.approved === false
+        ? 'rejected'
+        : (toolResultFailed(evt.content) ? 'error' : 'done')
       const target = steps.find((s: any) => s.id === evt.id)
       if (target) {
         target.result = evt.content || ''

@@ -36,7 +36,6 @@ export default {
   // ===== Message Artifacts (本轮产物卡片) =====
   artifact: {
     title: '本轮产物',
-    open: '打开',
     reveal: '定位',
     preview: '预览',
     collapse: '收起',
@@ -49,7 +48,7 @@ export default {
     truncated: '…（内容过长，已截断）',
     previewEmpty: '没有可预览的内容',
     previewFailed: '预览失败：{err}',
-    openFailed: '打开失败：{err}',
+    previewGone: '这个文件已经不在了（后续步骤可能改名或删除了它）',
     revealFailed: '定位失败：{err}',
   },
 
@@ -141,6 +140,7 @@ export default {
     statusRunning: '执行中',
     statusAwaitingApproval: '待审批',
     statusRejected: '已拒绝',
+    statusError: '执行失败',
     statusSkipped: '已跳过',
     // Tool name mappings（纯文本，工具图标统一由 ChatMessage 的 SVG 提供）
     toolEditFile: '编辑文件',

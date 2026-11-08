@@ -36,7 +36,6 @@ export default {
   // ===== Message Artifacts =====
   artifact: {
     title: 'Files from this turn',
-    open: 'Open',
     reveal: 'Show',
     preview: 'Preview',
     collapse: 'Hide',
@@ -49,7 +48,7 @@ export default {
     truncated: '…(truncated, content too long)',
     previewEmpty: 'Nothing to preview',
     previewFailed: 'Preview failed: {err}',
-    openFailed: 'Failed to open: {err}',
+    previewGone: 'That file is gone — a later step may have renamed or deleted it',
     revealFailed: 'Failed to reveal: {err}',
   },
 
@@ -141,6 +140,7 @@ export default {
     statusRunning: 'Running',
     statusAwaitingApproval: 'Awaiting approval',
     statusRejected: 'Rejected',
+    statusError: 'Failed',
     statusSkipped: 'Skipped',
     // Tool name mappings
     // Tool name mappings (plain text; tool icons provided by ChatMessage SVG)

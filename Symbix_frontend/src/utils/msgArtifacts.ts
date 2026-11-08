@@ -32,7 +32,7 @@ export type ArtifactKind =
 export type ArtifactOp = 'create' | 'edit' | 'download' | 'image'
 
 export interface MessageArtifact {
-  /** 绝对路径原样(Windows 反斜杠保留),直接喂 openPath / revealItemInDir */
+  /** 绝对路径原样(Windows 反斜杠保留),直接喂 /files/read 与 revealItemInDir */
   path: string
   /** 文件名 */
   name: string

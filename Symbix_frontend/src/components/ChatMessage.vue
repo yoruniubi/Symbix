@@ -638,6 +638,7 @@ function statusLabel(status: string): string {
     'running': t('chat.statusRunning'),
     'awaiting_approval': t('chat.statusAwaitingApproval'),
     'rejected': t('chat.statusRejected'),
+    'error': t('chat.statusError'),
     'skipped': t('chat.statusSkipped'),
   }
   return map[status] || status
@@ -1231,7 +1232,7 @@ onMounted(() => {
   background: rgba(216, 155, 60, 0.08);
   animation: pulse-approval 2s infinite;
 }
-.step-card.rejected {
+.step-card.rejected, .step-card.error {
   border-color: rgba(211, 85, 90, 0.35);
   background: rgba(211, 85, 90, 0.08);
 }
@@ -1264,7 +1265,7 @@ onMounted(() => {
 .step-card.done .step-icon { color: var(--success, #4E9A6E); }
 .step-card.pending .step-icon, .step-card.running .step-icon { color: var(--accent-500, #EF6B6E); }
 .step-card.awaiting_approval .step-icon { color: var(--warning, #D89B3C); }
-.step-card.rejected .step-icon { color: var(--error, #D3555A); }
+.step-card.rejected .step-icon, .step-card.error .step-icon { color: var(--error, #D3555A); }
 
 .spin {
   animation: spin 1.2s linear infinite;
@@ -1305,7 +1306,7 @@ onMounted(() => {
 .step-card.awaiting_approval .step-name .tool-icon { 
   color: var(--warning, #D89B3C); 
 }
-.step-card.rejected .step-name .tool-icon { 
+.step-card.rejected .step-name .tool-icon, .step-card.error .step-name .tool-icon { 
   color: var(--error, #D3555A); 
 }
 .step-card.done .step-name { 
@@ -1354,7 +1355,7 @@ onMounted(() => {
 .step-badge.awaiting_approval { 
   color: var(--warning, #D89B3C); background: rgba(216, 155, 60, 0.12); 
 }
-.step-badge.rejected { 
+.step-badge.rejected, .step-badge.error { 
   color: var(--error, #D3555A); background: rgba(211, 85, 90, 0.12); 
 }
 

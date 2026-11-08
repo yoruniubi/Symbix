@@ -31,7 +31,9 @@
             class="artifact-btn"
             @click="togglePreview(a, i)"
           >{{ previewIndex === i ? t('artifact.collapse') : t('artifact.preview') }}</button>
-          <button class="artifact-btn" @click="openArtifact(a)">{{ t('artifact.open') }}</button>
+          <!-- 「打开」按钮已移除:交给系统打开需要按文件类型挑程序(浏览器/编辑器/
+               Office/看图器),这条路不可靠。改为「预览」内联看内容 + 「定位」在资源
+               管理器里高亮,用户自己选程序。 -->
           <button class="artifact-btn" @click="revealArtifact(a)">{{ t('artifact.reveal') }}</button>
         </div>
       </div>
@@ -105,6 +107,9 @@ watch(
   },
 )
 
+/** 文件已经不在了(404):这是历史卡片过期,不是「预览功能坏了」,文案要分开说 */
+class ArtifactGoneError extends Error {}
+
 async function togglePreview(a: MessageArtifact, index: number) {
   if (previewIndex.value === index) {
     previewIndex.value = -1
@@ -118,12 +123,14 @@ async function togglePreview(a: MessageArtifact, index: number) {
   try {
     if (a.kind === 'image') {
       const res = await fetch(`${BACKEND_URL}/api/files/raw?path=${encodeURIComponent(a.path)}`)
+      if (res.status === 404) throw new ArtifactGoneError()
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
       if (token !== previewToken) return
       previewUrl.value = URL.createObjectURL(blob)
     } else {
       const res = await fetch(`${BACKEND_URL}/api/files/read?path=${encodeURIComponent(a.path)}`)
+      if (res.status === 404) throw new ArtifactGoneError()
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       if (token !== previewToken) return
@@ -133,7 +140,9 @@ async function togglePreview(a: MessageArtifact, index: number) {
         : content
     }
   } catch (e) {
-    if (token === previewToken) messageUi.error(t('artifact.previewFailed', { err: String(e) }))
+    if (token !== previewToken) return
+    if (e instanceof ArtifactGoneError) messageUi.warning(t('artifact.previewGone'))
+    else messageUi.error(t('artifact.previewFailed', { err: String(e) }))
   } finally {
     if (token === previewToken) previewLoading.value = false
   }
@@ -145,17 +154,6 @@ async function copyPath(path: string) {
     messageUi.info(t('artifact.copied'))
   } catch {
     messageUi.warning(path)
-  }
-}
-
-async function openArtifact(a: MessageArtifact) {
-  // 浏览器里调试时没有 opener 插件,退化成复制路径
-  if (!isTauriApp()) return copyPath(a.path)
-  try {
-    const { openPath } = await import('@tauri-apps/plugin-opener')
-    await openPath(a.path)
-  } catch (e) {
-    messageUi.error(t('artifact.openFailed', { err: String(e) }))
   }
 }
 
