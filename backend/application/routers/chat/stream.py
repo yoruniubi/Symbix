@@ -331,6 +331,11 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 "session_id": request.session_id,
             }
 
+            # 插话:只有真的会进工具轮循环时才算「有轮间隙可插」。
+            # 用与 while 完全相同的条件,纯文本回复就不会被误标成可插
+            # (否则用户那一刻插话,POST 会干等到流结束才返回)。
+            if tool_calls_raw and (not max_rounds or round_count < max_rounds):
+                await chat_injection.set_tool_loop_active(request.session_id, True)
             while tool_calls_raw and (not max_rounds or round_count < max_rounds):
                 # 客户端断连检测:前端 abort / 删 session 会断 SSE 连接,后端需主动停、避免后端继续跑 tool。
                 if await http_request.is_disconnected():
@@ -739,6 +744,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 if full_text_round:
                     full_text = full_text_round
 
+            # 循环结束(不再有 tool_calls / 轮次用尽 / 被中断):这轮不会再有轮间隙了
+            await chat_injection.set_tool_loop_active(request.session_id, False)
             # 工具轮次用尽或不再有 tool_calls 后，若模型未给出最终文本，
             # 给出兑底提示，避免前端看起来“卡住/空回复”。
             if not full_text:

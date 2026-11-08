@@ -215,7 +215,7 @@ const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
 const pendingSessionId = ref<string>('')
 /** 排队的插话:流结束/无流可注入时存这里,轮末自动作为下一条消息发出 */
-const queuedMessage = ref<string>('')
+const queuedMessages = ref<string[]>([])
 const { readAloud } = useReadAloud()
 let userAborted = false
 let ttsStreaming = false
@@ -973,10 +973,11 @@ function hideDuringLoading(msg: any): boolean {
   return true
 }
 
-/** 排队:ChatInput 在流不可注入时转来;轮末(loading 变 false)自动发送,只保一条 */
+/** 排队:ChatInput 在流不可注入时转来;轮末(loading 变 false)合并成一条自动发送 */
 function handleQueuedMessage(text: string) {
   if (!text) return
-  queuedMessage.value = text
+  // 攒着而不是覆盖:连续插两句时前一句不该被吃掉
+  if (!queuedMessages.value.includes(text)) queuedMessages.value.push(text)
   messageUi.success(t('chatInput.injectFallbackQueued'))
 }
 
@@ -1108,9 +1109,9 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     const active = sessions.value.find(s => s.id === currentSessionId)
     if (active) active.messages = [...messages.value]
     // 排队的插话:本轮跑完自动作为下一条消息发出
-    if (queuedMessage.value && !assistantMsg.approval_id) {
-      const q = queuedMessage.value
-      queuedMessage.value = ''
+    if (queuedMessages.value.length && !assistantMsg.approval_id) {
+      const q = queuedMessages.value.join('\n')
+      queuedMessages.value = []
       setTimeout(() => sendMessage(q, []), 200)
     }
     await saveSessionToLocalMarkdown()

@@ -36,8 +36,8 @@
       />
       <!-- 运行中插话提示:生成期间输入仍可用,Enter 把补充送进正在跑的任务 -->
       <transition name="inject-slide">
-        <div v-if="loading && injectState === 'idle' && inputValue.trim()" class="inject-hint">
-          <span class="inject-dot"></span>{{ t('chatInput.injectHint') }}
+        <div v-if="loading && injectState !== 'sent' && inputValue.trim()" class="inject-hint">
+          <span class="inject-dot"></span>{{ injectState === 'sending' ? t('chatInput.injectSending') : t('chatInput.injectHint') }}
         </div>
       </transition>
 
@@ -375,7 +375,12 @@ function handleSend() {
  * 失败时保留内容让用户决定重试还是等。
  */
 async function handleInject(text: string) {
-  if (!text || injectState.value === 'sending') return
+  if (!text) return
+  // 上一次投递还在等后端消费:别静默吞掉用户的回车,说清楚在等什么
+  if (injectState.value === 'sending') {
+    messageUi.warning(t('chatInput.injectBusy'))
+    return
+  }
   const sid = props.sessionId
   if (!sid) return
   injectState.value = 'sending'
@@ -399,8 +404,14 @@ async function handleInject(text: string) {
     } else if (data.status === 'busy') {
       messageUi.warning(t('chatInput.injectBusy'))
       injectState.value = 'idle'
+    } else if (data.status === 'queued') {
+      // 流在跑，但这一轮没有工具轮间隙可插（纯文本回复 / 收尾中）：
+      // 当场转成本轮结束后的排队消息，别让用户以为话石沉大海
+      emit('queued', text)
+      inputValue.value = ''
+      injectState.value = 'idle'
     } else {
-      // timeout / 其他:退回排队,不丢用户的话
+      // no_stream / timeout / 其他:退回排队,不丢用户的话
       emit('queued', text)
       inputValue.value = ''
       injectState.value = 'idle'

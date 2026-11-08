@@ -2,16 +2,36 @@ import asyncio
 import time
 import uuid
 
-_EXPIRE_SEC = 600  # 10 分钟没人消费就作废(流早死了,别让 POST 挂满 coroutine)
+# 用户补充最多等这么久被流消费。工具轮间隙通常是秒级，
+# 等这么久还没被取走，说明这一轮插不进去了，让前端转「排队」，别让 POST 挂着。
+_EXPIRE_SEC = 90
+
 
 _injections: dict[str, dict] = {}
 _lock = asyncio.Lock()
 
 
 async def set_injection_target(session_id: str) -> None:
-    """chat_stream 开始时调用:标记该会话的流可以接收注入。"""
+    """chat_stream 开始时调用:标记该会话的流可以接收注入。
+
+    注意「流活着」不等于「插得进去」—— 只有工具轮之间才有消费点。
+    真正的可插入性由 set_tool_loop_active 单独维护。
+    """
     async with _lock:
-        _injections[session_id] = {"stream_alive": True}
+        _injections[session_id] = {"stream_alive": True, "tool_loop": False}
+
+
+async def set_tool_loop_active(session_id: str, active: bool) -> None:
+    """标记该会话当前是否处在「工具轮循环」里(有轮间隙可以消费注入)。
+
+    循环开始置 True、循环结束置 False。纯文本回复期间是 False ——
+    这时候用户插话不可能被本轮吃进去,submit_injection 会立刻让它转排队,
+    而不是让请求挂在那儿等到流结束(用户看到的是「按回车没反应」)。
+    """
+    async with _lock:
+        slot = _injections.get(session_id)
+        if slot is not None:
+            slot["tool_loop"] = active
 
 
 async def clear_injection_target(session_id: str) -> None:
@@ -28,8 +48,13 @@ async def clear_injection_target(session_id: str) -> None:
 async def submit_injection(session_id: str, text: str) -> dict:
     """POST /chat/inject:把消息放进该会话的注入槽,等流消费后返回。
 
-    返回 {status, delivered} —— 流已结束/未启动时 status="no_stream",
-    前端应退回「排队」路径而不是报错。
+    返回 status:
+    - delivered  流在轮间隙取走了,模型下一轮就能看到
+    - no_stream  没有正在跑的流(或流还没跑到注册点)
+    - queued     流在跑,但这一轮不会再有轮间隙(纯文本回复 / 收尾中),
+                 或等太久没被消费 —— 前端应改成「本轮结束后自动发送」
+    - busy       前一条补充还没被消费,拒绝叠加
+    - empty      空文本
     """
     text = (text or "").strip()
     if not text:
@@ -39,15 +64,21 @@ async def submit_injection(session_id: str, text: str) -> dict:
         # 没有正在跑的流(或流还没跑到注册点):不排队,让前端走普通发送
         if session_id not in _injections:
             return {"status": "no_stream"}
+        slot_now = _injections[session_id]
         # 前一条还没被消费:拒绝叠加,前端提示「上一条还在送」
-        if _injections[session_id].get("text"):
+        if slot_now.get("text"):
             return {"status": "busy"}
+        # 当前不在工具轮循环里 → 本轮不可能有消费点,直接转排队,
+        # 不占用槽、也不让请求挂住
+        if not slot_now.get("tool_loop"):
+            return {"status": "queued", "reason": "no_tool_round"}
         slot = {
             "id": uuid.uuid4().hex[:12],
             "text": text,
             "ts": time.time(),
             "event": asyncio.Event(),
             "stream_alive": True,
+            "tool_loop": True,
         }
         _injections[session_id] = slot
 
@@ -55,11 +86,11 @@ async def submit_injection(session_id: str, text: str) -> dict:
     try:
         await asyncio.wait_for(slot["event"].wait(), timeout=_EXPIRE_SEC)
     except asyncio.TimeoutError:
-        # 超时:流大概已经死了,清槽避免影响下一次
+        # 超时:流大概卡住了,清槽并让前端排队,别丢用户这句话
         async with _lock:
             if _injections.get(session_id) is slot:
                 _injections.pop(session_id, None)
-        return {"status": "timeout"}
+        return {"status": "queued", "reason": "timeout"}
     # 醒来后鉴别死活:被 take 消费 = delivered;被 clear 杀死 = no_stream
     return (
         {"status": "delivered", "id": slot["id"]}
