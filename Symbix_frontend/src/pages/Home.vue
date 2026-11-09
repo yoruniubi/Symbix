@@ -66,12 +66,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { startMemorySentinel } from '@/utils/memorySentinel'
 import { installTickerResilience, type TickerResilienceHandle } from '../composables/useTickerResilience'
 import { useRouter } from 'vue-router'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { Application, Texture, AnimatedSprite, Rectangle, TextureSource, Assets } from 'pixi.js'
+import { Application, Texture, AnimatedSprite, TextureSource, Assets } from 'pixi.js'
+import { createPetFrameGetter } from '@/utils/petFrameCache'
 import { useI18n } from 'vue-i18n'
 import { speak, assetUrl, waitBackendReady } from '@/utils/backend'
 import { fitsSheetContract, SHEET_COLS, SHEET_FRAME_H, SHEET_FRAME_W, SHEET_MIN_ROWS } from '@/utils/petSheet'
@@ -142,6 +144,9 @@ async function snapToBottomRight() {
 const canvasRef = ref<HTMLCanvasElement>()
 const FRAME_W = 192
 const FRAME_H = 208
+
+// 帧纹理按 (source, 行, 帧数, 序列) 缓存复用 —— 详见 utils/petFrameCache.ts
+const getFrames = createPetFrameGetter(FRAME_W, FRAME_H)
 // Pixi 默认 ticker 是 60Hz;动画速度应以 ticker 频率为基准,否则会出现动作忽快忽慢。
 const TICKER_FPS = 60
 // 按动作分级控制速度,避免统一降速后单帧停留太久。
@@ -459,25 +464,6 @@ function currentPetStyle(preview: string): string | null {
     if (signal?.spritesheetPath === preview && signal.style) return signal.style
   } catch { /* ignore */ }
   return null
-}
-
-function getFrames(
-  source: TextureSource,
-  row: number,
-  frameCount: number,
-  frameIndices?: readonly number[],
-) {
-  return Array.from({ length: frameCount }, (_, i) =>
-    new Texture({
-      source: source as TextureSource,
-      frame: new Rectangle(
-        (frameIndices?.[i] ?? i) * FRAME_W,
-        row * FRAME_H,
-        FRAME_W,
-        FRAME_H,
-      ),
-    })
-  )
 }
 
 function playStateNow(state: PetState, returnToIdle: boolean, token: number) {
@@ -1307,7 +1293,22 @@ onMounted(async () => {
   window.addEventListener('storage', onPetStorage)
 })
 
+// 桌宠窗是常驻的,同样只在这里装哨兵。它不自动重载 —— 重载会打断
+// 正在播的动作、把桌宠位置重置,动静太大;只让用户知道该重启了。
+let stopMemorySentinel: (() => void) | null = null
+onMounted(() => {
+  stopMemorySentinel = startMemorySentinel({
+    window: 'home',
+    autoReload: false,
+    reportUrl: `${BACKEND_URL}/api/diagnostics/client-memory`, 
+    onWarn: () => console.warn('[mem] home 窗口内存偏高,建议重启 Symbix'),
+    onHard: () => console.warn('[mem] home 窗口内存过高,请重启 Symbix'),
+  })
+})
+
 onUnmounted(() => {
+  stopMemorySentinel?.()
+  stopMemorySentinel = null
   if (patrolTimer) {
     clearTimeout(patrolTimer)
     patrolTimer = null

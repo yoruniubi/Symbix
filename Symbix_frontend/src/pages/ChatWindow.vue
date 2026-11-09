@@ -96,6 +96,7 @@
           :key="idx"
           :msg="msg"
           :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
+          :preview="idx >= messages.length - PREVIEW_TAIL"
           v-show="!hideDuringLoading(msg)"
           @edit="handleEditMessage(idx, $event)"
           @approve="approveTool(idx, $event)"
@@ -204,6 +205,7 @@ const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
 import { parseSessionMarkdown } from '@/utils/sessionMarkdown'
+import { startMemorySentinel } from '@/utils/memorySentinel'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
 import { feedSpeechSentence, flushSpeechSentence, speakStart, stopSpeak } from '@/utils/backend'
@@ -211,6 +213,8 @@ import { useReadAloud } from '@/composables/useReadAloud'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
 const { messages, sessions, activeSessionId, persistError, persistSessions, getActiveSession } = useChatStore()
+/** 只有最近这么多条消息加载图片预览;更早的关掉,避免几百个 Blob 常驻内存 */
+const PREVIEW_TAIL = 16
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
@@ -680,7 +684,24 @@ onMounted(async () => {
   mcpCheckTimer = setInterval(() => refreshMcpStatus(true), MCP_CHECK_INTERVAL)
 })
 
+// 长时间开着这个窗口,renderer 的堆会一路涨(实测到 GB 级)。
+// 越线先提示,再往上就在「没有正在流式对话」时自动重载 —— 会话正文已双写
+// (localStorage + 后端 Markdown),重载不会丢已落盘的内容。
+let stopMemorySentinel: (() => void) | null = null
+onMounted(() => {
+  stopMemorySentinel = startMemorySentinel({
+    window: 'chat',
+    messages: () => messages.value.length,
+    canReload: () => !loading.value,
+    reportUrl: `${BACKEND_URL}/api/diagnostics/client-memory`,
+    onWarn: () => messageUi.warning(t('chat.memoryHigh'), { duration: 10000 }),
+    onHard: () => messageUi.warning(t('chat.memoryCritical'), { duration: 8000 }),
+  })
+})
+
 onBeforeUnmount(() => {
+  stopMemorySentinel?.()
+  stopMemorySentinel = null
   if (mcpCheckTimer) {
     clearInterval(mcpCheckTimer)
     mcpCheckTimer = null

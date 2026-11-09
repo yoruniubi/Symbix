@@ -317,6 +317,12 @@ const props = defineProps<{
   msg: any
   /** 流式是否结束；历史消息默认 true */
   final?: boolean
+  /**
+   * 是否加载图片预览（rig 缩略图 / MCP 返回图）。
+   * 只给最近若干条开，历史消息关掉 —— 每条消息的预览都是一个常驻 Blob，
+   * 几百条带图的历史会把 renderer 内存推到 GB 级。缺省 true 保持原行为。
+   */
+  preview?: boolean
 }>()
 
 const { isDark } = useTheme()
@@ -495,10 +501,19 @@ async function loadRig(path: string) {
   }
 }
 
-// 路径变了 / 步骤数变了 / 最后一步落状态(文件刚写完)都重读一次
+// 路径变了 / 步骤数变了 / 最后一步落状态(文件刚写完)都重读一次。
+// preview 关掉的（历史消息）直接释放已有图并不再请求。
 watch(
-  [rigPath, () => (props.msg?.steps || []).length, lastStepStatus],
-  () => { void loadRig(rigPath.value) },
+  [rigPath, () => (props.msg?.steps || []).length, lastStepStatus, () => props.preview !== false],
+  () => {
+    if (props.preview === false) {
+      releaseRig()
+      rigMissing.value = false
+      rigLoading.value = false
+      return
+    }
+    void loadRig(rigPath.value)
+  },
   { immediate: true },
 )
 
@@ -542,7 +557,18 @@ async function loadMcpImg(path: string) {
   }
 }
 
-watch(mcpImgPath, (p) => { void loadMcpImg(p) }, { immediate: true })
+watch(
+  [mcpImgPath, () => props.preview !== false],
+  () => {
+    if (props.preview === false) {
+      releaseMcpImg()
+      mcpImgLoading.value = false
+      return
+    }
+    void loadMcpImg(mcpImgPath.value)
+  },
+  { immediate: true },
+)
 
 onUnmounted(() => {
   rigToken++

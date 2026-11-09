@@ -36,7 +36,7 @@ from application.state import (
 )
 import sys
 import os
-from application.routers import chat, providers_api, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku, usage, settings
+from application.routers import chat, providers_api, mcp, skills, sessions, pet, files, checkpoint, risk, jobs, voice, journal, danmaku, usage, settings, diagnostics
 
 
 def _ensure_bundled_runtime_on_path() -> None:
@@ -232,6 +232,7 @@ app.include_router(journal.router)
 app.include_router(danmaku.router)
 app.include_router(usage.router)
 app.include_router(settings.router)
+app.include_router(diagnostics.router)
 
 # ============ 挂载静态资源(桌宠) ============
 # 打包后前端 dist 编译进二进制,运行期新装的宠物(Codex 导入 / Petdex 安装 /

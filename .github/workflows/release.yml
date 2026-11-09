@@ -219,6 +219,20 @@ jobs:
       # - linux deb 不受 updater 支持,照旧只出安装包
       # --config 用内联 JSON 叠在 tauri.conf.json 上:本地 `tauri build` 不传它,
       # 所以日常构建不需要私钥;CI 传它才产 .sig + 更新包。
+      # tauri-bundler 会自己下载 NSIS(win)/ linuxdeploy(linux)/ create-dmg(mac),
+      # 因为它用 Rust reqwest、不走 release_assets.py,上游 CDN 抖一次 504 就废掉整轮。
+      # 缓存命中时 bundler 直接跳过下载,所以先把它缓存起来。
+      - name: Cache tauri bundler toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/tauri
+            ${{ env.LOCALAPPDATA }}/tauri
+            ~/Library/Caches/tauri
+          key: tauri-toolchain-${{ runner.os }}-v1
+          restore-keys: |
+            tauri-toolchain-${{ runner.os }}-
+
       - name: Build app (Tauri bundle)
         working-directory: Symbix_frontend
         shell: bash
@@ -237,7 +251,41 @@ jobs:
             fi
             args+=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
           fi
-          npm run tauri -- "${args[@]}"
+
+          # 上游 assets CDN 会整段回 504(与客户端语言无关,urllib / reqwest 都一样)。
+          # cargo 有 target 缓存、bundler 对已下载的工具链也会跳过,所以重试很便宜 ——
+          # 大多数情况下第二轮只花几十秒就能过。
+          MAX_ATTEMPTS=3
+          attempt=1
+          while true; do
+            if npm run tauri -- "${args[@]}"; then
+              break
+            fi
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "::error::tauri bundle 连续 ${MAX_ATTEMPTS} 次失败。若是 'http status: 504' 之类的下载错误,说明 GitHub assets CDN 当前不可用,与代码无关 —— 稍后重跑本 workflow 即可。"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            echo "::warning::bundle 失败,${attempt}/${MAX_ATTEMPTS} 次尝试将在 30s 后开始(已编译产物会复用)"
+            sleep 30
+          done
+
+      # bundle 挂了就把 tauri 的缓存目录摊出来。504 是上游 CDN 的问题,
+      # 但「NSIS 到底装到哪个目录」只有构建机自己知道 —— 想自托管这个 zip
+      # (传到本仓库 assets-v1 再预置)就得靠这份 dump 定位。
+      - name: Dump tauri cache (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          echo "== tauri bundler 缓存 =="
+          for d in "${LOCALAPPDATA:-}/tauri" "$HOME/.cache/tauri" "$HOME/Library/Caches/tauri"; do
+            if [ -n "$d" ] && [ -d "$d" ]; then
+              echo "--- $d"
+              find "$d" -maxdepth 3 | head -60
+            fi
+          done
+          echo "== 结束(本步骤永远成功,只用来提供信息) =="
+          exit 0
 
       # 更新包(.sig 的兄弟文件)也要收进来,否则发版 job 拼不出 latest.json
       - name: Collect bundles

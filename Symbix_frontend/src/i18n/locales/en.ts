@@ -142,6 +142,8 @@ export default {
     statusRejected: 'Rejected',
     statusError: 'Failed',
     restoredFromBackend: 'This chat had no local copy — restored from the backend archive (tool cards are not recoverable)',
+    memoryHigh: 'Memory use is getting high (it builds up over long sessions) — restart Symbix when convenient.',
+    memoryCritical: 'Memory use is too high — reloading this window now (your chats are saved).',
     persistFailed: 'Saved on the backend, but the local cache is full — recent messages may disappear after a reload. Try deleting some old chats.',
     statusSkipped: 'Skipped',
     // Tool name mappings
