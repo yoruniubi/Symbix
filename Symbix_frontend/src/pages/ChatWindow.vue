@@ -203,13 +203,14 @@ const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat'), t('home.petGreetingList')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
 import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
+import { parseSessionMarkdown } from '@/utils/sessionMarkdown'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
 import { feedSpeechSentence, flushSpeechSentence, speakStart, stopSpeak } from '@/utils/backend'
 import { useReadAloud } from '@/composables/useReadAloud'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
-const { messages, sessions, activeSessionId, persistSessions, getActiveSession } = useChatStore()
+const { messages, sessions, activeSessionId, persistError, persistSessions, getActiveSession } = useChatStore()
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
@@ -541,6 +542,19 @@ async function removeSkill(skillName: string) {
 
 
 
+// localStorage 只有 5MB,长会话撞线会让历史悄无声息地存不进去。
+// 这里只提示一次(直到恢复正常),避免每轮刷屏。
+let persistWarned = false
+watch(persistError, (err) => {
+  if (!err) {
+    persistWarned = false
+    return
+  }
+  if (persistWarned) return
+  persistWarned = true
+  messageUi.warning(t('chat.persistFailed'), { duration: 8000 })
+})
+
 // 监听 settings 变化,同步 currentModel
 watch(() => settings.value.model, (newModel) => {
   if (newModel) currentModel.value = newModel
@@ -559,8 +573,25 @@ onMounted(async () => {
   // 桌宠主窗(280x260 透明)和弹幕窗不参与
   void startupCheck()
   currentModel.value = settings.value.model || 'gpt-4o-mini'
+
+  // 冷启动 / 窗口重建后 messages 是空的,恢复上次正在看的那个会话。
+  // activeSessionId 已落盘,但会话可能被删了 —— 那种情况清掉它(否则之后发消息
+  // 会往一个不存在的 session 里写),再退到最近一个会话。
+  let restoredSession = false
+  if (!messages.value.length) {
+    const wanted = activeSessionId.value
+      ? sessions.value.find(s => s.id === activeSessionId.value)
+      : null
+    if (!wanted && activeSessionId.value) activeSessionId.value = null
+    const target = wanted || sessions.value[0]
+    if (target) {
+      // loadSession 内部已经 syncPendingApprovals 过一次,别重复发请求
+      loadSession(target.id)
+      restoredSession = true
+    }
+  }
   // 冷启动恢复的会话同样可能带着过期审批卡
-  if (activeSessionId.value) void syncPendingApprovals(activeSessionId.value)
+  if (!restoredSession && activeSessionId.value) void syncPendingApprovals(activeSessionId.value)
   // 尝试获取模型列表
   if (settings.value.apiKey && settings.value.baseUrl) {
     try {
@@ -851,11 +882,42 @@ function newChat() {
   resetUsage()
 }
 
+/**
+ * 本地缓存空了 → 从后端的 Markdown 存档把正文捞回来。
+ *
+ * localStorage 只有 5MB,长会话带 steps/result 很容易撞线;一旦写失败或被清,
+ * 会话壳子还在(sessions 里)但 messages 是空的。而每轮结束都往 history_list
+ * 落过一份 .md,那是唯一不会随缓存清理而丢的全文。只恢复 role + content ——
+ * steps / 审批卡没进存档,也不假装有。
+ */
+async function restoreSessionFromBackend(id: string) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/markdown?session_id=${encodeURIComponent(id)}`)
+    if (!res.ok) return
+    const data = await res.json()
+    const restored = parseSessionMarkdown(String(data?.content || ''))
+    if (!restored.length) return
+    const session = sessions.value.find(s => s.id === id)
+    // 期间可能已经恢复过 / 用户已经发了新消息,别覆盖
+    if (!session || session.messages.length) return
+    session.messages = restored
+    persistSessions()
+    if (activeSessionId.value === id) {
+      messages.value = [...restored]
+      void nextTick(() => scrollToBottom(true))
+    }
+    messageUi.info(t('chat.restoredFromBackend'))
+  } catch {
+    // 兜底失败就算了:恢复不了也只是维持现状,不该再弹一个错误打扰用户
+  }
+}
+
 function loadSession(id: string) {
   const session = sessions.value.find(s => s.id === id)
   if (!session) return
   activeSessionId.value = id
   messages.value = [...session.messages]
+  if (!session.messages.length) void restoreSessionFromBackend(id)
   resetUsage()
   restoreUsage(id)
   // 历史消息里可能残留早已失效的 approval_id(后端重启后挂起态就没了),
@@ -1246,6 +1308,14 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
       messages.value[assistantMsgIndex].content += `\n\n[错误] ${e.message}`
     }
     messageUi.error(t('chat.requestFail', { msg: e.message }))
+  } finally {
+    // 兜底:不管这轮是正常结束、用户中断、超时还是报错,都把 messages 落回 session。
+    // 之前只在正常路径回写,中断时会丢掉整条 assistant 回复。
+    const session = sessions.value.find(s => s.id === currentSessionId)
+    if (session) {
+      session.messages = [...messages.value]
+      persistSessions()
+    }
   }
 }
 
@@ -1978,6 +2048,13 @@ async function approveTool(msgIdx: number, approved: boolean, answer: string = '
     publishAgentStatus('error', t('chat.approvalFailed'))
     console.error(t('chat.approvalFailed'), e)
     messageUi.error(t('chat.approvalFailedDetail', { msg: e.message }))
+  } finally {
+    // 同 sendMessage:审批后的续流中断/超时也要把已生成内容落盘
+    const session = sessions.value.find(s => s.id === activeSessionId.value)
+    if (session) {
+      session.messages = [...messages.value]
+      persistSessions()
+    }
   }
 }
 

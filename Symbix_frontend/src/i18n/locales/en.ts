@@ -141,6 +141,8 @@ export default {
     statusAwaitingApproval: 'Awaiting approval',
     statusRejected: 'Rejected',
     statusError: 'Failed',
+    restoredFromBackend: 'This chat had no local copy — restored from the backend archive (tool cards are not recoverable)',
+    persistFailed: 'Saved on the backend, but the local cache is full — recent messages may disappear after a reload. Try deleting some old chats.',
     statusSkipped: 'Skipped',
     // Tool name mappings
     // Tool name mappings (plain text; tool icons provided by ChatMessage SVG)

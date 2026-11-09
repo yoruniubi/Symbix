@@ -141,6 +141,8 @@ export default {
     statusAwaitingApproval: '待审批',
     statusRejected: '已拒绝',
     statusError: '执行失败',
+    restoredFromBackend: '本地缓存里没有这个会话的正文，已从后端存档恢复（工具调用卡片恢复不了）',
+    persistFailed: '会话已保存到后端，但本地缓存写满了，刷新后可能丢掉最近的消息。建议删掉一些旧会话。',
     statusSkipped: '已跳过',
     // Tool name mappings（纯文本，工具图标统一由 ChatMessage 的 SVG 提供）
     toolEditFile: '编辑文件',

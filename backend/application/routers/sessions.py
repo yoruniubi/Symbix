@@ -94,6 +94,27 @@ async def save_markdown(payload: SessionPayload):
     return {"status": "success", "session_id": sid, "path": file_path}
 
 
+@router.get("/api/markdown")
+async def get_markdown(session_id: str = ""):
+    """读回某会话的 Markdown 存档(前端本地缓存丢失时的兜底)。
+
+    前端把整份会话放在 localStorage(上限 5MB),长会话带 steps/result 很容易撞线;
+    而每轮结束都会 save_markdown 落一份 .md,这是唯一不随浏览器缓存清理而丢的全文。
+    以前只写不读 —— 缓存一丢,历史就真的没了。
+    """
+    sid = session_id or "default"
+    file_path = _get_md_path(sid)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="该会话没有本地存档")
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return {
+        "session_id": sid,
+        "title": _get_index_title(sid),
+        "content": content,
+    }
+
+
 @router.post("/api/delete_markdown")
 async def delete_markdown(req: DeleteMarkdownRequest):
     """删除会话:终止进行中 chat/action + 清理审批/任务/附件/checkpoint/blob 等全部关联数据"""

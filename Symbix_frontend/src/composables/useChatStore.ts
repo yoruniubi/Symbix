@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 export interface ToolCallStep {
   id: string
@@ -35,6 +35,8 @@ export interface Session {
 }
 
 const CHAT_STORE_KEY = 'symbix_chat_sessions'
+/** 当前会话 id 也要落盘:否则 webview 一重载就回到 null,聊天区空白而侧栏还在 */
+const CHAT_ACTIVE_KEY = 'symbix_active_session'
 
 function loadPersistedSessions(): Session[] {
   try {
@@ -53,16 +55,46 @@ function loadPersistedSessions(): Session[] {
   }
 }
 
+/**
+ * 持久化失败的原因(空串 = 正常)。
+ *
+ * localStorage 只有 5MB,长会话带 steps/result 很容易撞线。以前这里是无条件
+ * `catch {}`,写失败完全无声 —— 用户看到的是「历史突然没了」,却没有任何提示。
+ * 现在把失败原因暴露出去,由聊天页弹一次警告。
+ */
+const persistError = ref<string>('')
+
 function saveSessionsToLocal(sessions: Session[]) {
   try {
     localStorage.setItem(CHAT_STORE_KEY, JSON.stringify(sessions))
-  } catch {}
+    persistError.value = ''
+  } catch (e) {
+    persistError.value = e instanceof Error ? e.message : String(e)
+    console.error('[chat] 会话持久化失败(localStorage 可能已满):', e)
+  }
 }
 
 const messages = ref<Message[]>([])
 const sessions = ref<Session[]>(loadPersistedSessions())
+
+function loadPersistedActiveId(): string | null {
+  try {
+    return localStorage.getItem(CHAT_ACTIVE_KEY) || null
+  } catch {
+    return null
+  }
+}
+
 /** 当前激活会话 id，null 表示尚未绑定会话（欢迎页 / 新对话未发消息） */
-const activeSessionId = ref<string | null>(null)
+const activeSessionId = ref<string | null>(loadPersistedActiveId())
+
+// 模块级单例,整个应用生命周期只需一个 watcher
+watch(activeSessionId, (id) => {
+  try {
+    if (id) localStorage.setItem(CHAT_ACTIVE_KEY, id)
+    else localStorage.removeItem(CHAT_ACTIVE_KEY)
+  } catch {}
+})
 
 /**
  * 把后端 /chat 返回的 steps 数组映射成前端 ToolCallStep[]。
@@ -131,11 +163,13 @@ export function useChatStore() {
     messages.value = []
     activeSessionId.value = null
     localStorage.removeItem(CHAT_STORE_KEY)
+    localStorage.removeItem(CHAT_ACTIVE_KEY)
   }
 
   return {
     messages,
     sessions,
+    persistError,
     activeSessionId,
     persistSessions,
     findSessionIndex,
