@@ -71,6 +71,10 @@ jobs:
       # bun/uv 取官方 Release 的 pin 版本(版本号定在 release_assets.py 顶部,
       # 要升级改常量或加 --bun-version/--uv-version;不用 latest —— 不可复现)。
       - name: Fetch runtime assets (gguf / stt-native / bun / uv)
+        # GITHUB_TOKEN 供 api.github.com 备选链路用(直链 504 时自动切换);
+        # 匿名配额在 runner 共享 IP 上经常已被刷满
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python backend/release_assets.py fetch --repo "${{ github.repository }}" --tag assets-v1
 
       - uses: actions/setup-node@v4

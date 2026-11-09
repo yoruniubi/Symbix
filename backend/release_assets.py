@@ -6,8 +6,11 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -19,6 +22,17 @@ MODEL_DIR = SDK / "stt" / "model"
 DIST_ASSETS = BACKEND / "dist-assets"          # pack 产物输出目录(git 不收)
 GGUF_NAME = "sense-voice-small-q4_k.gguf"
 MANIFEST_NAME = "asset-manifest.json"
+
+# 资产下载的重试策略。GitHub 的 release 资产直链会 302 到 objects.githubusercontent.com,
+# 这条链路会整段报 504 Gateway Time-out(多平台、多仓库同时),而且以前只有一次机会 ——
+# 一挂就得把整条 release 流水线从头再跑(前后几十分钟)。
+DOWNLOAD_TIMEOUT = 60.0   # 单次 socket 读写超时(不是总时长)
+DOWNLOAD_RETRIES = 6      # 503/504/断流/超时的重试次数(指数退避,上限 30s)
+
+# github.com/<owner>/<repo>/releases/download/<tag>/<asset>
+_RELEASE_URL_RE = re.compile(
+    r"^https://github\.com/([^/]+/[^/]+)/releases/download/([^/]+)/([^/]+)$"
+)
 
 # <OS>-<arch> 名(与 resource_path.stt_platform_name 一致)→ zip 资产名 + 官方 bun/uv 资产名
 PLATFORMS = {
@@ -98,30 +112,127 @@ def canon_platform(dir_name: str) -> str | None:
     return f"{os_name}-{arch}"
 
 
+def _github_api_asset_url(url: str) -> str | None:
+    """把 release 直链换成 api.github.com 的 asset 端点。
+
+    直链走的是 objects.githubusercontent.com,那条链路整段 504 时(多平台同时),
+    api.github.com 是另一套网关,换过去通常能成。只在形如
+    `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>` 时才动手 ——
+    自定义 `--base-url`(例如本地 file:///)一律原样返回。
+    """
+    m = _RELEASE_URL_RE.match(url)
+    if not m:
+        return None
+    repo, tag, name = m.groups()
+    api = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    req = urllib.request.Request(api, headers={"Accept": "application/vnd.github+json"})
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:  # noqa: S310
+        data = json.loads(resp.read().decode("utf-8"))
+    for asset in data.get("assets", []):
+        if asset.get("name") == name:
+            return asset.get("url")
+    return None
+
+
+def _open_range(url: str, start: int, octet_stream: bool = False):
+    """打开下载流;start > 0 时请求从该偏移续传。"""
+    req = urllib.request.Request(url)
+    if octet_stream:
+        req.add_header("Accept", "application/octet-stream")
+    if start > 0:
+        req.add_header("Range", f"bytes={start}-")
+    return urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT)  # noqa: S310
+
+
+def _fetch_once(url: str, tmp: Path, octet_stream: bool = False) -> None:
+    """把 url 下到 tmp(已有字节则续传),完成后不做改名。"""
+    start = tmp.stat().st_size if tmp.is_file() else 0
+    with _open_range(url, start, octet_stream) as resp:
+        # 服务端不支持 Range 时会忽略头部回 200 + 全文,此时必须从头写,
+        # 否则会把全文追加到旧 .part 后面拼出一坨坏文件
+        resuming = start > 0 and resp.status == 206
+        if not resuming:
+            start = 0
+        total = int(resp.headers.get("Content-Length") or 0)
+        expect = start + total
+        done = start
+        with open(tmp, "ab" if resuming else "wb") as f:
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if expect:
+                    print(
+                        f"\r  {done / 1048576:6.1f} / {expect / 1048576:.1f} MB",
+                        end="", flush=True,
+                    )
+    print()
+    if expect and done < expect:
+        raise IOError(f"下载不完整: {done}/{expect} 字节")
+
+
 def download(url: str, dest: Path) -> Path:
-    """流式下载到 dest(临时文件 + 原子改名,失败不留半截文件)。"""
+    """流式下载到 dest,支持 504/断流重试与 Range 续传。
+
+    直链反复失败时改走 api.github.com 的 asset 端点(另一套网关)。
+    完成后原子改名;失败则把 `.part` 留在原地,同一次运行内的后续重试可以接着下。
+    sha256 校验在调用方做 —— 拼接错了会被它兜住。
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"  下载 {url}")
-    with urllib.request.urlopen(url) as resp, open(tmp, "wb") as f:  # noqa: S310
-        total = int(resp.headers.get("Content-Length") or 0)
-        done = 0
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            if total:
-                print(f"\r  {done / 1048576:6.1f} / {total / 1048576:.1f} MB", end="", flush=True)
-    print()
-    tmp.replace(dest)
-    return dest
+
+    # (url, 是否需要 Accept: application/octet-stream);API 端点必须带这个头
+    attempts: list[tuple[str, bool]] = [(url, False)]
+    last_err: Exception | None = None
+
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        target, octet = attempts[-1]
+        try:
+            _fetch_once(target, tmp, octet)
+            tmp.replace(dest)
+            return dest
+        except urllib.error.HTTPError as e:
+            # 4xx(429 除外)说明这个 URL 就是错的,重试没有意义
+            if 400 <= e.code < 500 and e.code != 429:
+                raise
+            last_err = e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+
+        # 直链连续两次没过 → 换 api.github.com 那套网关再试(只换一次)
+        if len(attempts) == 1 and attempt >= 2 and not octet:
+            try:
+                alt = _github_api_asset_url(url)
+            except Exception as e:  # 换路本身失败不算错,继续重试原链路
+                print(f"\n  [备选] 取 asset 端点失败: {e}")
+                alt = None
+            if alt:
+                print(f"\n  [备选] 改用 api.github.com 资产端点")
+                attempts.append((alt, True))
+                continue
+
+        have = tmp.stat().st_size if tmp.is_file() else 0
+        wait = min(2 ** attempt, 30)
+        print(
+            f"\n  [重试 {attempt}/{DOWNLOAD_RETRIES}] {last_err}"
+            f" (已有 {have / 1048576:.1f} MB,{wait}s 后继续)"
+        )
+        time.sleep(wait)
+
+    raise RuntimeError(f"下载失败(已重试 {DOWNLOAD_RETRIES} 次): {url}: {last_err}")
 
 
 def load_manifest(base_url: str) -> dict:
     try:
-        with urllib.request.urlopen(f"{base_url}/{MANIFEST_NAME}") as resp:  # noqa: S310
+        with urllib.request.urlopen(  # noqa: S310
+            f"{base_url}/{MANIFEST_NAME}", timeout=DOWNLOAD_TIMEOUT
+        ) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         print(f"[assets] 警告: 拿不到 {MANIFEST_NAME}({e}),跳过 sha256 校验")
