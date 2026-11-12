@@ -71,6 +71,10 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 | --- | --- |
 | <img src="docs/screenshots/chat.png" width="440"> | <img src="docs/screenshots/danmaku.png" width="440"> |
 
+| Daily journal | Memory store |
+| --- | --- |
+| <img src="docs/screenshots/journal_new1.png" width="440"> | <img src="docs/screenshots/journal_new2.png" width="440"> |
+
 ### 🔍 Tool calls fully visible
 
 In most agent harnesses all you see is "it thought for a while" — which tool it called, what arguments it passed, what came back, why it failed: a black box you can only guess about. Symbix lays every step out in the chat stream: **tool name, arguments, raw output, duration, pass/fail and the error reason are all logged**, and the behaviour timeline lets you walk back through exactly what it did.

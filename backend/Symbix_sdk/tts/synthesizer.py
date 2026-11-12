@@ -235,14 +235,19 @@ class EdgeProvider(TTSProvider):
 # ---------------- OpenAI 兼容云端(自建网关/中转) ----------------
 
 class OpenAICompatTTSProvider(TTSProvider):
-    """OpenAI 兼容 POST {base_url}/audio/speech。
+    """OpenAI 兼容 POST {endpoint}。
 
     适用于自建中转/网关(one-api / new-api / vllm / 自建 TTS 服务),
     只要实现 OpenAI 同款接口即可。用 httpx 直调,不依赖 openai SDK。
+
+    请求地址以用户填的 base_url 为基准(见 endpoint()):填到 API 根
+    (如 `https://host/v1`)时补上标准的 `/audio/speech`,而已写成完整
+    路径的地址原样使用 —— 不再无条件拼 `/v1/audio/speech`。
     """
 
     name = "openai"
     cloud = True
+    DEFAULT_BASE = "https://api.openai.com/v1"
 
     PRESET_VOICES = [
         {"value": "alloy", "label": "alloy"},
@@ -260,12 +265,27 @@ class OpenAICompatTTSProvider(TTSProvider):
 
     def __init__(self, api_key: str = "", base_url: str = "", model: str = "tts-1") -> None:
         self.api_key = api_key
-        self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        self.base_url = (base_url or self.DEFAULT_BASE).rstrip("/")
         self.model = model or "tts-1"
+
+    def endpoint(self) -> str:
+        """实际发请求的 URL,以用户的 base_url 为基准。
+
+        - 已写到 `/audio/speech` → 原样用
+        - 停在 API 根(官方 `.../v1`、one-api/new-api 的 `.../v1`、少数 `.../v2`)
+          → 补 OpenAI 标准的 `/audio/speech`
+        - 其它(用户自己填了完整业务路径)→ 原样用
+        """
+        url = self.base_url
+        if url.endswith("/audio/speech"):
+            return url
+        if re.search(r"/v\d+$", url):
+            return url + "/audio/speech"
+        return url
 
     def available(self) -> bool:
         # 配了 base_url 即视为可用(匿名自建服务也可以);官方则必须有 key
-        if self.base_url == "https://api.openai.com/v1":
+        if self.base_url == self.DEFAULT_BASE:
             return bool(self.api_key)
         return bool(self.base_url)
 
@@ -277,8 +297,6 @@ class OpenAICompatTTSProvider(TTSProvider):
             import httpx
         except Exception as e:
             raise TTSProviderError(f"httpx 未安装: {e}") from e
-
-        url = f"{self.base_url}/audio/speech"
         headers = {"Accept": "audio/*"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -289,13 +307,14 @@ class OpenAICompatTTSProvider(TTSProvider):
             "speed": max(0.25, min(4.0, float(speed))),
             "response_format": "mp3",
         }
+        url = self.endpoint()
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 r = await client.post(url, headers=headers, json=body)
         except Exception as e:
-            raise TTSProviderError(f"OpenAI TTS 请求失败: {e}") from e
+            raise TTSProviderError(f"OpenAI TTS 请求失败({url}): {e}") from e
         if r.status_code != 200:
-            raise TTSProviderError(f"OpenAI TTS 返回 {r.status_code}: {r.text[:300]}")
+            raise TTSProviderError(f"OpenAI TTS 返回 {r.status_code}({url}): {r.text[:300]}")
         audio = r.content
         if not audio:
             raise TTSProviderError("OpenAI TTS 返回空音频")
@@ -485,6 +504,9 @@ class TTSEngine:
                 if isinstance(healed, TTSResult):
                     return healed
                 errors.append(healed or f"{name}: {e}")
+        # 指定引擎试听时实际只跑了一个,别写成「所有引擎」让人以为试过降级链
+        if engine:
+            raise TTSProviderError(f"TTS 引擎 {engine} 失败 → " + "; ".join(errors))
         raise TTSProviderError("所有 TTS 引擎均失败 → " + "; ".join(errors))
 
     async def _edge_selfheal(

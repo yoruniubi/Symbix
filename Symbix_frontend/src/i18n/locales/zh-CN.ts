@@ -662,6 +662,7 @@ export default {
     voicePreview: '试听',
     voicePreviewText: '你好,这是 Symbix 语音合成试听。',
     voicePreviewFail: '试听失败',
+    ttsPreviewHint: '试听只用当前主引擎,不会自动降级;配错会直接报错',
     voiceLoadFail: '语音配置加载失败',
     voiceSaved: '语音配置已保存',
     voiceEngineAvail: '可用',

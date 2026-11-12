@@ -171,6 +171,29 @@ nav {
     width: 18px;
     height: 18px;
 }
+/* 语言切换:与主题按钮同尺寸口径,但文字要放下 EN / 中 */
+.lang-toggle {
+    min-width: 44px;
+    height: 38px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-2);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: border-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+.lang-toggle:hover {
+    border-color: var(--accent);
+    color: var(--accent-deep);
+}
 .btn {
     display: inline-flex;
     align-items: center;
@@ -439,6 +462,21 @@ section {
     max-width: 100%;
     margin: 0 auto;
 }
+/* 手账:同一张卡里并排「手账页 / 记忆库页」两张竖长图,各占一半 */
+.shot.duo {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: start;
+    justify-items: center;
+}
+.shot.duo img.tall {
+    max-height: 440px;
+}
+.shot.duo figcaption {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+}
 
 /* ---- 平台表:白卡 + 暖发丝线 ---- */
 .platforms {
@@ -575,6 +613,16 @@ footer a:hover {
     .grid {
         grid-template-columns: 1fr;
     }
+    /* 手机上两张并排太小,退回上下排列 */
+    .shot.duo {
+        grid-template-columns: 1fr;
+    }
+    /* 窄屏少一个 nav-links 却多了语言按钮,这里收紧一点避免顶出横向滚动 */
+    .lang-toggle {
+        min-width: 36px;
+        padding: 0 6px;
+        font-size: 12px;
+    }
     section {
         padding: 48px 0;
     }
@@ -583,6 +631,23 @@ footer a:hover {
     }
 }
 </style>
+<script src="./zh-CN.js"></script>
+<script src="./en.js"></script>
+<script>
+// 语言:记忆的选择 > 浏览器偏好 > 中文默认(与 <html lang> 初值一致)。
+// 这里只落定 <html> 属性,真正替换文案在 </body> 前统一做一次,避免闪烁。
+(function () {
+    var m = null;
+    try { m = localStorage.getItem('symbix-landing-lang'); } catch (e) {}
+    if (!m) {
+        var nav = (navigator.language || '').toLowerCase();
+        m = nav.indexOf('zh') === 0 ? 'zh-CN' : 'en';
+    }
+    if (!window.SYMBIX_I18N || !window.SYMBIX_I18N[m]) m = 'zh-CN';
+    document.documentElement.setAttribute('data-lang', m);
+    document.documentElement.setAttribute('lang', m);
+})();
+</script>
 </head>
 <body>
 
@@ -593,10 +658,10 @@ footer a:hover {
             Symbix
         </a>
         <div class="nav-links">
-            <a href="#pipeline">怎么干活</a>
-            <a href="#features">核心亮点</a>
-            <a href="#preview">界面预览</a>
-            <a href="#download">下载</a>
+            <a href="#pipeline" data-i18n="nav.pipeline">怎么干活</a>
+            <a href="#features" data-i18n="nav.features">核心亮点</a>
+            <a href="#preview" data-i18n="nav.preview">界面预览</a>
+            <a href="#download" data-i18n="nav.download">下载</a>
             <a href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener">GitHub</a>
         </div>
         <div class="nav-actions">
@@ -604,64 +669,65 @@ footer a:hover {
                 <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/></svg>
             </button>
-            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">下载</a>
+            <button class="lang-toggle" id="lang-toggle" type="button" aria-label="切换语言" data-i18n-aria="nav.langToggle">EN</button>
+            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener" data-i18n="nav.downloadBtn">下载</a>
         </div>
     </div>
 </nav>
 
 <header class="hero">
     <div class="wrap">
-        <h1>陪你聊天的 <em>桌宠</em><br>替你干活的<em>智能体</em></h1>
-        <p class="sub">丢给它一堆论文、报告、表格 —— 它自己检索、精读、归纳,交给你一份排版好的成品文件。全程自然对话驱动,每一步留痕、可回溯、可撤销。</p>
+        <h1 data-i18n-html="hero.titleHtml">陪你聊天的 <em>桌宠</em><br>替你干活的<em>智能体</em></h1>
+        <p class="sub" data-i18n="hero.sub">丢给它一堆论文、报告、表格 —— 它自己检索、精读、归纳,交给你一份排版好的成品文件。全程自然对话驱动,每一步留痕、可回溯、可撤销。</p>
         <div class="cta">
-            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>免费下载</a>
-            <a class="btn btn-ghost" href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>GitHub 仓库</a>
+            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener" data-i18n="hero.ctaDownload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>免费下载</a>
+            <a class="btn btn-ghost" href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener" data-i18n="hero.ctaGithub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>GitHub 仓库</a>
         </div>
         <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="badges">
-            <span class="badge">Windows x64</span>
-            <span class="badge">macOS Apple Silicon</span>
-            <span class="badge">Linux x64</span>
-            <span class="badge">中英双语</span>
-            <span class="badge">数据全本地</span>
+            <span class="badge" data-i18n="badges.0">Windows x64</span>
+            <span class="badge" data-i18n="badges.1">macOS Apple Silicon</span>
+            <span class="badge" data-i18n="badges.2">Linux x64</span>
+            <span class="badge" data-i18n="badges.3">中英双语</span>
+            <span class="badge" data-i18n="badges.4">数据全本地</span>
         </div>
     </div>
 </header>
 
 <section id="pipeline">
     <div class="wrap">
-        <h2 class="sec-title">一句话,全流程无人值守</h2>
-        <p class="sec-sub">「帮我整理 XX 方向的近期工作」—— 你只管提需求和挑格式</p>
+        <h2 class="sec-title" data-i18n="pipeline.title">一句话,全流程无人值守</h2>
+        <p class="sec-sub" data-i18n="pipeline.sub">「帮我整理 XX 方向的近期工作」—— 你只管提需求和挑格式</p>
         <div class="pipeline">
             <div class="step">
                 <div class="paw" aria-hidden="true"></div>
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
-                <div class="name">找</div>
-                <div class="desc">学术库检索,多分身并行速读筛掉不相关</div>
+                <div class="name" data-i18n="pipeline.steps.0.name">找</div>
+                <div class="desc" data-i18n="pipeline.steps.0.desc">学术库检索,多分身并行速读筛掉不相关</div>
             </div>
             <div class="step">
                 <div class="paw" aria-hidden="true"></div>
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></div>
-                <div class="name">下</div>
-                <div class="desc">取回 PDF 原文,登录墙也能翻过去</div>
+                <div class="name" data-i18n="pipeline.steps.1.name">下</div>
+                <div class="desc" data-i18n="pipeline.steps.1.desc">取回 PDF 原文,登录墙也能翻过去</div>
             </div>
             <div class="step">
                 <div class="paw" aria-hidden="true"></div>
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
-                <div class="name">读</div>
-                <div class="desc">分章节精读正文与表格,扫描件走 OCR</div>
+                <div class="name" data-i18n="pipeline.steps.2.name">读</div>
+                <div class="desc" data-i18n="pipeline.steps.2.desc">分章节精读正文与表格,扫描件走 OCR</div>
             </div>
             <div class="step">
                 <div class="paw" aria-hidden="true"></div>
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
-                <div class="name">写</div>
-                <div class="desc">结构化中文综述,对比表格一个不少</div>
+                <div class="name" data-i18n="pipeline.steps.3.name">写</div>
+                <div class="desc" data-i18n="pipeline.steps.3.desc">结构化中文综述,对比表格一个不少</div>
             </div>
             <div class="step">
                 <div class="paw" aria-hidden="true"></div>
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 9.4L7.55 4.24"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
-                <div class="name">交</div>
-                <div class="desc">Word / PPT / Excel / PDF 成品直接拿走</div>
+                <div class="name" data-i18n="pipeline.steps.4.name">交</div>
+                <div class="desc" data-i18n="pipeline.steps.4.desc">Word / PPT / Excel / PDF 成品直接拿走</div>
             </div>
         </div>
     </div>
@@ -669,78 +735,78 @@ footer a:hover {
 
 <section id="features">
     <div class="wrap">
-        <h2 class="sec-title">它不止是桌面上会跳会跑的小可爱</h2>
-        <p class="sec-sub">陪伴与干活,同一只</p>
+        <h2 class="sec-title" data-i18n="features.title">它不止是桌面上会跳会跑的小可爱</h2>
+        <p class="sec-sub" data-i18n="features.sub">陪伴与干活,同一只</p>
         <div class="grid">
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg></div>
-                <h3>交付成品,不只是答案</h3>
-                <p>直接给你排好版的 Word / PPT / Excel / PDF,拿到手就能发出去。</p>
+                <h3 data-i18n="features.items.0.t">交付成品,不只是答案</h3>
+                <p data-i18n="features.items.0.d">直接给你排好版的 Word / PPT / Excel / PDF,拿到手就能发出去。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/></svg></div>
-                <h3>任何格式,进出自如</h3>
-                <p>论文、报告、表格、讲义都读得懂,扫描件 PDF 也有 OCR 兜底;想变什么格式,一句话的事。</p>
+                <h3 data-i18n="features.items.1.t">任何格式,进出自如</h3>
+                <p data-i18n="features.items.1.d">论文、报告、表格、讲义都读得懂,扫描件 PDF 也有 OCR 兜底;想变什么格式,一句话的事。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
-                <h3>会分工的智能体</h3>
-                <p>复杂任务先派多个分身并行推进再汇总;不是单线程聊天机器人。</p>
+                <h3 data-i18n="features.items.2.t">会分工的智能体</h3>
+                <p data-i18n="features.items.2.d">复杂任务先派多个分身并行推进再汇总;不是单线程聊天机器人。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11.5 11 13.5 15 9.5"/></svg></div>
-                <h3>先问再做,不擅自动手</h3>
-                <p>多步任务先递计划等你点头;要动手改东西时弹审批卡,纯读取的自己跑。嫌确认烦?开 auto-pilot 一路绿灯。</p>
+                <h3 data-i18n="features.items.3.t">先问再做,不擅自动手</h3>
+                <p data-i18n="features.items.3.d">多步任务先递计划等你点头;要动手改东西时弹审批卡,纯读取的自己跑。嫌确认烦?开 auto-pilot 一路绿灯。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></div>
-                <h3>干过的活都能找回</h3>
-                <p>每一步留痕,diff 一眼看清改了什么;改错一键还原,新建的文件也能撤。</p>
+                <h3 data-i18n="features.items.4.t">干过的活都能找回</h3>
+                <p data-i18n="features.items.4.d">每一步留痕,diff 一眼看清改了什么;改错一键还原,新建的文件也能撤。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
-                <h3>工具调用全程可视</h3>
-                <p>调了哪个工具、入参是什么、拿回什么、耗时多久、为什么失败 —— 全摊在聊天流里,不是黑盒,出事对着看就能 debug。</p>
+                <h3 data-i18n="features.items.5.t">工具调用全程可视</h3>
+                <p data-i18n="features.items.5.d">调了哪个工具、入参是什么、拿回什么、耗时多久、为什么失败 —— 全摊在聊天流里,不是黑盒,出事对着看就能 debug。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div>
-                <h3>记得住你</h3>
-                <p>长期记忆 + 每日手账,关掉再开还是它,不用每次从头交代。</p>
+                <h3 data-i18n="features.items.6.t">记得住你</h3>
+                <p data-i18n="features.items.6.d">长期记忆 + 每日手账,关掉再开还是它,不用每次从头交代。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-                <h3>定时任务说人话就行</h3>
-                <p>「每天早上八点提醒我吃药」它就懂,跑失败自动重试并通知你。</p>
+                <h3 data-i18n="features.items.7.t">定时任务说人话就行</h3>
+                <p data-i18n="features.items.7.d">「每天早上八点提醒我吃药」它就懂,跑失败自动重试并通知你。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1.5a2 2 0 0 0 0-4H12a2 2 0 0 1-2-2 2 2 0 0 1 2-2h5a4 4 0 0 0 4-4 8 8 0 0 0-9-6z"/><circle cx="7.5" cy="10.5" r="0.6"/><circle cx="12" cy="7.5" r="0.6"/><circle cx="16.5" cy="10.5" r="0.6"/></svg></div>
-                <h3>能给自己换皮肤</h3>
-                <p>描述想要的样子,它自己画形象、做动作、打包成能导入的桌宠皮肤。</p>
+                <h3 data-i18n="features.items.8.t">能给自己换皮肤</h3>
+                <p data-i18n="features.items.8.d">描述想要的样子,它自己画形象、做动作、打包成能导入的桌宠皮肤。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></div>
-                <h3>花销一目了然</h3>
-                <p>每轮 token 用量实时显示,日 / 周 / 月汇总一张图表看尽。</p>
+                <h3 data-i18n="features.items.9.t">花销一目了然</h3>
+                <p data-i18n="features.items.9.d">每轮 token 用量实时显示,日 / 周 / 月汇总一张图表看尽。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></div>
-                <h3>能听会说</h3>
-                <p>语音识别跑在你自己电脑上,不联网不上传;朗读一句一句流着念。</p>
+                <h3 data-i18n="features.items.10.t">能听会说</h3>
+                <p data-i18n="features.items.10.d">语音识别跑在你自己电脑上,不联网不上传;朗读一句一句流着念。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><path d="M17 13v6"/><path d="M14 16h6"/></svg></div>
-                <h3>能力没有上限</h3>
-                <p>31 个内置工具 + 技能包 + MCP 外部能力,接上什么它就是什么。</p>
+                <h3 data-i18n="features.items.11.t">能力没有上限</h3>
+                <p data-i18n="features.items.11.d">31 个内置工具 + 技能包 + MCP 外部能力,接上什么它就是什么。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
-                <h3>它会主动来找你</h3>
-                <p>没事搭句话,一半概率翻你的记忆聊旧事;点一下气泡直接进聊天,它先开口、你来接。</p>
+                <h3 data-i18n="features.items.12.t">它会主动来找你</h3>
+                <p data-i18n="features.items.12.d">没事搭句话,一半概率翻你的记忆聊旧事;点一下气泡直接进聊天,它先开口、你来接。</p>
             </div>
             <div class="card">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="6.5" cy="8.5" r="2"/><circle cx="12" cy="6.5" r="2"/><circle cx="17.5" cy="8.5" r="2"/><path d="M12 11c-3.2 0-5.8 2.4-5.8 4.9 0 1.7 1.3 3 2.9 3 1 0 1.9-.5 2.9-.5s1.9.5 2.9.5c1.6 0 2.9-1.3 2.9-3C17.8 13.4 15.2 11 12 11z"/></svg></div>
-                <h3>它是桌宠,不是网页</h3>
-                <p>常驻桌面、透明穿透、会跳会跑会冒气泡陪你。</p>
+                <h3 data-i18n="features.items.13.t">它是桌宠,不是网页</h3>
+                <p data-i18n="features.items.13.d">常驻桌面、透明穿透、会跳会跑会冒气泡陪你。</p>
             </div>
         </div>
     </div>
@@ -748,40 +814,41 @@ footer a:hover {
 
 <section id="preview">
     <div class="wrap">
-        <h2 class="sec-title">看看它长什么样</h2>
-        <p class="sec-sub">桌宠、聊天、弹幕、手账 —— 都是常驻在你桌面上的真窗口</p>
+        <h2 class="sec-title" data-i18n="preview.title">看看它长什么样</h2>
+        <p class="sec-sub" data-i18n="preview.sub">桌宠、聊天、弹幕、手账 —— 都是常驻在你桌面上的真窗口</p>
         <div class="shots">
             <figure class="shot lead">
-                <img src="./screenshots/demo.gif" alt="Symbix 主界面动图:桌宠在桌面上活动,聊天窗口处理任务" loading="lazy">
-                <figcaption>主界面:桌宠常驻桌面,一句话派活,成品文件直接交</figcaption>
+                <img src="./screenshots/demo.gif" alt="Symbix 主界面动图:桌宠在桌面上活动,聊天窗口处理任务" loading="lazy" data-i18n-alt="preview.shots.0.alt">
+                <figcaption data-i18n="preview.shots.0.cap">主界面:桌宠常驻桌面,一句话派活,成品文件直接交</figcaption>
             </figure>
             <figure class="shot lead">
-                <img src="./screenshots/tool_use.png" alt="工具调用全程可视:工具名、入参、出参、耗时与错误原因都摊在聊天流里" loading="lazy">
-                <figcaption>工具调用全程可视:调了哪个工具、传了什么、拿回什么、为什么失败,对着看就能 debug</figcaption>
+                <img src="./screenshots/tool_use.png" alt="工具调用全程可视:工具名、入参、出参、耗时与错误原因都摊在聊天流里" loading="lazy" data-i18n-alt="preview.shots.1.alt">
+                <figcaption data-i18n="preview.shots.1.cap">工具调用全程可视:调了哪个工具、传了什么、拿回什么、为什么失败,对着看就能 debug</figcaption>
             </figure>
             <figure class="shot">
-                <img src="./screenshots/chat.png" alt="聊天窗口:流式对话、工具执行步骤与审批卡" loading="lazy">
-                <figcaption>聊天窗口:流式对话,每一步工具调用看得见</figcaption>
+                <img src="./screenshots/chat.png" alt="聊天窗口:流式对话、工具执行步骤与审批卡" loading="lazy" data-i18n-alt="preview.shots.2.alt">
+                <figcaption data-i18n="preview.shots.2.cap">聊天窗口:流式对话,每一步工具调用看得见</figcaption>
             </figure>
             <figure class="shot">
-                <img src="./screenshots/danmaku.png" alt="陪伴弹幕窗:透明全屏飘字,主动搭话气泡" loading="lazy">
-                <figcaption>陪伴弹幕窗:透明穿透,它没事会主动来找你</figcaption>
+                <img src="./screenshots/danmaku.png" alt="陪伴弹幕窗:透明全屏飘字,主动搭话气泡" loading="lazy" data-i18n-alt="preview.shots.3.alt">
+                <figcaption data-i18n="preview.shots.3.cap">陪伴弹幕窗:透明穿透,它没事会主动来找你</figcaption>
             </figure>
             <figure class="shot">
-                <img src="./screenshots/skin-studio.png" alt="皮肤工坊:桌宠形象与动作管理" loading="lazy">
-                <figcaption>皮肤工坊:描述想要的样子,它自己画形象做动作</figcaption>
+                <img src="./screenshots/skin-studio.png" alt="皮肤工坊:桌宠形象与动作管理" loading="lazy" data-i18n-alt="preview.shots.4.alt">
+                <figcaption data-i18n="preview.shots.4.cap">皮肤工坊:描述想要的样子,它自己画形象做动作</figcaption>
+            </figure>
+            <figure class="shot duo">
+                <img class="tall" src="./screenshots/journal_new1.png" alt="手账页:今天记住的事与 AI 的小巧思" loading="lazy" data-i18n-alt="preview.shots.5.alt">
+                <img class="tall" src="./screenshots/journal_new2.png" alt="记忆库页:全部记忆按约束 / 个人信息 / 项目记忆分类,可搜索" loading="lazy" data-i18n-alt="preview.shots.5.alt2">
+                <figcaption data-i18n="preview.shots.5.cap">手账 + 记忆库:它记得你们之间发生过什么,翻得到也搜得着</figcaption>
             </figure>
             <figure class="shot">
-                <img class="tall" src="./screenshots/journal.png" alt="每日手账窗口:记忆与小巧思" loading="lazy">
-                <figcaption>每日手账:它记得你们之间发生过什么</figcaption>
+                <img class="tall" src="./screenshots/panel-timeline.png" alt="行为时间线面板:每步操作留痕可回溯" loading="lazy" data-i18n-alt="preview.shots.6.alt">
+                <figcaption data-i18n="preview.shots.6.cap">行为时间线:干过的活每步留痕,一键回溯</figcaption>
             </figure>
             <figure class="shot">
-                <img class="tall" src="./screenshots/panel-timeline.png" alt="行为时间线面板:每步操作留痕可回溯" loading="lazy">
-                <figcaption>行为时间线:干过的活每步留痕,一键回溯</figcaption>
-            </figure>
-            <figure class="shot">
-                <img class="tall" src="./screenshots/panel-risk.png" alt="工具风险分级面板:审批策略随你调" loading="lazy">
-                <figcaption>工具风险面板:哪些自动跑、哪些先问,由你定</figcaption>
+                <img class="tall" src="./screenshots/panel-risk.png" alt="工具风险分级面板:审批策略随你调" loading="lazy" data-i18n-alt="preview.shots.7.alt">
+                <figcaption data-i18n="preview.shots.7.cap">工具风险面板:哪些自动跑、哪些先问,由你定</figcaption>
             </figure>
         </div>
     </div>
@@ -789,15 +856,15 @@ footer a:hover {
 
 <section id="download">
     <div class="wrap">
-        <h2 class="sec-title">下载</h2>
-        <p class="sec-sub">安装即用,语音识别模型与运行时都打包在内</p>
+        <h2 class="sec-title" data-i18n="download.title">下载</h2>
+        <p class="sec-sub" data-i18n="download.sub">安装即用,语音识别模型与运行时都打包在内</p>
         <div class="platforms">
             <table>
-                <tr><th>平台</th><th>安装包</th><th>本地语音识别</th></tr>
+                <tr><th data-i18n="download.th1">平台</th><th data-i18n="download.th2">安装包</th><th data-i18n="download.th3">本地语音识别</th></tr>
                 <tr><td>Windows x64</td><td><a class="ok" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">.exe (NSIS)</a></td><td class="ok">✅</td></tr>
                 <tr><td>macOS Apple Silicon</td><td><a class="ok" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">.dmg</a></td><td class="ok">✅</td></tr>
                 <tr><td>Linux x64</td><td><a class="ok" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener">.deb</a></td><td class="ok">✅</td></tr>
-                <tr><td>macOS Intel</td><td class="no">暂不支持</td><td class="no">—</td></tr>
+                <tr><td>macOS Intel</td><td class="no" data-i18n="download.unsupported">暂不支持</td><td class="no">—</td></tr>
             </table>
         </div>
     </div>
@@ -805,13 +872,13 @@ footer a:hover {
 
 <section>
     <div class="wrap">
-        <h2 class="sec-title">在你自己的电脑上跑</h2>
-        <p class="sec-sub">所有对话与记忆都留在本地 —— Tauri 2 桌面壳 + FastAPI 后端 + 自研 Agent SDK</p>
+        <h2 class="sec-title" data-i18n="arch.title">在你自己的电脑上跑</h2>
+        <p class="sec-sub" data-i18n="arch.sub">所有对话与记忆都留在本地 —— Tauri 2 桌面壳 + FastAPI 后端 + 自研 Agent SDK</p>
         <div class="arch">
-            <div class="layer"><b>Tauri 2 桌面壳</b> — <span>Vue 3 + TypeScript + naive-ui 界面 · PixiJS 渲染桌宠 · 透明窗口 / 鼠标穿透 / 多窗口</span></div>
-            <div class="layer"><b>FastAPI 后端</b> — <span>流式对话 · 审批卡 · 会话 · Checkpoint · 定时任务 · 语音</span></div>
-            <div class="layer"><b>Symbix Agent SDK</b> — <span>Agent 循环 · 31 工具 · 风险分级 · 记忆 RAG · 技能 · MCP · OCR 兜底</span></div>
-            <div class="layer"><b>本地数据</b> — <span>SQLite 记忆与手账 · 行为时间线 · 一键回溯还原</span></div>
+            <div class="layer"><b data-i18n="arch.layers.0.name">Tauri 2 桌面壳</b> — <span data-i18n="arch.layers.0.desc">Vue 3 + TypeScript + naive-ui 界面 · PixiJS 渲染桌宠 · 透明窗口 / 鼠标穿透 / 多窗口</span></div>
+            <div class="layer"><b data-i18n="arch.layers.1.name">FastAPI 后端</b> — <span data-i18n="arch.layers.1.desc">流式对话 · 审批卡 · 会话 · Checkpoint · 定时任务 · 语音</span></div>
+            <div class="layer"><b data-i18n="arch.layers.2.name">Symbix Agent SDK</b> — <span data-i18n="arch.layers.2.desc">Agent 循环 · 31 工具 · 风险分级 · 记忆 RAG · 技能 · MCP · OCR 兜底</span></div>
+            <div class="layer"><b data-i18n="arch.layers.3.name">本地数据</b> — <span data-i18n="arch.layers.3.desc">SQLite 记忆与手账 · 行为时间线 · 一键回溯还原</span></div>
         </div>
     </div>
 </section>
@@ -819,11 +886,11 @@ footer a:hover {
 <div class="cta-final">
     <div class="wrap">
         <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
-        <h2>让 AI 陪你生活,也替你干活。</h2>
-        <p>免费开源,MIT 协议。</p>
+        <h2 data-i18n="final.title">让 AI 陪你生活,也替你干活。</h2>
+        <p data-i18n="final.sub">免费开源,MIT 协议。</p>
         <div class="cta">
-            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>立即下载</a>
-            <a class="btn btn-ghost" href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>查看源码</a>
+            <a class="btn btn-primary grad" href="https://github.com/yoruniubi/Symbix/releases" target="_blank" rel="noopener" data-i18n="final.ctaDownload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>立即下载</a>
+            <a class="btn btn-ghost" href="https://github.com/yoruniubi/Symbix" target="_blank" rel="noopener" data-i18n="final.ctaSource"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>查看源码</a>
         </div>
     </div>
 </div>
@@ -838,25 +905,98 @@ footer a:hover {
 </footer>
 
 <script>
-// 亮暗切换:记忆选择(localStorage),与 theme.ts 的 data-theme 约定一致
+// 亮暗切换 + 语言切换:两个选择都记忆在 localStorage,与前端 theme.ts / i18n 的约定一致
 (function () {
     var root = document.documentElement;
-    var KEY = 'symbix-landing-theme';
-    var btn = document.getElementById('theme-toggle');
+    var THEME_KEY = 'symbix-landing-theme';
+    var LANG_KEY = 'symbix-landing-lang';
+    var themeBtn = document.getElementById('theme-toggle');
     var sun = document.getElementById('icon-sun');
     var moon = document.getElementById('icon-moon');
-    function apply(mode) {
-        root.setAttribute('data-theme', mode);
-        try { localStorage.setItem(KEY, mode); } catch (e) {}
-        var dark = mode === 'dark';
-        sun.style.display = dark ? 'block' : 'none';
-        moon.style.display = dark ? 'none' : 'block';
-        btn.setAttribute('aria-label', dark ? '切换到亮色模式' : '切换到暗色模式');
+    var langBtn = document.getElementById('lang-toggle');
+
+    function dictFor(lang) {
+        var all = window.SYMBIX_I18N || {};
+        return all[lang] || all['zh-CN'] || {};
     }
-    apply(root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
-    btn.addEventListener('click', function () {
-        apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
-    });
+    function pick(lang, path) {
+        return path.split('.').reduce(function (a, k) {
+            return a == null ? undefined : a[k];
+        }, dictFor(lang));
+    }
+
+    function applyTheme(mode) {
+        root.setAttribute('data-theme', mode);
+        try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}
+        var dark = mode === 'dark';
+        if (sun) sun.style.display = dark ? 'block' : 'none';
+        if (moon) moon.style.display = dark ? 'none' : 'block';
+        if (themeBtn) {
+            var label = pick(root.getAttribute('data-lang'), dark ? 'nav.themeToLight' : 'nav.themeToDark');
+            if (label) themeBtn.setAttribute('aria-label', label);
+        }
+    }
+
+    // 把字典里的文案铺到页面上:纯文本 / 富文本 / alt / aria-label
+    function applyLang(lang) {
+        var all = window.SYMBIX_I18N || {};
+        if (!all[lang]) lang = 'zh-CN';
+        root.setAttribute('data-lang', lang);
+        root.setAttribute('lang', lang);
+        try { localStorage.setItem(LANG_KEY, lang); } catch (e) {}
+
+        var d = all[lang] || {};
+        function get(path) {
+            return path.split('.').reduce(function (a, k) {
+                return a == null ? undefined : a[k];
+            }, d);
+        }
+
+        var els = document.querySelectorAll('[data-i18n]');
+        for (var i = 0; i < els.length; i++) {
+            var v = get(els[i].getAttribute('data-i18n'));
+            if (typeof v === 'string') els[i].textContent = v;
+        }
+        els = document.querySelectorAll('[data-i18n-html]');
+        for (var j = 0; j < els.length; j++) {
+            var hv = get(els[j].getAttribute('data-i18n-html'));
+            if (typeof hv === 'string') els[j].innerHTML = hv;
+        }
+        els = document.querySelectorAll('[data-i18n-alt]');
+        for (var k = 0; k < els.length; k++) {
+            var av = get(els[k].getAttribute('data-i18n-alt'));
+            if (typeof av === 'string') els[k].setAttribute('alt', av);
+        }
+        els = document.querySelectorAll('[data-i18n-aria]');
+        for (var m = 0; m < els.length; m++) {
+            var arv = get(els[m].getAttribute('data-i18n-aria'));
+            if (typeof arv === 'string') els[m].setAttribute('aria-label', arv);
+        }
+
+        if (d.meta) {
+            if (d.meta.title) document.title = d.meta.title;
+            var md = document.querySelector('meta[name="description"]');
+            if (md && d.meta.description) md.setAttribute('content', d.meta.description);
+        }
+        if (langBtn) langBtn.textContent = lang === 'zh-CN' ? 'EN' : '中';
+
+        // 语种换了,主题按钮的 aria-label 也要跟着换
+        applyTheme(root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+    }
+
+    applyTheme(root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+    applyLang(root.getAttribute('data-lang') || 'zh-CN');
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', function () {
+            applyTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+        });
+    }
+    if (langBtn) {
+        langBtn.addEventListener('click', function () {
+            applyLang(root.getAttribute('data-lang') === 'zh-CN' ? 'en' : 'zh-CN');
+        });
+    }
 })();
 </script>
 

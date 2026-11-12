@@ -74,6 +74,10 @@
 | --- | --- |
 | <img src="docs/screenshots/chat.png" width="440"> | <img src="docs/screenshots/danmaku.png" width="440"> |
 
+| 每日手账 | 记忆库 |
+| --- | --- |
+| <img src="docs/screenshots/journal_new1.png" width="440"> | <img src="docs/screenshots/journal_new2.png" width="440"> |
+
 ### 🔍 工具调用全程可视
 
 很多 Agent 框架里你只看得见「它想了一会儿」—— 到底调了哪个工具、传了什么参数、拿回什么、为什么失败,全是黑盒,出了问题只能靠猜。Symbix 把每一步都摊在聊天流里:**工具名、入参、返回内容、耗时、成败与错误原因都留痕**,再配合行为时间线,可以逐步回溯「它当时到底干了啥」。

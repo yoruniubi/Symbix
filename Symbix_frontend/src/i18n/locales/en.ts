@@ -663,6 +663,7 @@ export default {
     voicePreview: 'Preview',
     voicePreviewText: 'Hello, this is a Symbix voice preview.',
     voicePreviewFail: 'Preview failed',
+    ttsPreviewHint: 'Preview uses only the primary engine — no fallback, so a misconfiguration fails loudly',
     voiceLoadFail: 'Failed to load voice config',
     voiceSaved: 'Voice config saved',
     voiceEngineAvail: 'Ready',

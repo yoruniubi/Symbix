@@ -357,6 +357,7 @@
               v-model:value="ttsForm.priority0"
               :options="ttsPrimaryOptions"
               :placeholder="t('setting.ttsProviderPlaceholder')"
+              @update:value="fixTtsVoice"
             />
           </n-form-item>
           <n-form-item :label="t('setting.voiceSecondary')">
@@ -416,6 +417,7 @@
               </n-form-item>
             </n-collapse-item>
           </n-collapse>
+          <div class="hint-text tts-preview-hint">{{ t('setting.ttsPreviewHint') }}</div>
           <n-space justify="end" align="center">
             <n-button :loading="ttsPreviewing" @click="previewTts">{{ t('setting.voicePreview') }}</n-button>
             <n-button @click="resetTts">{{ t('setting.ttsReset') }}</n-button>
@@ -750,21 +752,37 @@ const sttSecondaryOptions = computed(() =>
       disabled: !info.available,
     })),
 )
+// 主/备引擎下拉:云端引擎的可用性还要看「当前表单填了什么」——
+// 用户刚填完 base_url/key 还没保存时,后端 status 里仍是不可用,
+// 选项会变灰 → 选不了引擎就无从试听。这里按后端 available() 的口径
+// (openai: 填了 base_url 或 key;custom: 填了任意一个地址)本地救活。
+function engineFilled(name: string): boolean {
+  const f = ttsForm.value
+  if (name === 'openai') return !!(f.openai_base_url.trim() || f.openai_api_key.trim())
+  if (name === 'custom') return !!f.custom_servers.trim()
+  return false
+}
 const ttsPrimaryOptions = computed(() =>
-  Object.entries(ttsStatus.value).map(([name, info]) => ({
-    label: `${TTS_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
-    value: name,
-    disabled: !info.available,
-  })),
+  Object.entries(ttsStatus.value).map(([name, info]) => {
+    const avail = info.available || engineFilled(name)
+    return {
+      label: `${TTS_ENGINE_LABELS[name] || name} — ${avail ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+      value: name,
+      disabled: !avail,
+    }
+  }),
 )
 const ttsSecondaryOptions = computed(() =>
   Object.entries(ttsStatus.value)
     .filter(([name]) => name !== ttsForm.value.priority0)
-    .map(([name, info]) => ({
-    label: `${TTS_ENGINE_LABELS[name] || name} — ${info.available ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
-    value: name,
-    disabled: !info.available,
-  })),
+    .map(([name, info]) => {
+      const avail = info.available || engineFilled(name)
+      return {
+        label: `${TTS_ENGINE_LABELS[name] || name} — ${avail ? t('setting.voiceEngineAvail') : t('setting.voiceEngineUnavail')}`,
+        value: name,
+        disabled: !avail,
+      }
+    }),
 )
 
 // 主引擎对应音色列表(edge/openai 不同)
@@ -983,10 +1001,18 @@ async function previewTts() {
   try {
     // 先保存当前设置,保证试听用新音色/语速
     await updateVoiceConfig({ tts: buildTtsPatch() })
-    const url = await previewTtsApi(t('setting.voicePreviewText'), ttsForm.value.speed)
+    // 只试听当前主引擎:云端配错时直接报错,而不是静默降级到备引擎
+    // (否则听到的是备引擎的声音,却以为云端已经配通了)
+    const url = await previewTtsApi(
+      t('setting.voicePreviewText'),
+      ttsForm.value.speed,
+      ttsForm.value.priority0,
+    )
     if (ttsAudio) { ttsAudio.pause(); ttsAudio = null }
     ttsAudio = new Audio(url)
+    // ended / error 都要回收,否则 blob URL 会一直挂着
     ttsAudio.onended = () => { URL.revokeObjectURL(url) }
+    ttsAudio.onerror = () => { URL.revokeObjectURL(url) }
     await ttsAudio.play()
   } catch (e) {
     // 后端把引擎失败原因放在 detail 里(可能很长,如 edge 403 的处置建议),用弹窗完整展示
@@ -1026,6 +1052,12 @@ async function previewTts() {
 .hint-text {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 试听按钮上方的说明:强调不降级,失败就是主引擎的真失败 */
+.tts-preview-hint {
+  text-align: right;
+  margin-bottom: 6px;
 }
 
 /* 版本号：比正文大一级、等宽字体，不用 tag 以免看着像可选状态 */
