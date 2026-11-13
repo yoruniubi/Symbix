@@ -179,13 +179,18 @@ def migrate_legacy_data() -> None:
     if not is_frozen():
         return
     root = data_root()
-    if (root / MIGRATION_MARKER).is_file():
-        return
+    first_run = not (root / MIGRATION_MARKER).is_file()
 
     copied = 0
     for dev_rel, sub in _LAYOUT.items():
         src = _BASE_DIR.joinpath(*dev_rel.split("/"))
         if not src.is_dir():
+            continue
+        # 已迁过的机器仍要回头补 config:早期构建有几份 json(voice/risk_trust/
+        # exec_whitelist/danmaku)没走 data_path,一直写在 _internal/ 里,升级就丢。
+        # 这里按「目标缺失才拷」幂等补齐,不覆盖用户在 data/ 里改过的值;
+        # config 只有几十个小文件,每次启动扫一遍的开销可忽略。
+        if not first_run and sub != "config":
             continue
         copied += _copy_missing(src, root / sub)
 
@@ -199,12 +204,14 @@ def migrate_legacy_data() -> None:
         pass
 
     try:
-        (root / MIGRATION_MARKER).write_text(
-            f"copied={copied}\n", encoding="utf-8"
-        )
+        if first_run:
+            (root / MIGRATION_MARKER).write_text(
+                f"copied={copied}\n", encoding="utf-8"
+            )
     except OSError as e:  # 写不了标记下次再试,不值得让启动失败
         print(f"[data] 迁移标记写入失败: {e}")
-    print(f"[data] 旧数据已迁至 {root}({copied} 个文件,源目录保留)")
+    if copied:
+        print(f"[data] 旧数据已迁至 {root}({copied} 个文件,源目录保留)")
 
 
 def _skills_signature(root: Path) -> str:

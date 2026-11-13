@@ -4,6 +4,7 @@ import os
 import time
 import threading
 from typing import Optional, TYPE_CHECKING
+from Symbix_sdk.app_paths import data_path
 from Symbix_sdk.tools.risk_classifier import (
     classify_tool_risk,
     ToolRiskLevel
@@ -167,11 +168,8 @@ class SessionTrust:
 
 # ---------- 会话信任持久化(config/risk_trust.json)----------
 
-# backend/application/services/risk_context.py → backend/Symbix_sdk/config/
-_TRUST_CONFIG_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "Symbix_sdk", "config", "risk_trust.json",
-))
+# 走 data_path:打包态是 <安装目录>/data/config,不再写进只读的 _internal/
+_TRUST_CONFIG_PATH = data_path("Symbix_sdk/config", "risk_trust.json")
 
 _trust_persist_lock = threading.Lock()
 _trust_loaded = False
@@ -267,11 +265,8 @@ def clear_session(session_id: str) -> None:
 
 # ---------- exec 命令白名单(配置制)----------
 
-# backend/application/services/risk_context.py → backend/Symbix_sdk/config/
-_EXEC_WHITELIST_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "Symbix_sdk", "config", "exec_whitelist.json",
-))
+# 走 data_path:打包态是 <安装目录>/data/config,不再写进只读的 _internal/
+_EXEC_WHITELIST_PATH = data_path("Symbix_sdk/config", "exec_whitelist.json")
 
 _exec_whitelist_cache: Optional[list] = None
 _exec_whitelist_lock = threading.Lock()

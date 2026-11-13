@@ -173,6 +173,10 @@ export interface VoiceConfigResp {
     openai_base_url: string
     openai_api_key: string
     openai_model: string
+    /** 非 OpenAI 形状的服务:自定义请求头(JSON 对象文本,空 = 不额外带) */
+    openai_extra_headers: string
+    /** 非 OpenAI 形状的服务:body 模板(JSON 文本,支持 {{text}} {{voice}} {{speed}}) */
+    openai_body_template: string
     edge_auto_update: boolean
   }
   stt: {
@@ -236,6 +240,101 @@ export async function previewTts(text: string, speed?: number, engine?: string):
   if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/tts'))
   const blob = await res.blob()
   return URL.createObjectURL(blob)
+}
+
+/** 探测云端语音服务的真实参数(OpenAPI 摘要 + 音色列表)。只读,不改配置。 */
+export interface ProbeField {
+  name: string
+  type: string
+  required: boolean
+  enum?: string[]
+  default?: unknown
+  description?: string
+}
+
+export interface ProbeEndpoint {
+  method: string
+  path: string
+  summary: string
+  params: { in: string; name: string; required: boolean }[]
+  content_types: string[]
+  fields: ProbeField[]
+  fields_source?: string
+}
+
+export interface ProbeTried {
+  url: string
+  status: number
+  note: string
+}
+
+export interface ProbeResult {
+  ok: boolean
+  error?: string
+  base_url?: string
+  origin?: string
+  spec?: {
+    found: boolean
+    url: string | null
+    title: string
+    version: string
+    servers: string[]
+    endpoints: ProbeEndpoint[]
+    tried: ProbeTried[]
+  }
+  voices?: {
+    found: boolean
+    url: string | null
+    total: number
+    items: { id: string; title: string }[]
+    tried: ProbeTried[]
+  }
+}
+
+/** 探测:拿服务的 OpenAPI 文档和音色列表。各家字段名不同,靠猜必错。 */
+export async function probeVoiceApi(baseUrl: string, apiKey = ''): Promise<ProbeResult> {
+  const res = await fetch(`${BACKEND_URL}/voice/probe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+  })
+  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/probe'))
+  return (await res.json()) as ProbeResult
+}
+
+/** 从一条能跑通的 curl 命令反解请求形状(header 已由后端脱敏)。 */
+export interface CurlDerivedConfig {
+  base_url: string
+  api_key: string
+  model: string
+  extra_headers: string
+  body_template: string
+}
+
+export interface CurlParseResult {
+  ok: boolean
+  error?: string
+  url?: string
+  method?: string
+  content_type?: string
+  headers?: Record<string, string>
+  fields?: { name: string; type: string; sample: string }[]
+  has_body?: boolean
+  body_preview?: string
+  warnings?: string[]
+  /** 后端直接把这条命令拆成了可直接保存的配置 */
+  config?: CurlDerivedConfig
+  notes?: string[]
+}
+
+export async function parseCurlApi(command: string): Promise<CurlParseResult> {
+  const res = await fetch(`${BACKEND_URL}/voice/parse-curl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command }),
+  })
+  if (!res.ok) throw new Error(await readErrorDetail(res, 'POST /voice/parse-curl'))
+  return (await res.json()) as CurlParseResult
 }
 
 /**

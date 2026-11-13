@@ -1,12 +1,17 @@
 from __future__ import annotations
 import asyncio
 import json
-import os.path as osp
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from Symbix_sdk.app_paths import data_path
 from Symbix_sdk.config.voice_config import VoiceConfigManager
-from Symbix_sdk.tts.synthesizer import tts_engine, TTSProviderError
+from Symbix_sdk.tts.api_probe import curl_to_config, probe as probe_tts_api
+from Symbix_sdk.tts.synthesizer import (
+    tts_engine,
+    TTSProviderError,
+    validate_custom_payload,
+)
 from Symbix_sdk.tts import edge_update
 from Symbix_sdk.stt.transcriber import (
     stt_engine,
@@ -16,11 +21,10 @@ from Symbix_sdk.stt.transcriber import (
 
 router = APIRouter(tags=["voice"])
 
-_CONFIG_PATH = osp.join(
-    osp.dirname(osp.abspath(__file__)),
-    "..", "..", "Symbix_sdk", "config", "voice_config.json",
+# 走 data_path:打包态是 <安装目录>/data/config,不再写进只读的 _internal/
+voice_cfg = VoiceConfigManager(
+    data_path("Symbix_sdk/config", "voice_config.json")
 )
-voice_cfg = VoiceConfigManager(_CONFIG_PATH)
 
 # 把配置热更新到引擎单例
 tts_engine.config = voice_cfg.tts
@@ -51,6 +55,14 @@ class VoiceConfigPatch(BaseModel):
 @router.post("/voice/config")
 async def update_voice_config(patch: VoiceConfigPatch):
     if patch.tts:
+        # 自定义头/body 模板先校验:写错 JSON 当场 400,别等点试听才炸
+        if "openai_extra_headers" in patch.tts or "openai_body_template" in patch.tts:
+            err = validate_custom_payload(
+                patch.tts.get("openai_extra_headers", voice_cfg.tts.openai_extra_headers),
+                patch.tts.get("openai_body_template", voice_cfg.tts.openai_body_template),
+            )
+            if err:
+                raise HTTPException(status_code=400, detail=err)
         voice_cfg.apply_tts_patch(patch.tts)
         tts_engine.config = voice_cfg.tts
         tts_engine.reload()  # 清 provider 缓存,让新 api_key/base_url 生效
@@ -107,6 +119,34 @@ async def edge_tts_upgrade():
     """立即升级 edge-tts。返回 {ok, detail, installed}。"""
     ok, detail = await asyncio.to_thread(edge_update.ensure_updated)
     return {"ok": ok, "detail": detail, "installed": edge_update.installed_version()}
+
+
+# ---------------- 云端服务参数探测 ----------------
+#
+# 各家字段名不统一(OpenAI 用 input/voice,fish 用 text/reference_id + header model),
+# 靠猜必错。这里直接问服务要 OpenAPI 文档,把端点/字段/枚举/默认值摊出来,
+# 音色列表也一并尽力解析。只做只读 GET,不改任何配置。
+
+class ProbeRequest(BaseModel):
+    base_url: str
+    api_key: str = ""
+
+
+@router.post("/voice/probe")
+async def voice_probe(req: ProbeRequest):
+    """探测服务的真实参数,返回 {ok, spec, voices}。失败项带 tried 便于排查。"""
+    return await probe_tts_api(req.base_url, req.api_key)
+
+
+class CurlRequest(BaseModel):
+    command: str
+
+
+@router.post("/voice/parse-curl")
+async def voice_parse_curl(req: CurlRequest):
+    """没 API 文档时的兜底:从一条能跑通的 curl 命令里反解请求形状(header 脱敏),
+    并顺手算出可直接保存的配置(base_url / api_key / model / 自定义头 / body 模板)。"""
+    return curl_to_config(req.command)
 
 
 # ---------------- STT(实时流式,SSE 推送) ----------------

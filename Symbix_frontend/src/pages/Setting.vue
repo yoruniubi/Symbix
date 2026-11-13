@@ -368,7 +368,8 @@
               clearable
             />
           </n-form-item>
-          <n-form-item v-if="ttsForm.priority0 !== 'custom'" :label="t('setting.ttsVoice')">
+          <!-- OpenAI 兼容引擎的音色写在请求体模板里（如 fish 的 reference_id），这里再选一次只会互相矛盾 -->
+          <n-form-item v-if="ttsForm.priority0 === 'edge'" :label="t('setting.ttsVoice')">
             <n-select
               v-model:value="ttsForm.voice"
               :options="ttsVoiceOptions"
@@ -376,12 +377,13 @@
               filterable
             />
           </n-form-item>
-          <n-form-item v-else :label="t('setting.ttsCustomSpeaker')">
+          <n-form-item v-else-if="ttsForm.priority0 === 'custom'" :label="t('setting.ttsCustomSpeaker')">
             <n-input
               v-model:value="ttsForm.voice"
               :placeholder="t('setting.ttsCustomSpeakerPlaceholder')"
             />
           </n-form-item>
+          <div v-else class="hint-text tts-voice-note">{{ t('setting.ttsVoiceByTemplate') }}</div>
           <n-form-item :label="t('setting.ttsSpeed')">
             <n-slider
               v-model:value="ttsForm.speed"
@@ -396,11 +398,45 @@
               <n-form-item :label="t('setting.cloudBaseUrl')">
                 <n-input v-model:value="ttsForm.openai_base_url" :placeholder="t('setting.cloudBaseUrlPlaceholderTts')" />
               </n-form-item>
+              <n-form-item :label="t('setting.probeLabel')">
+                <n-space align="center" :size="8" style="width: 100%">
+                  <n-button size="small" :loading="ttsProbing" @click="runTtsProbe">{{ t('setting.probeBtn') }}</n-button>
+                  <n-button size="small" quaternary @click="curlVisible = true">{{ t('setting.curlBtn') }}</n-button>
+                  <span class="hint-text">{{ t('setting.probeHint') }}</span>
+                </n-space>
+              </n-form-item>
               <n-form-item :label="t('setting.cloudApiKey')">
                 <n-input v-model:value="ttsForm.openai_api_key" type="password" show-password-on="click" :placeholder="t('setting.cloudApiKeyPlaceholder')" />
               </n-form-item>
               <n-form-item :label="t('setting.cloudModel')">
-                <n-input v-model:value="ttsForm.openai_model" :placeholder="t('setting.cloudModelPlaceholderTts')" />
+                <n-space vertical style="width: 100%">
+                  <n-input v-model:value="ttsForm.openai_model" :placeholder="t('setting.cloudModelPlaceholderTts')" />
+                  <span class="hint-text" :class="{ 'is-warn': modelHintWarn }">{{ modelHint }}</span>
+                </n-space>
+              </n-form-item>
+              <n-form-item :label="t('setting.extraHeaders')">
+                <n-space vertical style="width: 100%">
+                  <n-input
+                    v-model:value="ttsForm.openai_extra_headers"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="EXTRA_HEADERS_PLACEHOLDER"
+                    class="json-input"
+                  />
+                  <span class="hint-text">{{ t('setting.extraHeadersHint') }}</span>
+                </n-space>
+              </n-form-item>
+              <n-form-item :label="t('setting.bodyTemplate')">
+                <n-space vertical style="width: 100%">
+                  <n-input
+                    v-model:value="ttsForm.openai_body_template"
+                    type="textarea"
+                    :rows="6"
+                    :placeholder="BODY_TEMPLATE_PLACEHOLDER"
+                    class="json-input"
+                  />
+                  <span class="hint-text">{{ t('setting.bodyTemplateHint') }}</span>
+                </n-space>
               </n-form-item>
             </n-collapse-item>
             <n-collapse-item :title="t('setting.ttsCustom')" name="tts-custom">
@@ -448,11 +484,192 @@
         </n-form>
       </n-card>
     </div>
+
+    <!-- 服务参数探测:把 OpenAPI 文档里的端点/字段/枚举摊给用户看,免得靠猜 -->
+    <n-modal
+      v-model:show="probeVisible"
+      preset="card"
+      :title="t('setting.probeTitle')"
+      style="width: 760px; max-width: 94vw;"
+    >
+      <div v-if="probeResult" class="probe-body">
+        <div class="probe-sec">
+          <div class="probe-head">
+            <span class="probe-label">{{ t('setting.probeSpec') }}</span>
+            <span v-if="probeResult.spec?.found" class="probe-meta">
+              {{ probeResult.spec.title }} · OpenAPI {{ probeResult.spec.version }}
+            </span>
+            <n-tag v-else size="small" type="warning">{{ t('setting.probeNotFound') }}</n-tag>
+          </div>
+          <div v-if="probeResult.spec?.found" class="probe-src">{{ probeResult.spec.url }}</div>
+          <div v-if="probeResult.spec?.servers?.length" class="probe-src">
+            servers: {{ probeResult.spec.servers.join(', ') }}
+          </div>
+          <div
+            v-for="(ep, ei) in probeResult.spec?.endpoints || []"
+            :key="ep.method + ep.path"
+            class="probe-ep"
+          >
+            <div class="probe-ep-head">
+              <n-tag size="small" :type="ep.method === 'POST' ? 'success' : 'default'">{{ ep.method }}</n-tag>
+              <code class="probe-path">{{ ep.path }}</code>
+              <span v-if="ep.summary" class="probe-summary">{{ ep.summary }}</span>
+            </div>
+            <div v-if="ep.params.length" class="probe-params">
+              <span v-for="prm in ep.params" :key="prm.in + prm.name" class="probe-chip">
+                [{{ prm.in }}] {{ prm.name }}<span v-if="prm.required" class="probe-star">*</span>
+              </span>
+            </div>
+            <div v-if="ep.fields.length" class="probe-fields">
+              <div v-for="f in ep.fields" :key="f.name" class="probe-field">
+                <span class="probe-fname" :class="{ 'is-req': f.required }">{{ f.required ? '* ' : '' }}{{ f.name }}</span>
+                <span class="probe-ftype">{{ f.type }}</span>
+                <span v-if="f.enum" class="probe-fextra">enum: {{ f.enum.join(' | ') }}</span>
+                <span v-if="f.default !== undefined" class="probe-fextra">default: {{ f.default }}</span>
+              </div>
+            </div>
+
+            <!-- header/query 参数只做参考展示：真正填配置走下面的 curl 解析，避免两处都能填 -->
+            <div v-if="ep.params.length" class="probe-fields">
+              <div v-for="prm in ep.params" :key="prm.in + prm.name" class="probe-field">
+                <span class="probe-fname" :class="{ 'is-req': prm.required }">
+                  {{ prm.required ? '* ' : '' }}{{ prm.name }}
+                </span>
+                <span class="probe-ftype">{{ prm.in }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="probe-sec">
+          <div class="probe-head">
+            <span class="probe-label">{{ t('setting.probeVoices') }}</span>
+            <span v-if="probeResult.voices?.found" class="probe-meta">
+              {{ probeResult.voices.total }} · {{ probeResult.voices.url }}
+            </span>
+            <n-tag v-else size="small" type="warning">{{ t('setting.probeNotFound') }}</n-tag>
+          </div>
+          <div v-if="probeResult.voices?.found" class="probe-voices">
+            <div v-for="v in probeResult.voices.items.slice(0, 30)" :key="v.id" class="probe-voice">
+              <code class="probe-vid">{{ v.id }}</code>
+              <span class="probe-vtitle">{{ v.title }}</span>
+            </div>
+          </div>
+        </div>
+
+        <n-collapse>
+          <n-collapse-item :title="t('setting.probeTried')" name="tried">
+            <div v-for="row in probeTried" :key="row.url" class="probe-tried">
+              <span class="probe-tstatus">{{ row.status || 'ERR' }}</span>
+              <span class="probe-turl">{{ row.url }}</span>
+              <span v-if="row.note" class="probe-tnote">{{ row.note }}</span>
+            </div>
+          </n-collapse-item>
+        </n-collapse>
+      </div>
+    </n-modal>
+
+    <!-- 没有 API 文档时的兜底:把文档里那条能跑通的 curl 命令贴进来 -->
+    <n-modal
+      v-model:show="curlVisible"
+      preset="card"
+      :title="t('setting.curlTitle')"
+      style="width: 700px; max-width: 94vw;"
+    >
+      <div class="probe-body">
+        <div class="hint-text curl-hint">{{ t('setting.curlHint') }}</div>
+        <n-input
+          v-model:value="curlInput"
+          type="textarea"
+          :rows="6"
+          :placeholder="CURL_PLACEHOLDER"
+          class="curl-input"
+        />
+        <n-space justify="end" style="margin-top: 8px;">
+          <n-button size="small" :loading="curlParsing" type="primary" @click="runParseCurl">
+            {{ t('setting.curlParse') }}
+          </n-button>
+        </n-space>
+
+        <div v-if="curlResult && curlResult.ok" class="curl-result">
+          <div class="probe-ep-head">
+            <n-tag size="small" type="success">{{ curlResult.method }}</n-tag>
+            <code class="probe-path">{{ curlResult.url }}</code>
+          </div>
+          <div v-if="curlResult.content_type" class="probe-src">
+            content-type: {{ curlResult.content_type }}
+          </div>
+
+          <div v-for="n in curlResult.notes || []" :key="n" class="curl-note">✓ {{ n }}</div>
+          <div v-for="w in curlResult.warnings || []" :key="w" class="probe-src">⚠ {{ w }}</div>
+
+          <!-- 解析结果本身就是一份能保存的配置，点一下直接写进表单，不用再手抄 -->
+          <template v-if="curlConfig">
+            <div class="probe-head" style="margin-top: 12px;">
+              <span class="probe-label">{{ t('setting.curlWillApply') }}</span>
+            </div>
+            <div class="curl-apply">
+              <div class="curl-apply-row">
+                <span class="curl-apply-k">{{ t('setting.cloudBaseUrl') }}</span>
+                <code class="curl-apply-v">{{ curlConfig.base_url || '—' }}</code>
+              </div>
+              <div class="curl-apply-row">
+                <span class="curl-apply-k">{{ t('setting.cloudApiKey') }}</span>
+                <code class="curl-apply-v">{{ curlConfig.api_key ? '******' : '—' }}</code>
+              </div>
+              <div class="curl-apply-row">
+                <span class="curl-apply-k">{{ t('setting.cloudModel') }}</span>
+                <code class="curl-apply-v">{{ curlConfig.model || '—' }}</code>
+              </div>
+              <div v-if="curlConfig.extra_headers" class="curl-apply-row is-block">
+                <span class="curl-apply-k">{{ t('setting.extraHeaders') }}</span>
+                <pre class="curl-apply-code">{{ curlConfig.extra_headers }}</pre>
+              </div>
+              <div v-if="curlConfig.body_template" class="curl-apply-row is-block">
+                <span class="curl-apply-k">{{ t('setting.bodyTemplate') }}</span>
+                <pre class="curl-apply-code">{{ curlConfig.body_template }}</pre>
+              </div>
+            </div>
+            <n-space justify="end" style="margin-top: 8px;">
+              <n-button size="small" type="primary" @click="applyCurlConfig">
+                {{ t('setting.curlApply') }}
+              </n-button>
+            </n-space>
+          </template>
+
+          <n-collapse>
+            <n-collapse-item :title="t('setting.curlRaw')" name="raw">
+              <div v-if="curlHeaderRows.length" class="probe-fields">
+                <div class="probe-head">
+                  <span class="probe-label">{{ t('setting.curlHeaders') }}</span>
+                </div>
+                <div v-for="row in curlHeaderRows" :key="row.name" class="probe-field">
+                  <span class="probe-fname">{{ row.name }}</span>
+                  <span class="probe-ftype">{{ row.value }}</span>
+                </div>
+              </div>
+
+              <div class="probe-head" style="margin-top: 12px;">
+                <span class="probe-label">{{ t('setting.curlFields') }}</span>
+              </div>
+              <div v-if="curlResult.fields?.length" class="probe-fields">
+                <div v-for="f in curlResult.fields" :key="f.name" class="probe-field">
+                  <span class="probe-fname is-req">{{ f.name }}</span>
+                  <span class="probe-ftype">{{ f.type }}</span>
+                  <span class="probe-fextra">{{ f.sample }}</span>
+                </div>
+              </div>
+              <div v-else class="probe-src">{{ t('setting.curlNoFields') }}</div>
+            </n-collapse-item>
+          </n-collapse>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
@@ -473,7 +690,12 @@ import {
   updateVoiceConfig,
   listSttDevices,
   previewTts as previewTtsApi,
+  probeVoiceApi,
+  parseCurlApi,
   type VoiceConfigResp,
+  type ProbeResult,
+  type ProbeEndpoint,
+  type CurlParseResult,
   BACKEND_URL,
 } from '@/utils/backend'
 import { useUpdateCheck } from '@/composables/useUpdateCheck'
@@ -653,6 +875,8 @@ interface TtsSettings {
   openai_base_url: string
   openai_api_key: string
   openai_model: string
+  openai_extra_headers: string
+  openai_body_template: string
   custom_servers: string
   edge_auto_update: boolean
 }
@@ -714,7 +938,7 @@ function defaultStt(): SttSettings {
   }
 }
 function defaultTts(): TtsSettings {
-  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1', custom_servers: '', edge_auto_update: true }
+  return { enabled: true, priority0: 'edge', priority1: null, voice: '', speed: 1.0, openai_base_url: '', openai_api_key: '', openai_model: 'tts-1', openai_extra_headers: '', openai_body_template: '', custom_servers: '', edge_auto_update: true }
 }
 
 const sttForm = ref<SttSettings>(defaultStt())
@@ -723,6 +947,159 @@ const notifyForm = ref<NotifySettings>({ ...defaultSettings })
 const sttSaving = ref(false)
 const ttsSaving = ref(false)
 const ttsPreviewing = ref(false)
+
+// 服务参数探测(只读 GET,不改配置):把服务到底要哪些字段摊给用户看
+const ttsProbing = ref(false)
+const probeVisible = ref(false)
+const probeResult = ref<ProbeResult | null>(null)
+
+/** spec 和 voices 各试了哪些地址,合成一份给「探测记录」用 */
+const probeTried = computed(() => {
+  const r = probeResult.value
+  if (!r) return []
+  return [...(r.spec?.tried || []), ...(r.voices?.tried || [])]
+})
+
+async function runTtsProbe() {
+  const base = ttsForm.value.openai_base_url.trim()
+  if (!base) {
+    message.warning(t('setting.probeNoBase'))
+    return
+  }
+  ttsProbing.value = true
+  try {
+    probeResult.value = await probeVoiceApi(base, ttsForm.value.openai_api_key)
+    probeVisible.value = true
+  } catch (e) {
+    ;(window as any).$dialog?.error?.({
+      title: t('setting.probeFail'),
+      content: String((e as Error)?.message || e),
+    })
+  } finally {
+    ttsProbing.value = false
+  }
+}
+
+
+// 代码示例放在这里,不进 i18n:文案里的 `{` / `{{x}}` 会被 vue-i18n 当成
+// 消息格式和插值语法,编译期就抛 SyntaxError,整个页面 render 直接崩
+const CURL_PLACEHOLDER = `curl https://api.example.com/v1/tts \\
+  -H "Authorization: Bearer xxx" \\
+  -H "model: s2.1-pro-free" \\
+  -d '{"text": "你好", "reference_id": "05ebc..."}'`
+const EXTRA_HEADERS_PLACEHOLDER = `{
+  "model": "s2.1-pro-free"
+}`
+const BODY_TEMPLATE_PLACEHOLDER = `{
+  "text": {{text}},
+  "reference_id": "05ebc5721353471f900561a781c96cd9",
+  "prosody": { "speed": {{speed}} }
+}`
+
+
+// ---- 模型名的唯一入口:模型框 ----
+// 同一个「模型名」在不同服务里位置不同（标准 OpenAI 在 body.model，fish 在 HTTP 请求头
+// 的 model），只靠一个输入框很容易看不出它到底发在哪。所以模型框当唯一真相源：请求头
+// 里已经有 model 键时，改模型框就自动跟过去，只动那一个键，其余头原样保留。
+function headerModelKey(raw: string): string | null {
+  const text = (raw || '').trim()
+  if (!text) return null
+  try {
+    const obj = JSON.parse(text)
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
+    return Object.keys(obj).find((k) => k.toLowerCase() === 'model') || null
+  } catch {
+    // 用户正在输入、JSON 还不完整 —— 不动它，免得把手打的内容冲掉
+    return null
+  }
+}
+
+/** 把模型框的值写回请求头里的 model 键（头里没有这个键就什么都不做） */
+function syncModelToHeader(model: string) {
+  const raw = ttsForm.value.openai_extra_headers
+  const key = headerModelKey(raw)
+  if (!key) return
+  const obj = JSON.parse(raw)
+  if (obj[key] === model) return
+  obj[key] = model
+  ttsForm.value.openai_extra_headers = JSON.stringify(obj, null, 2)
+}
+
+/** 模型名当前到底发在哪：body / header / 模板里固定 / 根本没发 */
+type ModelPlacement = 'body' | 'header' | 'template' | 'unused'
+
+const modelPlacement = computed<ModelPlacement>(() => {
+  const tpl = (ttsForm.value.openai_body_template || '').trim()
+  // 模板里有占位符，不能 JSON.parse，直接认字面量
+  if (tpl && /"model"\s*:/i.test(tpl)) return 'template'
+  if (headerModelKey(ttsForm.value.openai_extra_headers)) return 'header'
+  if (!tpl) return 'body'
+  return 'unused'
+})
+
+const MODEL_HINT_KEYS = {
+  body: 'setting.modelPlacementBody',
+  header: 'setting.modelPlacementHeader',
+  template: 'setting.modelPlacementTemplate',
+  unused: 'setting.modelPlacementUnused',
+} as const
+
+const modelHint = computed(() => t(MODEL_HINT_KEYS[modelPlacement.value]))
+// 后两种是「模型框不生效」，得显眼一点
+const modelHintWarn = computed(
+  () => modelPlacement.value === 'template' || modelPlacement.value === 'unused',
+)
+
+watch(() => ttsForm.value.openai_model, (v) => syncModelToHeader(v))
+
+// ---- curl 兑底:没有 API 文档的服务,从文档里那条能跑通的命令反解 ----
+const curlVisible = ref(false)
+const curlInput = ref('')
+const curlParsing = ref(false)
+const curlResult = ref<CurlParseResult | null>(null)
+
+/** 后端算好的配置:点一下直接写进表单 */
+const curlConfig = computed(() => curlResult.value?.config || null)
+
+/** header 转成列表渲染(对象在模板里直接 v-for 不好按 key 排序) */
+const curlHeaderRows = computed(() =>
+  Object.entries(curlResult.value?.headers || {}).map(([name, value]) => ({ name, value })),
+)
+
+function applyCurlConfig() {
+  const c = curlConfig.value
+  if (!c) return
+  if (c.base_url) ttsForm.value.openai_base_url = c.base_url
+  if (c.api_key) ttsForm.value.openai_api_key = c.api_key
+  // 先写 model 再写请求头:写 model 会触发自动同步，后面的头才是最终结果
+  if (c.model) ttsForm.value.openai_model = c.model
+  ttsForm.value.openai_extra_headers = c.extra_headers || ''
+  ttsForm.value.openai_body_template = c.body_template || ''
+  curlVisible.value = false
+  message.success(t('setting.curlApplied'))
+}
+
+async function runParseCurl() {
+  const cmd = curlInput.value.trim()
+  if (!cmd) {
+    message.warning(t('setting.curlEmpty'))
+    return
+  }
+  curlParsing.value = true
+  try {
+    curlResult.value = await parseCurlApi(cmd)
+    if (curlResult.value.ok === false) {
+      message.error(`${t('setting.curlFail')}: ${curlResult.value.error || ''}`)
+    }
+  } catch (e) {
+    ;(window as any).$dialog?.error?.({
+      title: t('setting.curlFail'),
+      content: String((e as Error)?.message || e),
+    })
+  } finally {
+    curlParsing.value = false
+  }
+}
 
 // edge-tts 的 403 自愈(升库 + 重试一次)现在恒开启，不再给用户开关/手动升级入口
 
@@ -838,6 +1215,8 @@ async function loadVoiceConfig() {
       openai_base_url: (tts as any).openai_base_url || '',
       openai_api_key: (tts as any).openai_api_key || '',
       openai_model: (tts as any).openai_model || 'tts-1',
+      openai_extra_headers: (tts as any).openai_extra_headers || '',
+      openai_body_template: (tts as any).openai_body_template || '',
       custom_servers: (tts as any).custom_servers || '',
       edge_auto_update: (tts as any).edge_auto_update ?? true,
     }
@@ -952,6 +1331,8 @@ function buildTtsPatch() {
   patch.openai_base_url = f.openai_base_url
   patch.openai_api_key = f.openai_api_key
   patch.openai_model = f.openai_model
+  patch.openai_extra_headers = f.openai_extra_headers.trim()
+  patch.openai_body_template = f.openai_body_template.trim()
   patch.custom_servers = f.custom_servers
   // edge_auto_update 已从 UI 移除并在后端恒开启,不再回传
   return patch
@@ -1054,10 +1435,305 @@ async function previewTts() {
   color: var(--text-muted);
 }
 
+/* 模型框下方那行：模型当前到底发在哪。模板里已固定/完全没发时提醒一下 */
+.hint-text.is-warn {
+  color: var(--warning);
+}
+
+/* 用 OpenAI 兼容引擎时音色项换成这行说明，保持和 form-item 一致的段落间距 */
+.tts-voice-note {
+  margin-bottom: 18px;
+}
+
+/* curl 解析出的「将要填入」配置预览 */
+.curl-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--success);
+}
+
+.curl-apply {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.curl-apply-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.curl-apply-row.is-block {
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.curl-apply-k {
+  flex: none;
+  min-width: 96px;
+  color: var(--text-muted);
+}
+
+.curl-apply-v {
+  word-break: break-all;
+}
+
+.curl-apply-code {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--bg-app);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* 试听按钮上方的说明:强调不降级,失败就是主引擎的真失败 */
 .tts-preview-hint {
   text-align: right;
   margin-bottom: 6px;
+}
+
+/* ---- 服务参数探测弹窗 ---- */
+.probe-body {
+  max-height: 66vh;
+  overflow-y: auto;
+}
+
+.probe-sec {
+  margin-bottom: 16px;
+}
+
+.probe-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.probe-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.probe-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.probe-src {
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.probe-ep {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin: 10px 0;
+}
+
+.probe-ep-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.probe-path {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.probe-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.probe-params {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.probe-chip {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.probe-star {
+  color: var(--error);
+}
+
+.probe-fields {
+  margin-top: 4px;
+}
+
+.probe-field {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 1px 0;
+}
+
+.probe-fname {
+  font-family: var(--font-mono);
+  min-width: 150px;
+}
+
+.probe-fname.is-req {
+  color: var(--error);
+}
+
+.probe-ftype {
+  color: var(--text-muted);
+  min-width: 80px;
+}
+
+.probe-fextra {
+  color: var(--text-muted);
+}
+
+.probe-voices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.probe-voice {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.probe-vid {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.probe-tried {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 1px 0;
+}
+
+.probe-tstatus {
+  font-family: var(--font-mono);
+  min-width: 34px;
+  color: var(--text-muted);
+}
+
+.probe-turl {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.probe-tnote {
+  color: var(--text-muted);
+}
+
+/* ---- curl 解析 ---- */
+.curl-hint {
+  margin-bottom: 8px;
+}
+
+.curl-input :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.curl-result {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+/* 自定义请求头 / body 模板:JSON 用等宽字体,写错一眼能看出来 */
+.json-input :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ---- 探测结果 → 实时表单 ---- */
+.probe-form-actions {
+  margin-top: 6px;
+}
+
+.probe-form {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.pf-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.pf-row.is-sub {
+  padding-left: 14px;
+}
+
+.pf-label {
+  min-width: 170px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.pf-label.is-req {
+  color: var(--error);
+}
+
+.pf-in {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pf-ctl {
+  flex: 1;
+  min-width: 0;
+}
+
+.pf-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 /* 版本号：比正文大一级、等宽字体，不用 tag 以免看着像可选状态 */

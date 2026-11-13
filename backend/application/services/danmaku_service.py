@@ -1,16 +1,14 @@
 from __future__ import annotations
-import os.path as osp
 import random
 from typing import Any
+from Symbix_sdk.app_paths import data_path
 from Symbix_sdk.config.danmaku_config import DanmakuConfigManager
 from application.services.pet_action import pet_action
 
-# 弹幕配置单例(与 routers/danmaku.py 共用同一 json)
-_DANMAKU_CONFIG_PATH = osp.join(
-    osp.dirname(osp.abspath(__file__)),
-    "..", "..", "Symbix_sdk", "config", "danmaku_config.json",
+# 弹幕配置单例(与 routers/danmaku.py 共用同一 json);走 data_path 免得写进 _internal/
+danmaku_cfg = DanmakuConfigManager(
+    data_path("Symbix_sdk/config", "danmaku_config.json")
 )
-danmaku_cfg = DanmakuConfigManager(_DANMAKU_CONFIG_PATH)
 
 # ── 模板库(本地零 LLM 成本)───────────────────────────────
 _DANMAKU_TEMPLATES: dict[str, list[str]] = {

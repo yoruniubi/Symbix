@@ -1,9 +1,11 @@
 from __future__ import annotations
 import asyncio
+import json
 import re
 import sys
 import time
 from dataclasses import dataclass, field
+from typing import Any
 from Symbix_sdk.tts import edge_update
 
 # 朗读前需要剔除的 emoji/装饰符号区间(保留普通文本与 CJK 标点)。
@@ -232,6 +234,87 @@ class EdgeProvider(TTSProvider):
         return TTSResult(audio=audio, format="mp3", engine=self.name)
 
 
+# ---------------- 自定义请求形状:header + body 模板 ----------------
+
+# 模板占位符:正文/音色/语速由引擎注入,其余字段用户原样写。
+# 用占位符而不是「字段名映射」,是因为各家嵌套层级千差万别 —— fish 的速度在
+# prosody.speed 里,而有些服务在 speed 顶层。
+_PH_RE = re.compile(r"\{\{\s*(text|voice|speed)\s*\}\}")
+_PH_NAMES = ("text", "voice", "speed")
+# 自定义请求头里的 {{api_key}}:curl 解析出来的配置靠它带鉴权,又不把明文密钥写进配置
+_HDR_KEY_PH_RE = re.compile(r"\{\{\s*api_key\s*\}\}")
+_LOCAL_URL_RE = re.compile(
+    r"^https?://(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?)",
+    re.I,
+)
+
+
+def _is_local_url(url: str) -> bool:
+    """本地/内网地址不走系统代理(Clash 会把 127.0.0.1 拦成 502)。"""
+    return bool(_LOCAL_URL_RE.match(url or ""))
+
+
+def _parse_json_obj(raw: str, what: str) -> dict[str, Any]:
+    """把用户填的 JSON 文本解成对象;空文本视为未填。"""
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise TTSProviderError(f"{what}不是合法 JSON(第 {e.lineno} 行第 {e.colno} 列: {e.msg})") from e
+    if not isinstance(data, dict):
+        raise TTSProviderError(f"{what}必须是 JSON 对象,现在是 {type(data).__name__}")
+    return data
+
+
+def render_body_template(template: str, text: str, voice: str, speed: float) -> dict[str, Any]:
+    """用真实文本/音色/语速填进 body 模板,返回可直接 json= 的字典。
+
+    `{{text}}` / `{{voice}}` 替成**带引号的 JSON 字符串字面量**,`{{speed}}` 替成数字:
+    模板里写 `"text": {{text}}` 即可,引号换行 emoji 全由 json.dumps 负责转义。
+    """
+    values = {"text": text, "voice": voice, "speed": speed}
+
+    def _sub(m: re.Match[str]) -> str:
+        key = m.group(1)
+        if key == "speed":
+            return repr(float(values["speed"]))
+        return json.dumps(str(values[key]), ensure_ascii=False)
+
+    rendered = _PH_RE.sub(_sub, template)
+    try:
+        data = json.loads(rendered)
+    except json.JSONDecodeError as e:
+        snippet = rendered[:200] + ("…" if len(rendered) > 200 else "")
+        raise TTSProviderError(
+            f"body 模板填入后不是合法 JSON(第 {e.lineno} 行第 {e.colno} 列: {e.msg});渲染结果: {snippet}"
+        ) from e
+    if not isinstance(data, dict):
+        raise TTSProviderError(f"body 模板必须是 JSON 对象,现在是 {type(data).__name__}")
+    return data
+
+
+def validate_custom_payload(extra_headers: str, body_template: str) -> str | None:
+    """保存前校验自定义头/模板。返回错误文案,None = 通过。
+
+    模板这里用空文本 + 假值试渲染一遍 —— 能拦住写错逗号/引号/抛占位符,
+    不用等到用户点试听才炸。
+    """
+    try:
+        _parse_json_obj(extra_headers, "自定义请求头")
+    except TTSProviderError as e:
+        return str(e)
+    if (body_template or "").strip():
+        try:
+            rendered = render_body_template(body_template, "测试文本", "voice", 1.0)
+        except TTSProviderError as e:
+            return str(e)
+        if not rendered:
+            return "body 模板渲染出来是空对象"
+    return None
+
+
 # ---------------- OpenAI 兼容云端(自建网关/中转) ----------------
 
 class OpenAICompatTTSProvider(TTSProvider):
@@ -263,10 +346,21 @@ class OpenAICompatTTSProvider(TTSProvider):
         {"value": "ballad", "label": "ballad"},
     ]
 
-    def __init__(self, api_key: str = "", base_url: str = "", model: str = "tts-1") -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        base_url: str = "",
+        model: str = "tts-1",
+        extra_headers: str = "",
+        body_template: str = "",
+    ) -> None:
         self.api_key = api_key
         self.base_url = (base_url or self.DEFAULT_BASE).rstrip("/")
         self.model = model or "tts-1"
+        # 非 OpenAI 形状的服务(fish / 各家商业 API)靠这两项活下来:
+        # fish 的 model 是 HTTP header,正文键叫 text 而不是 input
+        self.extra_headers = extra_headers or ""
+        self.body_template = body_template or ""
 
     def endpoint(self) -> str:
         """实际发请求的 URL,以用户的 base_url 为基准。
@@ -297,19 +391,33 @@ class OpenAICompatTTSProvider(TTSProvider):
             import httpx
         except Exception as e:
             raise TTSProviderError(f"httpx 未安装: {e}") from e
+        speed = max(0.25, min(4.0, float(speed)))
         headers = {"Accept": "audio/*"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        body = {
-            "model": self.model,
-            "input": text,
-            "voice": voice or "alloy",
-            "speed": max(0.25, min(4.0, float(speed))),
-            "response_format": "mp3",
-        }
+        # 用户的自定义 header 覆盖默认值(有些服务用 X-Api-Key 而不是 Authorization)
+        custom = _parse_json_obj(self.extra_headers, "自定义请求头")
+        if custom:
+            key = self.api_key or ""
+            for name, value in custom.items():
+                headers[name] = (
+                    _HDR_KEY_PH_RE.sub(key, value) if isinstance(value, str) else value
+                )
+        if self.body_template.strip():
+            body = render_body_template(self.body_template, text, voice or "alloy", speed)
+        else:
+            body = {
+                "model": self.model,
+                "input": text,
+                "voice": voice or "alloy",
+                "speed": speed,
+                "response_format": "mp3",
+            }
         url = self.endpoint()
+        # 本地/内网服务不能走系统代理,否则 127.0.0.1 会被代理拦成 502
+        trust_env = not _is_local_url(url)
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=120, trust_env=trust_env) as client:
                 r = await client.post(url, headers=headers, json=body)
         except Exception as e:
             raise TTSProviderError(f"OpenAI TTS 请求失败({url}): {e}") from e
@@ -421,6 +529,9 @@ class TTSConfig:
     # 自定义 HTTP GET 服务(GPT-SoVITS / Bert-VITS2 …)
     voice_custom: str = ""        # speaker 名;空 = 不传该参数
     custom_servers: str = ""      # 多行文本,每行一个地址;按调用次数轮询
+    # 非 OpenAI 形状的服务:自定义请求头 + body 模板(均 JSON 文本,空 = 标准形状)
+    openai_extra_headers: str = ""   # 例:{"model": "s2.1-pro-free"}
+    openai_body_template: str = ""   # 例:{"text": {{text}}, "reference_id": "05ebc…"}
     # edge 遇到 403(微软换令牌代次)时自动升级 edge-tts 并重试一次
     edge_auto_update: bool = True
 
@@ -436,6 +547,8 @@ class TTSConfig:
             "openai_model": self.openai_model,
             "voice_custom": self.voice_custom,
             "custom_servers": self.custom_servers,
+            "openai_extra_headers": self.openai_extra_headers,
+            "openai_body_template": self.openai_body_template,
             "edge_auto_update": self.edge_auto_update,
         }
 
@@ -461,6 +574,8 @@ class TTSEngine:
                     api_key=self.config.openai_api_key,
                     base_url=self.config.openai_base_url,
                     model=self.config.openai_model,
+                    extra_headers=self.config.openai_extra_headers,
+                    body_template=self.config.openai_body_template,
                 )
             elif cls is CustomHTTPProvider:
                 self._instances[name] = cls(servers=self.config.custom_servers)
