@@ -70,6 +70,8 @@
         preview: {
             title: 'See what it looks like',
             sub: 'Pet, chat, danmaku overlay, journal — real windows that live on your desktop',
+            filmCap: 'A 35-second overview: the pet lives on your desktop, one line of request, a finished file back',
+            filmAria: 'Play the 35-second Symbix launch film',
             shots: [
                 {
                     alt: 'Symbix main view animation: the pet moving around the desktop while the chat window handles a task',

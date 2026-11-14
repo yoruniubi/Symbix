@@ -442,6 +442,18 @@ section {
     border-radius: var(--radius-sm);
     border: 1px solid var(--hairline);
 }
+/* 宣传片:poster 先出画面,点了才真正拉 9MB 视频(preload=none) */
+.shot.film {
+    max-width: 860px;
+}
+.shot video {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--hairline);
+    background: #000;
+}
 .shot figcaption {
     text-align: center;
     font-size: 13px;
@@ -817,6 +829,11 @@ footer a:hover {
         <h2 class="sec-title" data-i18n="preview.title">看看它长什么样</h2>
         <p class="sec-sub" data-i18n="preview.sub">桌宠、聊天、弹幕、手账 —— 都是常驻在你桌面上的真窗口</p>
         <div class="shots">
+            <figure class="shot lead film">
+                <video src="./Symbix-launch-35s.mp4" poster="./screenshots/poster-launch.jpg"
+                       controls preload="none" playsinline data-i18n-aria="preview.filmAria"></video>
+                <figcaption data-i18n="preview.filmCap">35 秒总览:桌宠常驻桌面,一句话派活,成品文件直接交</figcaption>
+            </figure>
             <figure class="shot lead">
                 <img src="./screenshots/demo.gif" alt="Symbix 主界面动图:桌宠在桌面上活动,聊天窗口处理任务" loading="lazy" data-i18n-alt="preview.shots.0.alt">
                 <figcaption data-i18n="preview.shots.0.cap">主界面:桌宠常驻桌面,一句话派活,成品文件直接交</figcaption>
