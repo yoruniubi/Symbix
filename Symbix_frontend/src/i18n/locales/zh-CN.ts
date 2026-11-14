@@ -79,6 +79,7 @@ export default {
     edit: '编辑',
     copy: '复制',
     speakAgain: '重新朗读',
+    injectedBadge: '插话',
     copyCode: '复制代码',
     codeCopied: '',
     saveAndSend: '保存并发送',

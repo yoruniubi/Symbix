@@ -289,6 +289,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             # 连续被拦次数:模型无视提示原地打转时靠它收尾
             repeat_blocked_streak = 0
 
+            # 长任务期间收到的插话先攒这里,下一轮模型调用前拼进上下文。
+            # 工具一根命令跑十几分钟时「不在轮间隙」,插话没地方消费 ——
+            # 心跳时顺手取一次,先把用户的话上屏(不然他敲完看着屏幕毫无反应),
+            # 内容等本轮工具结束后跟下几轮一起给模型看。
+            late_injects: list[str] = []
+
             # —— 多轮工具上下文累积 ——
             # 首轮流结束后,以与首轮请求一致的 messages 为基底(history + user),
             # 之后每轮把本轮的 assistant(tool_calls)+tool 结果 append 进来,
@@ -351,6 +357,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     print(f"[stream] client disconnected at round {round_count}, stopping generation")
                     break
                 # 插话:轮间隙取用户补充,拼进上下文让模型下一轮看到(取不到是常态,零开销)
+                for _late in late_injects:
+                    running_msgs.append({
+                        "role": "user",
+                        "content": f"[用户在任务进行中补充] {_late}",
+                    })
+                late_injects.clear()
                 _inject = await chat_injection.take_injection(request.session_id)
                 if _inject:
                     running_msgs.append({
@@ -655,6 +667,18 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         if _kind == "progress":
                             if isinstance(_payload, dict):
                                 yield format_sse({"type": "delegate_progress", "name": tc_name, **_payload})
+                        elif _kind == "heartbeat":
+                            # 长命令还在跑:发个空 ping 让前端重置静默计时,不渲染任何东西
+                            yield format_sse({"type": "ping"})
+                            # 工具占用期间也给插话一个出口:先上屏,内容下轮再给模型
+                            _lazy = await chat_injection.take_injection(request.session_id)
+                            if _lazy:
+                                late_injects.append(_lazy)
+                                yield format_sse({
+                                    "type": "user_injected",
+                                    "text": _lazy,
+                                    "round": round_count + 1,
+                                })
                         else:
                             tool_output = _payload
                     if not isinstance(tool_output, str):

@@ -44,6 +44,7 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
+            <span class="injected-badge">{{ t('chat.injectedBadge') }}</span>
             <span>{{ it }}</span>
           </div>
         </div>
@@ -1182,6 +1183,17 @@ onMounted(() => {
   gap: 4px;
   margin: 4px 0 6px;
 }
+.injected-badge {
+  flex-shrink: 0;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 15px;
+  letter-spacing: 0.02em;
+  color: var(--accent-600);
+  background: var(--bg-surface);
+  border-radius: 4px;
+}
+
 .injected-bubble {
   display: inline-flex;
   align-items: center;

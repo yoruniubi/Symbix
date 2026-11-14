@@ -24,6 +24,8 @@ export interface Message {
   act_mode?: string
   /** 主动搭话开场气泡(宠物先说的话,点击弹幕气泡后进入会话的那条) */
   proactive?: boolean
+  /** 运行中插话:任务进行中补充的话,按顺序原样上屏(带「插话」徽标) */
+  injected?: string[]
 }
 
 export interface Session {

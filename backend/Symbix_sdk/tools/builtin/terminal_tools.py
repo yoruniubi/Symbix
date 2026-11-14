@@ -5,6 +5,18 @@ import sys
 
 from Symbix_sdk.tools.file_pipeline import assert_path_allowed
 
+# 单次命令的时长上限(秒)。
+# 旧上限是 300s,但渲染视频 / 打包 / 编译这类命令动辄十几分钟,
+# 到点直接掐死,用户只能眼睁睁看着进度丢掉。
+# 放宽到 30 分钟:期间后端每 30s 发心跳(helpers.TOOL_HEARTBEAT_SEC),
+# 前端静默看门狗不会误判,事件循环也不会被堵。
+CMD_TIMEOUT_MAX = 1800
+
+# 输出只保留尾部这么多字符。
+# 十几分钟的渲染日志很容易几十 MB:全量塞进内存再整包发给前端,
+# 会把后端和浏览器一起拖垮,而用户真正要看的也只是最后那几屏。
+CMD_OUTPUT_TAIL = 120_000
+
 def open_terminal(
     command: str = "",
     shell: str = "powershell",
@@ -34,7 +46,7 @@ def open_terminal(
         timeout = int(timeout) if timeout is not None else 60
     except (TypeError, ValueError):
         timeout = 60
-    timeout = max(1, min(timeout, 300))
+    timeout = max(1, min(timeout, CMD_TIMEOUT_MAX))
 
     if shell in ("powershell", "pwsh", "ps"):
         shell_exe = "powershell"
@@ -162,7 +174,10 @@ def open_terminal(
         if proc.stderr and proc.stderr.strip():
             parts.append(f"[stderr]\n{proc.stderr.rstrip()}")
         parts.append(f"[exit_code={proc.returncode}]")
-        return "\n".join(parts)
+        out = "\n".join(parts)
+        if len(out) > CMD_OUTPUT_TAIL:
+            out = f"[已截断,只保留最后 {CMD_OUTPUT_TAIL} 字符]\n" + out[-CMD_OUTPUT_TAIL:]
+        return out
     except subprocess.TimeoutExpired:
         return f"[Error] 命令超时（>{timeout}s）: {cmd_str}"
     except FileNotFoundError as e:
@@ -203,7 +218,10 @@ TERMINAL_TOOLS_SCHEMAS = {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "命令超时时间（秒），仅后台模式有效，默认 60，最大 300",
+                    "description": (
+                        f"命令超时时间(秒),仅后台模式有效。默认 60,最大 {CMD_TIMEOUT_MAX}。"
+                        "渲染视频/打包/编译这类十几分钟的长任务必须显式给大值,否则会被提前掐死"
+                    ),
                 },
                 "visible": {
                     "type": "boolean",

@@ -228,33 +228,10 @@ let userAborted = false
 
 /** SSE 静默超过这么多秒:文案从「正在生成」换成「已等待 Ns」 */
 const STREAM_IDLE_SOFT_SEC = 20
-/** SSE 静默超过这么多秒:判定上游卡死,主动收尾让用户能重试。
- *  取 600 而非 300:terminal 工具单次上限就是 300s,阈值设 300 会误杀正常的长命令;
- *  而后端 read timeout 也是 300s、还会重试 3 次,真卡死时前端比它早收尾反而打断重连。 */
-const STREAM_IDLE_HARD_SEC = 600
 
-/**
- * 给一条 SSE 流装静默看门狗。
- *
- * 后端只在「出字 / 换工具 / 工具结果」时发事件,所以「上游不吐字」和
- * 「单个长工具在跑」这两段时间是完全静默的;`reader.read()` 又没有超时,
- * 界面就会一直转圈且停不下来 —— 这就是用户说的「卡死」。
- * 这里只负责计时,想怎么显示、什么时候放弃由调用方决定。
- *
- * Args:
- *   onTick: 每秒回调一次,参数为已静默的秒数(0 表示刚有数据)
- *   onStall: 静默达到 STREAM_IDLE_HARD_SEC 时回调一次
- *
- * Returns:
- *   { touch, stop } —— touch 收到数据时调用重置计时;stop 收尾时清理定时器
- */
-/**
- * 工具返回的到底是不是错误。
- *
- * 后端各工具的错误文案没有统一协议,但都以 `Error` / `[Error]` 开头
- * (`file_tools` 用 `Error: ...`、`terminal_tools` 用 `[Error] ...`)。
- * 只认**开头**,不能全文搜 —— 读文件/贴日志的结果里完全可能含 "Error" 字样。
- */
+const STREAM_IDLE_HARD_SEC = 1800
+
+
 function toolResultFailed(content: unknown): boolean {
   const text = typeof content === 'string' ? content.trim() : ''
   if (!text) return false

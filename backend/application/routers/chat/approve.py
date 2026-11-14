@@ -565,6 +565,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             if _kind == "progress":
                                 if isinstance(_payload, dict):
                                     yield format_sse({"type": "delegate_progress", "name": tc_name, **_payload})
+                            elif _kind == "heartbeat":
+                                # 长命令还在跑:只发个空 ping 重置前端静默计时
+                                yield format_sse({"type": "ping"})
                             else:
                                 out = _payload
                         if not isinstance(out, str):

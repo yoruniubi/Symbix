@@ -18,6 +18,13 @@ from application.state import checkpoint_recorder
 # 命中后强制走"提问审批"路径:不发普通 tool_result,发 await_input 事件挂起。
 _INTERACTION_TOOLS = {"ask_clarifying_question", "propose_plan"}
 
+# 同步工具执行期间的心跳间隔(秒)。
+# 渲染视频 / 构建 / 训练这类命令动辄十几分钟,期间工具不吐任何事件:
+#   1) 事件循环被同步调用占死,整个后端失去响应(连停止按钮都点不动);
+#   2) 前端静默看门狗(原本 600s)会把正常的长时间干活误判成"卡死"并收尾。
+# 改成丢线程跑 + 定期心跳,两个问题一起解决。
+TOOL_HEARTBEAT_SEC = 30.0
+
 
 # ═══════════════ 只读工具并行批量执行 ═══════════════
 # 模型一轮里常一次性发起多个互不依赖的只读调用(读 5 个文件 / 搜 2 个关键词 /
@@ -109,7 +116,9 @@ async def _execute_tool(name: str, arguments, ctx: dict | None = None, on_event=
     if tool_registry.is_async_tool(name):
         out = await tool_registry.execute_async(name, arguments, on_event=on_event, ctx=ctx)
     else:
-        out = tool_registry.execute(name, arguments)
+        # 同步工具必须丢线程执行:直接调会把事件循环堵到工具结束,
+        # 长命令(渲染/编译)期间整个后端都会失去响应。
+        out = await asyncio.to_thread(tool_registry.execute, name, arguments)
     if not isinstance(out, str):
         out = _json.dumps(out, ensure_ascii=False)
     return out
@@ -120,12 +129,21 @@ async def _stream_tool_events(name: str, arguments, ctx: dict | None = None):
 
     产出元组:
       ("progress", event_dict) —— 子 Agent 进度(仅异步工具会有)
+      ("heartbeat", {})       —— 同步工具还在跑,仅用于重置前端静默计时
       ("result", str)          —— 最终工具结果(始终是最后一项)
     """
     from application.state import tool_registry
 
     if not tool_registry.is_async_tool(name):
-        out = tool_registry.execute(name, arguments)
+        # 同步工具丢线程执行,期间每 TOOL_HEARTBEAT_SEC 秒发一次心跳。
+        # 不能直接同步调用:那样会把事件循环堵到工具结束(长命令 = 整个后端假死)。
+        _task = asyncio.ensure_future(asyncio.to_thread(tool_registry.execute, name, arguments))
+        while True:
+            _done, _ = await asyncio.wait({_task}, timeout=TOOL_HEARTBEAT_SEC)
+            if _done:
+                break
+            yield ("heartbeat", {})
+        out = await _task
         yield ("result", out if isinstance(out, str) else _json.dumps(out, ensure_ascii=False))
         return
 

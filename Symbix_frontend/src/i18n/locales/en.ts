@@ -79,6 +79,7 @@ export default {
     edit: 'Edit',
     copy: 'Copy',
     speakAgain: 'Read aloud again',
+    injectedBadge: 'Interjected',
     copyCode: 'Copy code',
     codeCopied: '',
     saveAndSend: 'Save & Send',
