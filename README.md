@@ -144,11 +144,15 @@ npm run dev          # 浏览器开发
 npm run tauri dev    # 桌面应用
 ```
 
-> 想用本地语音识别(SenseVoice):从 Releases 资产(`assets-v1`)下载对应平台原生栈,放进 `backend/Symbix_sdk/stt/multi-platform/<平台>/`;不配置自动走云端 STT(Groq 有免费额度)。
+> 语音识别开箱就是本地的:安装包已内置 SenseVoice(原生栈 + 模型),离线可用,不用配任何 key。只有直接从源码跑才需要自己放原生栈:从 Releases 资产(`assets-v1`)下载对应平台的,放进 `backend/Symbix_sdk/stt/multi-platform/<平台>/`。
 
 ### 配置模型
 
 聊天界面左侧 Model Setting 面板选 Provider,填 API Key 即可。内置 9 家厂商预设,支持自定义 `base_url` 接任意 OpenAI 兼容网关。TTS 支持 Edge TTS / OpenAI 兼容 / 自建(GPT-SoVITS 等本地一键包可直连)。
+
+想接云端语音合成(有免费额度可试):[fish.audio](https://fish.audio/app/developers/get-started/) 注册后在开发者页拿 API Key,在浏览器里随便跑一次它文档给的 `curl` 示例,把那整条命令粘到 **设置 → 语音合成 → 云端服务** 的解析框里,点解析再点「填入配置」就接好了 —— 端点、鉴权头、模型、音色 id 都是从命令里反解出来的,不用手填字段表。
+
+语音识别默认就用**内置的 SenseVoice**,本地离线跑、不花钱、不用下模型(安装包已经打包进去了)。想让内存占用小一点、或者机器带不动本地模型,可以改成云端:在 [console.groq.com/keys](https://console.groq.com/keys) 领一个 API Key 填进 **设置 → 语音识别 → OpenAI 兼容**,Groq 跑的 whisper 有免费额度。
 
 ### 📁 文件与工作区
 

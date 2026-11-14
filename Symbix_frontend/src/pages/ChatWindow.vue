@@ -97,11 +97,13 @@
           :msg="msg"
           :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
           :preview="idx >= messages.length - PREVIEW_TAIL"
+          :read-aloud="readAloud"
           v-show="!hideDuringLoading(msg)"
           @edit="handleEditMessage(idx, $event)"
           @approve="approveTool(idx, $event)"
           @answer="answerQuestion(idx, $event)"
           @retry="handleRetryMessage(idx)"
+          @speak="speakAgain(idx)"
         />
         <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'"
             v-show="hideDuringLoading(messages[messages.length - 1])"
@@ -208,7 +210,7 @@ import { parseSessionMarkdown } from '@/utils/sessionMarkdown'
 import { startMemorySentinel } from '@/utils/memorySentinel'
 import { notifyTaskComplete } from '@/composables/useNotify'
 import { safeLog } from '@/utils/logMask'
-import { feedSpeechSentence, flushSpeechSentence, speakStart, stopSpeak } from '@/utils/backend'
+import { feedSpeechSentence, flushSpeechSentence, replaySpeak, speakStart, stopSpeak } from '@/utils/backend'
 import { useReadAloud } from '@/composables/useReadAloud'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { listen as listenTauri } from '@tauri-apps/api/event'
@@ -851,6 +853,13 @@ function handleEditMessage(idx: number, newText: string) {
   messages.value.splice(idx)
   loading.value = false
   sendMessage(newText, [])
+}
+
+/** 重播该条回复的朗读（设置里开了「朗读回复」才有按钮），不受流式朗读队列影响 */
+function speakAgain(idx: number) {
+  const msg = messages.value[idx]
+  if (!msg) return
+  void replaySpeak(String(msg.content || ''))
 }
 
 /** 重试 assistant 回复:找到对应 user 消息,截断后重新发送 */

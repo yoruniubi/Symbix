@@ -269,6 +269,15 @@
             </svg>
           </template>
         </n-button>
+        <n-button v-if="readAloud && final" text size="tiny" @click="emit('speak')" class="action-btn" :title="t('chat.speakAgain')">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+          </template>
+        </n-button>
         <n-button text size="tiny" @click="retry" class="action-btn" :title="t('chat.retry')">
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -323,6 +332,8 @@ const props = defineProps<{
    * 几百条带图的历史会把 renderer 内存推到 GB 级。缺省 true 保持原行为。
    */
   preview?: boolean
+  /** 设置里开了「朗读回复」才显示重播按钮 */
+  readAloud?: boolean
 }>()
 
 const { isDark } = useTheme()
@@ -332,6 +343,7 @@ const emit = defineEmits<{
   approve: [approved: boolean]
   answer: [answer: string]
   retry: []
+  speak: []
 }>()
 
 const copied = ref(false)

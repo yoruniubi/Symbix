@@ -618,3 +618,59 @@ export function speak(text: string) {
   feedSpeechSentence(text)
   flushSpeechSentence()
 }
+
+/*
+ * 单条消息重播朗读。
+ *
+ * 与流式朗读队列完全独立:它自己的 audio 元素、自己的 Blob URL。
+ * 按文本做缓存(不是按消息 id)—— 流式朗读每句都调 previewTts,同一条回复
+ * 反复点重播时不该再按字符花一次钱;云端 TTS 是计费的。
+ */
+const _replayCache = new Map<string, string>()
+/** 缓存上限:每条约几十 KB,24 条足够盖住一屏,再多就纯占内存。 */
+const REPLAY_CACHE_MAX = 24
+let _replayAudio: HTMLAudioElement | null = null
+
+/** 停掉正在进行的重播(缓存不释放,下次点还要用)。 */
+export function stopReplay() {
+  if (_replayAudio) {
+    _replayAudio.onended = null
+    _replayAudio.onerror = null
+    _replayAudio.pause()
+    _replayAudio = null
+  }
+}
+
+/** 重播一条回复的朗读。首次会合成,之后走缓存。 */
+export async function replaySpeak(text: string): Promise<void> {
+  // 后端按 text[:2000] 截断,这里对齐,否则同一条文案会算出两个缓存键
+  const plain = stripMarkdown(text).trim().slice(0, 2000)
+  if (!plain) return
+  stopReplay()
+  // 自动朗读还在响就先停:两个声音叠在一起没法听(下一轮 speakStart 会恢复)
+  if (_speakPlaying || _speakAudio) stopSpeak()
+
+  let url = _replayCache.get(plain)
+  if (!url) {
+    url = await previewTts(plain)
+    _replayCache.set(plain, url)
+    // LRU:Map 迭代顺序即插入顺序,超上限就丢掉最早那条
+    while (_replayCache.size > REPLAY_CACHE_MAX) {
+      const oldest = _replayCache.keys().next().value
+      if (oldest === undefined) break
+      const stale = _replayCache.get(oldest)
+      _replayCache.delete(oldest)
+      if (stale) URL.revokeObjectURL(stale)
+    }
+  }
+
+  const audio = new Audio(url)
+  _replayAudio = audio
+  const done = () => {
+    if (_replayAudio === audio) _replayAudio = null
+  }
+  audio.onended = done
+  audio.onerror = done
+  // 自动播放被拦或合成结果已被 LRU 淘汰时,不抛错也不留悬挂状态
+  await audio.play().catch(done)
+}

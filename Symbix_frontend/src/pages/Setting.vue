@@ -948,6 +948,21 @@ const sttSaving = ref(false)
 const ttsSaving = ref(false)
 const ttsPreviewing = ref(false)
 
+// 试听样本句：跟着**音色语言**走，不跟界面语言走 —— 拿英文音色念中文，听不出音质。
+// 这是音频内容不是 UI 文案，所以放常量、不进 i18n。
+const PREVIEW_SAMPLE_ZH = '你好，这是 Symbix 语音合成试听。'
+const PREVIEW_SAMPLE_EN = 'Hello, this is a Symbix voice preview.'
+const PREVIEW_SAMPLE_JA = 'こんにちは、Symbix の音声合成テストです。'
+
+/** 从 Edge 音色 id 的语言前缀挑样本句；推不出来（云端/自建）就跟随界面语言。 */
+function previewSample(voiceId: string): string {
+  const lang = /^([a-z]{2})-/.exec((voiceId || '').toLowerCase())?.[1]
+  if (lang === 'zh') return PREVIEW_SAMPLE_ZH
+  if (lang === 'ja') return PREVIEW_SAMPLE_JA
+  if (lang) return PREVIEW_SAMPLE_EN
+  return String(locale.value).startsWith('zh') ? PREVIEW_SAMPLE_ZH : PREVIEW_SAMPLE_EN
+}
+
 // 服务参数探测(只读 GET,不改配置):把服务到底要哪些字段摊给用户看
 const ttsProbing = ref(false)
 const probeVisible = ref(false)
@@ -1385,7 +1400,7 @@ async function previewTts() {
     // 只试听当前主引擎:云端配错时直接报错,而不是静默降级到备引擎
     // (否则听到的是备引擎的声音,却以为云端已经配通了)
     const url = await previewTtsApi(
-      t('setting.voicePreviewText'),
+      previewSample(ttsForm.value.voice),
       ttsForm.value.speed,
       ttsForm.value.priority0,
     )

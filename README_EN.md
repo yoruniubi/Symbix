@@ -140,11 +140,15 @@ npm run dev          # browser dev
 npm run tauri dev    # desktop app
 ```
 
-> For local speech recognition (SenseVoice): download the native stack for your platform from the `assets-v1` release and place it under `backend/Symbix_sdk/stt/multi-platform/<platform>/`. Without it, cloud STT is used (Groq offers a free tier).
+> Speech recognition is local out of the box: the installer bundles SenseVoice (native stack + model) — works offline, no key needed. Only when running from source do you need to fetch the native stack yourself from the `assets-v1` release and place it under `backend/Symbix_sdk/stt/multi-platform/<platform>/`.
 
 ### Configure a model
 
 Pick a provider in the Model Setting panel and paste your API key. 9 vendor presets built in; any OpenAI-compatible gateway works via a custom `base_url`. TTS supports Edge TTS, OpenAI-compatible APIs, and self-hosted servers (GPT-SoVITS one-click packages connect directly).
+
+For a cloud TTS service (free tier available): grab an API key from [fish.audio](https://fish.audio/app/developers/get-started/), run one of the `curl` examples from their docs in a browser, then paste that whole command into **Settings → TTS → cloud service** and hit parse → "fill in config". The endpoint, auth header, model and voice id are all reverse-engineered from the command — no field-by-field typing.
+
+Speech recognition already runs on the bundled SenseVoice — offline, free, no model download. If you want a smaller memory footprint or your machine can't handle the local model, switch to the cloud: grab a key at [console.groq.com/keys](https://console.groq.com/keys) and paste it into **Settings → STT → OpenAI-compatible**; Groq's whisper has a free tier.
 
 ### 📁 Files & workspaces
 
