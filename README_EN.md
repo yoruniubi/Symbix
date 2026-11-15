@@ -14,7 +14,10 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 
 **[⬇️ Download](../../releases/latest)** · [Feature log (Chinese)](./当前已实现的功能.md) · [中文](README.md)
 
-<img src="docs/screenshots/demo.gif" alt="Symbix main UI: a pet that lives on your desktop, click-through, and strikes up conversation when idle" width="560"/>
+<video controls poster="docs/screenshots/poster-launch.jpg" width="560" preload="metadata">
+  <source src="https://yoruniubi.github.io/Symbix/Symbix-launch-35s.mp4" type="video/mp4">
+  Your browser cannot play embedded video — <a href="https://yoruniubi.github.io/Symbix/Symbix-launch-35s.mp4">download it here</a>.
+</video>
 
 </div>
 

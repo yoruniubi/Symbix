@@ -14,7 +14,10 @@
 
 **[⬇️ 下载安装](../../releases/latest)** · [功能与开发日志](./当前已实现的功能.md) · [English](README_EN.md)
 
-<img src="docs/screenshots/demo.gif" alt="Symbix 主界面:桌宠常驻桌面,鼠标穿透,空闲时会主动搭话" width="560"/>
+<video controls poster="docs/screenshots/poster-launch.jpg" width="560" preload="metadata">
+  <source src="https://yoruniubi.github.io/Symbix/Symbix-launch-35s.mp4" type="video/mp4">
+  你的浏览器不支持内嵌视频,<a href="https://yoruniubi.github.io/Symbix/Symbix-launch-35s.mp4">点这里下载观看</a>。
+</video>
 
 </div>
 
