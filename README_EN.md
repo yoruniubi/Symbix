@@ -14,11 +14,6 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 
 **[⬇️ Download](../../releases/latest)** · [Feature log (Chinese)](./当前已实现的功能.md) · [中文](README.md)
 
-<video controls poster="docs/screenshots/poster-launch.jpg" width="560" preload="metadata">
-  <source src="docs/Symbix-launch-35s.mp4" type="video/mp4">
-  Your browser cannot play embedded video — <a href="docs/Symbix-launch-35s.mp4">download it here</a>.
-</video>
-
 </div>
 
 **Stack**: Tauri 2 desktop shell (Vue 3 + PixiJS) + FastAPI backend + a custom Python Agent SDK (31 tools / memory / skills / MCP / scheduled jobs).

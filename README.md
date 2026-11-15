@@ -14,11 +14,6 @@
 
 **[⬇️ 下载安装](../../releases/latest)** · [功能与开发日志](./当前已实现的功能.md) · [English](README_EN.md)
 
-<video controls poster="docs/screenshots/poster-launch.jpg" width="560" preload="metadata">
-  <source src="docs/Symbix-launch-35s.mp4" type="video/mp4">
-  你的浏览器不支持内嵌视频,<a href="docs/Symbix-launch-35s.mp4">点这里下载观看</a>。
-</video>
-
 </div>
 
 <div id="中文">
