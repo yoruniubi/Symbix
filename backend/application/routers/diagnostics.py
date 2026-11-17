@@ -12,7 +12,7 @@ import time
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
+router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
 # 同一个窗口 5 分钟内只留一行,避免刷屏把日志撑爆(本身也是在防磁盘）
 _REPORT_INTERVAL_SEC = 300.0

@@ -313,6 +313,30 @@ class SymbixClient:
                     f"可用工具({len(tool_names)} 个): {', '.join(tool_names)}"
                 )
 
+        # ── 当前工作区:用户可能在文件面板里打开了某个目录 ──────────
+        # 光做权限白名单(workspace_roots)不够:模型看不到这份清单,就会默认
+        # 在 Symbix 自己的程序目录里读写,产物全落错地方。工作区在会话内稳定,
+        # 放 system 前缀不影响 prompt cache。
+        try:
+            from .tools.file_pipeline import workspace_roots as _workspace_roots
+            _ws_roots = _workspace_roots()
+        except Exception:
+            _ws_roots = []
+        if _ws_roots:
+            system += (
+                "\n\n[当前工作区]\n"
+                "用户在文件面板中打开了以下目录,这就是他说的「当前目录 / 这个项目 / 工作区」:\n"
+                + "\n".join(f"- {p}" for p in _ws_roots)
+                + "\n\n"
+                "- 读写文件、建目录、跑命令时一律用**绝对路径**(把文件名拼在上面这些目录下),"
+                "不要写 `./x` / `x` / `../x` 这类相对路径 —— 相对路径会被解析到 Symbix 自己的"
+                "程序目录,不是用户的工作区,产物会落错地方。\n"
+                "- 调用 `open_terminal` 时必须把 `working_directory` 显式设成上面第一个目录"
+                "或其子目录。\n"
+                "- 用户说「这个项目」「当前目录」「工作区」时指的就是它;不要拿 Symbix 自己的"
+                "程序目录顶替,也不要用长期记忆里的其他项目来猜。\n"
+            )
+
         # ── 当轮动态内容:匹配到的技能指南(不进 system) ─────────────
         # 紧跟在用户请求前面,模型注意力更好;且不污染 system 前缀。
         user_prefix = ""
@@ -321,9 +345,13 @@ class SymbixClient:
                 user_input or "", max_bytes=SKILL_INJECT_MAX_BYTES
             )
             if skill_injection:
+                # 关键词匹配只是「可能相关」:skills 的触发词常是裸单词(如 search/users),
+                # 写成强指令会让模型误以为必须照做,只能反过来解释一句「这技能与本轮无关」。
+                # 所以措辞留出退路,并明确要求无关时不要提及。
                 user_prefix = (
-                    "[匹配到你请求的技能,请严格按其中的指南执行;指南里提到的文件路径"
-                    "用 `skill__<name>` 工具读取]\n"
+                    "[下面这份技能指南是按关键词粗略匹配到的,可能与你的请求无关。"
+                    "只有当它确实适用于用户当前请求时才遵循其中的步骤,指南里提到的文件路径"
+                    "用 `skill__<name>` 工具读取;若无关,直接忽略,不要向用户提起它]\n"
                     + skill_injection.strip()
                     + "\n\n"
                 )

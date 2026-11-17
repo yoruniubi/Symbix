@@ -723,6 +723,28 @@ async function refreshSkillList() {
   } catch {}
   refreshingSkill.value = false
 }
+/**
+ * 面板数据请求:统一超时 + HTTP 状态检查。
+ *
+ * 原来各分支直接 `await fetch(...)` 再 `res.json()`:
+ * 接口 404/500 时 data.skills 是 undefined,列表被清空且没有任何提示
+ * (用户只看到「列表刷不出来」);后端或系统代理卡住时 fetch 不返回,
+ * 面板会一直空白。
+ */
+async function fetchPanelJson<T = any>(path: string, timeoutMs = 8000): Promise<T | null> {
+  try {
+    const res = await fetch(path, { signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok) {
+      console.warn(`[panel] ${path} → HTTP ${res.status}`)
+      return null
+    }
+    return (await res.json()) as T
+  } catch (err) {
+    console.warn(`[panel] ${path} 请求失败:`, err)
+    return null
+  }
+}
+
 async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools' | 'checkpoint' | 'risk' | 'jobs') {
   console.log('🟡 togglePanel called', panel)
   // 如果当前已经是激活状态,点击则是关闭,不需要请求
@@ -735,39 +757,29 @@ async function togglePanel(panel: 'files' | 'skill' | 'mcp' | 'native_tools' | '
 
   // 根据打开的面板动态请求后端 FastAPI
   if (panel === 'skill') {
-    try {
-      // 对应你的 FastAPI: @app.get("/skills")
-      const res = await fetch('http://127.0.0.1:8000/skills')
-      const data = await res.json()
+    // 对应你的 FastAPI: @app.get("/skills")
+    const data = await fetchPanelJson('http://127.0.0.1:8000/skills')
+    if (data?.skills) {
       skillList.value = data.skills
-    } catch (err) {
-      console.log("具体错误为:",err)
+    } else {
       messageUi.error(t('skillPanel.fetchFailShort'))
     }
   } else if (panel === 'native_tools') {
-    try {
-      const res = await fetch('http://127.0.0.1:8000/native/tools')
-      const data = await res.json()
-      nativeToolList.value = data.tools || []
-    } catch (err) {
-      console.log("获取 Native Tools 列表失败:", err)
+    const data = await fetchPanelJson('http://127.0.0.1:8000/native/tools')
+    if (data?.tools) {
+      nativeToolList.value = data.tools
+    } else {
       messageUi.error(t('nativeToolsPanel.fetchFail'))
     }
   } else if (panel === 'mcp') {
-    try {
-      const res = await fetch('http://127.0.0.1:8000/mcp/config')
-      mcpConfigData.value = await res.json()
-    } catch (err) {
-      console.log("具体错误为:",err)
+    const cfg = await fetchPanelJson('http://127.0.0.1:8000/mcp/config')
+    if (cfg) {
+      mcpConfigData.value = cfg
+    } else {
       messageUi.error(t('mcpPanel.fetchConfigFail'))
     }
-    try {
-      const res = await fetch('http://127.0.0.1:8000/mcp/tools')
-      const data = await res.json()
-      mcpToolList.value = data.tools || []
-    } catch (err) {
-      console.log("获取MCP工具列表失败:", err)
-    }
+    const mcpTools = await fetchPanelJson('http://127.0.0.1:8000/mcp/tools', 15000)
+    if (mcpTools?.tools) mcpToolList.value = mcpTools.tools
     // 按 server 分组获取 + 状态
     await refreshMcpPanel()
   } else if (panel === 'risk') {

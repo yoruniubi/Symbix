@@ -29,12 +29,22 @@ def open_terminal(
     Args:
         command: 要执行的命令；为空且 visible=True 时只打开终端窗口
         shell: 终端类型，'powershell' 或 'cmd'
-        working_directory: 工作目录
+        working_directory: 工作目录;传 "." 时若用户打开了工作区,默认落到该工作区
         timeout: 后台模式超时（秒）
         visible: 是否弹出可见窗口
     """
     shell = (shell or "powershell").strip().lower()
     cwd = working_directory or "."
+    # 模型常常不传 working_directory。此时若用户打开了工作区,默认进工作区,
+    # 而不是 Symbix 自己的项目目录(否则 git/ls 全跑在错误的地方)。
+    if str(cwd).strip() in (".", "./"):
+        try:
+            from Symbix_sdk.tools.file_pipeline import workspace_roots as _ws_roots
+            _roots = _ws_roots()
+        except Exception:
+            _roots = []
+        if _roots:
+            cwd = _roots[0]
     try:
         cwd = assert_path_allowed(cwd)
     except Exception as e:
