@@ -131,6 +131,12 @@ def _collect_rounds(records: list[dict]) -> list[tuple[str, list[dict], bool, di
             pos = index.get(round_id)
             if pos is not None:
                 groups[pos][3] = record
+            else:
+                # 这轮没有任何工具调用 —— 可能是纯对话,也可能是上游 429/鉴权
+                # 在第一枪就把流掐断了。后者必须进时间线:否则模型完全不知道
+                # 「刚才试过、失败了」,只会从头再走一遍,表现就是拖沓。
+                groups.append([round_id, [], False, record])
+                index[round_id] = len(groups) - 1
             continue
         if kind != "tool_call":
             continue
@@ -141,7 +147,12 @@ def _collect_rounds(records: list[dict]) -> list[tuple[str, list[dict], bool, di
         else:
             groups.append([round_id, [record], superseded, None])
             index[round_id] = len(groups) - 1
-    return [(rid, calls, sup, note) for rid, calls, sup, note in groups]
+    # 只保留「做过事」或「失败了」的轮次:纯聊天轮(ok 且零工具)不该占时间线
+    out: list[tuple[str, list[dict], bool, Any]] = []
+    for rid, calls, sup, note in groups:
+        if calls or (note is not None and (note.get("status") or "ok") != "ok"):
+            out.append((rid, calls, sup, note))
+    return out
 
 
 # 默认表头:给主 Agent 自己看
@@ -197,3 +208,262 @@ def build_recent_tool_digest(session_id: str, header: str = DIGEST_HEADER,
         used += len(block)
     blocks.reverse()
     return header + "\n" + "\n".join(blocks)
+
+# ═══════════════════════════════════════════════════════════════════
+# 任务进度总览
+#
+# 上面的「近期工具记录」只带最近 DIGEST_ROUNDS 轮 —— 轮次一长,前面干了什么
+# 就彻底看不到了;会话压缩又只留 200 字摘要(还不含工具细节)。于是 429/断线
+# 之后模型再接手时,对「这个任务做到哪一步」是空白的,只能从头探索一遍。
+#
+# 这一段不分轮次,把整个会话的动作按「读过/改过/跑过/失败过」去重聚合成几行,
+# 无论从哪续上都能看到全局。
+# ═══════════════════════════════════════════════════════════════════
+
+PROGRESS_MAX_CHARS = 420
+PROGRESS_MAX_PER_KIND = 6
+PROGRESS_FETCH_RECORDS = 400
+
+PROGRESS_HEADER = (
+    "[本次任务进度](整个会话累计,不是只看最近几轮;"
+    "续跑前先看这里,确认做到哪一步,别从头再来一遍)"
+)
+
+_READ_TOOLS = frozenset({
+    "read_file", "read", "list_dir", "list_files", "list_directory",
+    "read_many", "read_office", "ocr_image", "read_excel", "read_docx", "read_pdf",
+})
+# 搜索类单独归类:它们的「操作对象」是搜的那个词,不是搜索范围 ——
+# 把 D:/proj 显示成 proj 对模型没有任何信息量。
+_SEARCH_TOOLS = frozenset({"grep", "search_files", "search_in_files"})
+_WRITE_TOOLS = frozenset({
+    "write_file", "edit_file", "replace_in_file", "create_file", "apply_patch",
+    "delete_file", "move_file", "copy_file", "write_office", "make_dir",
+})
+_RUN_TOOLS = frozenset({
+    "open_terminal", "run_command", "execute_command", "run_script",
+    "run_python", "run_node",
+})
+
+_PATH_KEYS = ("path", "file_path", "old_path", "new_path", "target", "from", "to")
+_CMD_KEYS = ("command", "cmd", "script", "code")
+_QUERY_KEYS = ("query", "pattern", "keyword", "url")
+
+
+def _pick_target(args: dict, keys: tuple[str, ...]) -> str:
+    """从工具参数里挑出最能代表「操作对象」的那个值。"""
+    if not isinstance(args, dict):
+        return ""
+    for k in keys:
+        v = args.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _short_name(text: str, limit: int = 28) -> str:
+    """路径取文件名,命令取首行;超长截断 —— 总览里不铺开细节。"""
+    text = (text or "").strip().splitlines()[0] if text else ""
+    # 同时兼容 Windows 与 POSIX 分隔符(记录里两种都出现过)
+    base = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or text
+    return base if len(base) <= limit else base[: limit - 1] + "…"
+
+
+# 工具输出落库时的截断长度:够模型判断「这一步拿到了什么」,
+# 又不至于让 memory.db 膨胀。失败的输出往往最有用,所以给得比摘要宽松些。
+TOOL_MEMO_RESULT_CHARS = 500
+TOOL_MEMO_MAX_CHARS = 3000
+
+
+def format_tool_memo(round_no: int, results: list[dict],
+                     max_chars: int = TOOL_MEMO_MAX_CHARS) -> str:
+    """把一轮的工具执行结果压成一条可落库的 memo。
+
+    一轮压成一条(而不是一个工具一条):40 轮 × 3 工具 = 120 条会把
+    messages 表撑爆,也会让缩略窗口里全是 tool、对话只剩几条。
+
+    Args:
+        round_no: 第几轮(从 1 起)
+        results: [{name, arguments(JSON 字符串), content(工具输出)}]
+        max_chars: 单条 memo 上限
+
+    Returns:
+        role="tool" 消息的 content;没有可用结果时返回空串
+    """
+    if not results:
+        return ""
+    parts: list[str] = []
+    for item in results:
+        name = (item.get("name") or "tool").strip()
+        raw_args = item.get("arguments")
+        args: dict = {}
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args.strip() else {}
+            except Exception:
+                args = {}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        # 路径要给全:只留 basename 的话 D:/a/server.py 和 D:/b/server.py
+        # 会混成同一个,续跑时看到「读过 server.py」等于没说。
+        # _QUERY_KEYS 兜底是为了 grep/search 这类工具能显示搜索词而非空壳。
+        target = (_pick_target(args, _PATH_KEYS)
+                  or _pick_target(args, _CMD_KEYS)
+                  or _pick_target(args, _QUERY_KEYS))
+        head = f"{name}({target[:80]})" if target else name
+        out = (item.get("content") or "").strip()
+        snippet = _one_line(out, TOOL_MEMO_RESULT_CHARS)
+        total = len(out)
+        # 标注原始长度:模型据此判断「这个文件很大,需要分段读」还是「就几行」
+        tail = f"…(共 {total} 字符)" if total > TOOL_MEMO_RESULT_CHARS else ""
+        parts.append(f"{head} → {snippet}{tail}" if snippet else f"{head} → (空输出)")
+
+    text = f"[第{round_no}轮工具] " + "; ".join(parts)
+    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
+
+
+def extract_file_ops(session_id: str, limit: int = 30) -> dict[str, list[str]]:
+    """从 checkpoint 里抽出本会话「读过 / 改过」的文件全量清单。
+
+    数据源是 checkpoint_records,独立于会话压缩 —— 长任务跨多少次压缩都不会丢,
+    所以每次现算即可,不需要像 pi 那样把清单在摘要之间累积传递。
+
+    Args:
+        session_id: 会话 id
+        limit: 每类最多列几个
+
+    Returns:
+        {"read": [...], "modified": [...]}，路径去重且保序;无记录返回空列表
+    """
+    out: dict[str, list[str]] = {"read": [], "modified": []}
+    if not session_id:
+        return out
+    try:
+        records = get_recorder().store.list_recent(
+            session_id, limit=PROGRESS_FETCH_RECORDS, include_superseded=True
+        )
+    except Exception:
+        return out
+
+    seen: dict[str, set[str]] = {"read": set(), "modified": set()}
+
+    def _add(bucket: str, path: str) -> None:
+        if not path or path in seen[bucket] or len(out[bucket]) >= limit:
+            return
+        seen[bucket].add(path)
+        out[bucket].append(path)
+
+    for record in records:
+        if record.get("kind") != "tool_call":
+            continue
+        payload = record.get("payload") or {}
+        name = (payload.get("tool_name") or "").strip()
+        args = payload.get("arguments") or {}
+        if name in _WRITE_TOOLS:
+            _add("modified", _pick_target(args, ("path", "file_path", "new_path", "target", "to")))
+            # 改之前往往读过一次,顺手也记进读过(edit 的 old_path 就是原文件)
+            _add("read", _pick_target(args, ("old_path", "file_path", "path")))
+        elif name in _READ_TOOLS:
+            _add("read", _pick_target(args, _PATH_KEYS))
+    return out
+
+
+def format_file_ops_block(ops: dict[str, list[str]], max_chars: int = 900) -> str:
+    """把文件清单排成 pi 那种 <read-files> / <modified-files> 块。"""
+    read = ops.get("read") or []
+    modified = ops.get("modified") or []
+    if not read and not modified:
+        return ""
+    parts: list[str] = []
+    if read:
+        parts.append("<read-files>\n" + "\n".join(read) + "\n</read-files>")
+    if modified:
+        parts.append("<modified-files>\n" + "\n".join(modified) + "\n</modified-files>")
+    text = "\n".join(parts)
+    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
+
+
+def build_task_progress(session_id: str, max_chars: int = PROGRESS_MAX_CHARS) -> str:
+    """把整个会话的动作聚合成一段「做到哪一步」的总览;轮次太少时返回空串。
+
+    Args:
+        session_id: 会话 id
+        max_chars: 总长上限
+
+    Returns:
+        可直接拼进用户消息的文本;只有一轮或读不到记录时返回空串
+    """
+    if not session_id:
+        return ""
+    try:
+        records = get_recorder().store.list_recent(
+            session_id, limit=PROGRESS_FETCH_RECORDS, include_superseded=True
+        )
+    except Exception:
+        return ""
+
+    groups = _collect_rounds(records)
+    # 只有一轮时,近期工具记录已经把它说全了,再来一段总览纯属重复占字数
+    if len(groups) < 2:
+        return ""
+
+    read: list[str] = []
+    wrote: list[str] = []
+    ran: list[str] = []
+    ran_fail: dict[str, int] = {}
+    err_kinds: dict[str, int] = {}
+
+    def _add(bucket: list[str], item: str) -> None:
+        if item and item not in bucket:
+            bucket.append(item)
+
+    for _, calls, _, note in groups:
+        for rec in calls:
+            payload = rec.get("payload") or {}
+            name = (payload.get("tool_name") or "").strip()
+            args = payload.get("arguments") or {}
+            ok = bool(payload.get("ok"))
+            if name in _SEARCH_TOOLS:
+                _add(read, _short_name(_pick_target(args, _QUERY_KEYS) or _pick_target(args, _PATH_KEYS)))
+            elif name in _READ_TOOLS:
+                _add(read, _short_name(_pick_target(args, _PATH_KEYS + _QUERY_KEYS)))
+            elif name in _WRITE_TOOLS:
+                _add(wrote, _short_name(_pick_target(args, _PATH_KEYS)))
+            elif name in _RUN_TOOLS:
+                cmd = _short_name(_pick_target(args, _CMD_KEYS))
+                _add(ran, cmd)
+                if not ok and cmd:
+                    ran_fail[cmd] = ran_fail.get(cmd, 0) + 1
+        # 轮级失败:429 限流 / 鉴权 / 5xx 各记一次,让模型知道「不是我写错了,是上游挂了」
+        status = (note or {}).get("status") or "ok"
+        if status != "ok":
+            err = (note or {}).get("error") or status
+            kind = "429 限流" if "429" in err else ("鉴权失败" if "401" in err or "403" in err else _short_name(err, 24))
+            err_kinds[kind] = err_kinds.get(kind, 0) + 1
+
+    lines: list[str] = []
+    if read:
+        lines.append(_fmt_line("读过", read, "个"))
+    if wrote:
+        lines.append(_fmt_line("改过", wrote, "个"))
+    if ran:
+        shown = [f"{c}(失败 {ran_fail[c]} 次)" if c in ran_fail else c for c in ran]
+        lines.append(_fmt_line("跑过", shown, "条"))
+    if err_kinds:
+        lines.append("- 失败过: " + ", ".join(f"{k}×{v}" for k, v in err_kinds.items()))
+
+    if not lines:
+        return ""
+    out = PROGRESS_HEADER + "\n" + "\n".join(lines)
+    if len(out) <= max_chars:
+        return out
+    # 超长就砍到上限(总览只是索引,细节仍靠上面的近期记录)
+    return out[: max_chars - 1] + "…"
+
+
+def _fmt_line(label: str, items: list[str], suffix: str) -> str:
+    total = len(items)
+    shown = items[:PROGRESS_MAX_PER_KIND]
+    more = total - len(shown)
+    body = ", ".join(shown) + (f" 等 {total} {suffix}" if more else "")
+    return f"- {label} {total} {suffix}: {body}"

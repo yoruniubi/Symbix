@@ -24,7 +24,11 @@ from application.state import (
 )
 from application.services.risk_context import classify_for_chat, maybe_apply_trust_command
 from application.services import injection as chat_injection
-from application.services.round_digest import build_recent_tool_digest
+from application.services.round_digest import (
+    build_recent_tool_digest,
+    build_task_progress,
+    format_tool_memo,
+)
 from application.services.extension_status import build_extension_status
 from application.services.memory_ops import (
     maybe_compress_session,
@@ -65,6 +69,26 @@ from application.routers.chat.helpers import (
 
 router = APIRouter(tags=["chat"])
 
+
+def _humanize_upstream_error(raw: str) -> str:
+    """把上游错误体翻成一句能写进时间线的短话。
+
+    429 时上游通常不给响应体,原样会是 `HTTP 429: ` 这种空尾巴 ——
+    直接写进 round 记录,下一轮模型看到「error」也说不出是限流,
+    照样从头重试一遍。
+    """
+    text = (raw or "").strip().rstrip(":").strip()
+    if "429" in text:
+        return "上游限流(HTTP 429),重试到上限仍未成功,本轮未完成"
+    if "401" in text or "403" in text:
+        return f"上游鉴权失败({text[:60]}),本轮未完成"
+    return f"{text},本轮未完成" if text else "上游未返回内容,本轮未完成"
+
+
+# 连续多少轮「整轮失败」(429 重试到上限 / 鉴权失败)就熔断收尾。
+# relaxed 档允许 80 轮工具循环,每轮 429 内部还要退避重试约 9s ——
+# 不熔断的话,一次限流能让 Agent 空转几十分钟,用户只看到它在原地打转。
+MAX_CONSECUTIVE_UPSTREAM_ERRORS = 3
 
 def _tool_call_signature(name: str, arguments) -> tuple:
     """工具调用签名(用于本轮去重)。参数解析失败时退化为原字符串。"""
@@ -158,7 +182,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 note_user_interaction()
             except Exception:
                 pass
-            history = memory.get_compressed_history(request.session_id, recent_limit=20)
+            # 28 不是 20:工具 memo 也进历史了,名额不给够会把对话挤出去
+            history = memory.get_compressed_history(request.session_id, recent_limit=28)
             act_decision = act_mode_controller.decide(mem_msg, history[:-1])
             act_mode = act_decision.judgment.mode.value
             act_plan = act_decision.plan
@@ -179,6 +204,13 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             dyn_parts.append(current_time_line())
             if dyn_mem:
                 dyn_parts.append(dyn_mem)
+            # 「本次任务进度」:跨轮聚合(读过/改过/跑过/失败过),不限最近几轮。
+            # 近期工具记录只带 DIGEST_ROUNDS 轮,长任务前面干过什么会看不到;
+            # 429/断线后续跑时模型对「做到哪一步」一片空白,只能从头探索。
+            # 这段就是给它的全局进度索引,放在明细之前先定调。
+            task_progress = build_task_progress(request.session_id)
+            if task_progress:
+                dyn_parts.append(task_progress)
             # 「最近几轮做了什么」:来自 checkpoint 的工具调用摘要,避免模型为了知道自己做过什么
             # 去重读文件(那更烧 token)。没有工具记录的轮次不产生任何开销。
             tool_digest = build_recent_tool_digest(request.session_id)
@@ -239,6 +271,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             _batcher = _DeltaBatcher()
             # token 统计:上游若在 done 里带回真实 usage,从这里开始收集
             last_usage: dict | None = None
+            # 上游把这一轮打断了(429/鉴权/5xx)时记在这里,收尾时写进 round 的
+            # status —— 否则时间线会把这轮标成「已完成」,下一轮模型据此以为任务
+            # 做完了,反而停下来不再推进。
+            round_error: str | None = None
+            # 连续整轮失败计数:到上限就熔断,别在限流里空转到轮次用尽
+            consecutive_upstream_errors = 0
             async for event in symbix_client.chat_stream(
                 user_input=user_for_llm,
                 history=history[:-1],
@@ -274,7 +312,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     if event.get("usage"):
                         last_usage = event["usage"]
                     if event.get("error"):
-                        print(f"[chat_stream] 内容不完整: {event['error']}")
+                        round_error = _humanize_upstream_error(event["error"])
+                        print(f"[chat_stream] 内容不完整: {round_error}")
 
             flushed = _batcher.flush()
             if flushed is not None:
@@ -288,6 +327,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             call_counts: dict[tuple, int] = {}
             # 连续被拦次数:模型无视提示原地打转时靠它收尾
             repeat_blocked_streak = 0
+            # 首轮就撞 429/鉴权时,while 里的 round_error = None 会把它清掉,
+            # 先在这里计入熔断基数,免得首轮失败被当成「一切正常」。
+            if round_error:
+                consecutive_upstream_errors += 1
 
             # 长任务期间收到的插话先攒这里,下一轮模型调用前拼进上下文。
             # 工具一根命令跑十几分钟时「不在轮间隙」,插话没地方消费 ——
@@ -352,6 +395,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             if tool_calls_raw and (not max_rounds or round_count < max_rounds):
                 await chat_injection.set_tool_loop_active(request.session_id, True)
             while tool_calls_raw and (not max_rounds or round_count < max_rounds):
+                # 连续整轮失败:上游限流/鉴权挂了,再开新一轮也只是再撞一次
+                if consecutive_upstream_errors >= MAX_CONSECUTIVE_UPSTREAM_ERRORS:
+                    print(f"[stream] 连续 {consecutive_upstream_errors} 轮上游失败,熔断收尾")
+                    break
                 # 客户端断连检测:前端 abort / 删 session 会断 SSE 连接,后端需主动停、避免后端继续跑 tool。
                 if await http_request.is_disconnected():
                     print(f"[stream] client disconnected at round {round_count}, stopping generation")
@@ -360,18 +407,30 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 for _late in late_injects:
                     running_msgs.append({
                         "role": "user",
-                        "content": f"[用户在任务进行中补充] {_late}",
+                        "content": "[用户在工具执行过程中插话]\n"
+                        f"「{_late}」\n"
+                        "注意:这不是任务补充,是他直接跟你说话。他问什么先回答什么 —— "
+                        "尤其「你做了什么 / 到哪一步了」这类,直接用上文已有的工具记录作答, "
+                        "不要为了确认去重跑工具。回答完再决定要不要继续手上的活; "
+                        "他没让你继续时,不要接着发起新的工具调用。",
                     })
                 late_injects.clear()
                 _inject = await chat_injection.take_injection(request.session_id)
                 if _inject:
                     running_msgs.append({
                         "role": "user",
-                        "content": f"[用户在任务进行中补充] {_inject}",
+                        "content": "[用户在工具执行过程中插话]\n"
+                        f"「{_inject}」\n"
+                        "注意:这不是任务补充,是他直接跟你说话。他问什么先回答什么 —— "
+                        "尤其「你做了什么 / 到哪一步了」这类,直接用上文已有的工具记录作答, "
+                        "不要为了确认去重跑工具。回答完再决定要不要继续手上的活; "
+                        "他没让你继续时,不要接着发起新的工具调用。",
                     })
                     yield format_sse({"type": "user_injected", "text": _inject, "round": round_count + 1})
                     print(f"[chat_stream] round {round_count}: injected user message")
                 round_count += 1
+                # 每轮重新计:round_error 只描述本轮,供熔断判断
+                round_error = None
                 # 本轮实际执行(拿到结果)的工具,供轮末累积进 running_msgs。
                 round_results: list[dict] = []
                 # 本轮的签名集合:同一轮里出现两条一模一样的调用 → 直接拦(见 check_repeat_tool_call)
@@ -772,20 +831,44 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         if e.get("usage"):
                             last_usage = e["usage"]
                         if e.get("error"):
-                            print(f"[chat_stream 轮次] 内容不完整: {e['error']}")
+                            round_error = _humanize_upstream_error(e["error"])
+                            print(f"[chat_stream 轮次] 内容不完整: {round_error}")
 
                 if full_text_round:
                     full_text = full_text_round
+                # 工具输出落库(memory 表原本只有 user/assistant,请求一结束
+                # 工具结果就没了)。一轮压成一条,40 轮也只有 40 条 ——
+                # 这样断线续跑、上下文压缩、子 Agent 都能看到读过什么、改了什么。
+                if round_results:
+                    try:
+                        memory.add(
+                            request.session_id, "tool",
+                            format_tool_memo(round_count, round_results),
+                        )
+                    except Exception as _e:
+                        print(f"[stream] 工具 memo 落库失败: {_e}")
+                if round_error:
+                    consecutive_upstream_errors += 1
+                else:
+                    consecutive_upstream_errors = 0
 
             # 循环结束(不再有 tool_calls / 轮次用尽 / 被中断):这轮不会再有轮间隙了
             await chat_injection.set_tool_loop_active(request.session_id, False)
             # 工具轮次用尽或不再有 tool_calls 后，若模型未给出最终文本，
             # 给出兑底提示，避免前端看起来“卡住/空回复”。
             if not full_text:
-                full_text = (
-                    f"[已完成 {round_count} 轮工具调用，但模型未返回最终文本。"
-                    "可能已达到工具调用上限，请继续提问以推进。]"
-                )
+                if round_error:
+                    # 别再写成「请继续提问以推进」—— 用户继续问,模型也不知道
+                    # 刚才为什么失败,只会原样再撞一次。
+                    full_text = (
+                        f"[本轮执行被打断:{round_error}。"
+                        f"已完成 {round_count} 轮工具调用,已停止续跑。]"
+                    )
+                else:
+                    full_text = (
+                        f"[已完成 {round_count} 轮工具调用，但模型未返回最终文本。"
+                        "可能已达到工具调用上限，请继续提问以推进。]"
+                    )
 
             memory.add(request.session_id, "assistant", full_text)
             yield format_sse({
@@ -807,6 +890,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 mem_msg, full_text, last_reasoning,
                 ckpt_tool_count, ckpt_failed,
                 duration_ms=int((asyncio.get_event_loop().time() - ckpt_start_ts) * 1000),
+                status="error" if round_error else "ok",
+                error=round_error,
             )
             yield "data: [DONE]\n\n"
 
@@ -873,7 +958,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 @router.get("/history/{session_id}")
 async def get_history(session_id: str, limit: int = 20):
     try:
-        history = memory.get_history(session_id, limit=limit)
+        # 前端不认识 role=tool,这里只返回对话;工具 memo 仍留在库里
+        # 供上下文组装与压缩使用。
+        history = memory.get_history(session_id, limit=limit,
+                                     roles=("user", "assistant"))
         summary = memory.get_summary(session_id)
         return {
             "session_id": session_id,

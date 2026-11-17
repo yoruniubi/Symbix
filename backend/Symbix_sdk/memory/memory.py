@@ -67,23 +67,40 @@ class ConversationMemory:
             self.conn.commit()
             return cur.lastrowid
 
-    def get_history(self, session_id: str, limit: int = 20) -> list[dict]:
-        """原始历史（最新 limit 条，正序）"""
+    def get_history(self, session_id: str, limit: int = 20,
+                    roles: tuple[str, ...] | None = None) -> list[dict]:
+        """原始历史（最新 limit 条，正序）。
+
+        roles 为 None 时返回全部角色；前端 /history 与弹幕去重要传
+        ("user", "assistant")，否则会把 role="tool" 的工具 memo 也吐出去。
+        """
+        sql = "SELECT role, content FROM messages WHERE session_id = ?"
+        params: list = [session_id]
+        if roles:
+            sql += " AND role IN (%s)" % ",".join("?" * len(roles))
+            params.extend(roles)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
         with self._lock:
-            cursor = self.conn.execute(
-                "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-                (session_id, limit),
-            )
+            cursor = self.conn.execute(sql, tuple(params))
             rows = cursor.fetchall()[::-1]
         return [{"role": r, "content": c} for r, c in rows]
 
-    def get_history_with_ids(self, session_id: str, limit: int = 100) -> list[dict]:
-        """带 id 的历史，用于压缩判断"""
+    def get_history_with_ids(self, session_id: str, limit: int = 100,
+                             roles: tuple[str, ...] | None = None) -> list[dict]:
+        """带 id 的历史，用于压缩判断。
+
+        roles 为 None 时包含 tool memo —— 摘要正需要这些工具细节。
+        """
+        sql = "SELECT id, role, content FROM messages WHERE session_id = ?"
+        params: list = [session_id]
+        if roles:
+            sql += " AND role IN (%s)" % ",".join("?" * len(roles))
+            params.extend(roles)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
         with self._lock:
-            cursor = self.conn.execute(
-                "SELECT id, role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-                (session_id, limit),
-            )
+            cursor = self.conn.execute(sql, tuple(params))
             rows = cursor.fetchall()[::-1]
         return [{"id": i, "role": r, "content": c} for i, r, c in rows]
 

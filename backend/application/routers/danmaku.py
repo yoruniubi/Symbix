@@ -88,7 +88,8 @@ async def seed_proactive_message(body: ProactiveSeedBody):
     text = (body.text or "").strip()
     if not text or not body.session_id:
         return {"status": "skipped"}
-    recent = memory.get_history(body.session_id, limit=6)
+    recent = memory.get_history(body.session_id, limit=6,
+                               roles=("user", "assistant"))
     if any(r.get("role") == "assistant" and r.get("content") == text for r in recent):
         return {"status": "ok", "dedup": True}
     memory.add(body.session_id, "assistant", text)

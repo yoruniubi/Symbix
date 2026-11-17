@@ -115,7 +115,7 @@ class JobRunner:
         ckpt_round_id = ""
         try:
             self.memory.add(sid, "user", job["prompt"])
-            history = self.memory.get_compressed_history(sid, recent_limit=20)
+            history = self.memory.get_compressed_history(sid, recent_limit=28)
 
             provider = self.provider_registry.get_active()
             api_key = provider.api_key

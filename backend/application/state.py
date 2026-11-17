@@ -255,9 +255,11 @@ def cancel_session_tasks(sid: str) -> int:
 kill_session_activity = cancel_session_tasks  # 语义别名:删除会话时一键终止
 
 # ============ 上下文压缩/记忆提取阈值 ============
-# 压缩：消息多于 16 条时把旧消息摘要掉，只留最近 12 条
-COMPRESS_THRESHOLD = 16
-RECENT_KEEP = 12
+# 压缩：消息多于 24 条时把旧消息摘要掉，只留最近 18 条。
+# 工具输出也落库了(role="tool",每轮一条)，会占掉一部分名额 ——
+# 阈值不跟着放宽的话，tool 会把对话挤出去，等于白改。
+COMPRESS_THRESHOLD = 24
+RECENT_KEEP = 18
 # 记忆提取：门槛比压缩低（短对话也可能有值得记的事），
 # 且按游标增量提取，只有新增消息够多才再跑一次，避免重复调用模型
 EXTRACT_THRESHOLD = 6

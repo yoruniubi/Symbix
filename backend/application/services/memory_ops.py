@@ -154,6 +154,13 @@ async def maybe_extract_memories(
 # maybe_compress_session  —— 上下文压缩（不变）
 # ═══════════════════════════════════════════════════════════════════
 
+# 单条消息序列化时的截断长度。以前是 300,等于只留个开头 ——
+# 「改了什么 / 报了什么错」全在被砍掉的部分里。pi 用的是 2000。
+COMPRESS_MSG_CHARS = 2000
+# 摘要请求本身的总字符预算,防止一次压太多把上下文撑爆。
+COMPRESS_INPUT_CHARS = 30000
+
+
 async def maybe_compress_session(
     session_id: str,
     api_key: str = "",
@@ -184,15 +191,47 @@ async def maybe_compress_session(
     if len(old_msgs) < 4:
         return
 
-    dialogue = "\n".join(
-        f"{m['role']}: {m['content'][:300]}" for m in old_msgs
-    )
+    lines: list[str] = []
+    budget = COMPRESS_INPUT_CHARS
+    for msg in old_msgs:
+        line = f"{msg['role']}: {(msg['content'] or '')[:COMPRESS_MSG_CHARS]}"
+        if budget - len(line) <= 0:
+            break
+        lines.append(line)
+        budget -= len(line) + 1
+    dialogue = "\n".join(lines)
     prev_summary = existing["summary"] if existing else ""
+    # 结构化摘要(对齐 pi 的 compaction 格式)。自由文本摘要丢掉的正是
+    # 「做到哪一步」—— 而那恰恰是断线续跑时唯一能回答问题的东西。
+    file_block = ""
+    try:
+        from application.services.round_digest import extract_file_ops, format_file_ops_block
+        file_block = format_file_ops_block(extract_file_ops(session_id))
+    except Exception as e:
+        print(f"[Memory] 提取文件清单失败,摘要将不含该段: {e}")
+
     prompt = (
-        "请将以下对话内容压缩为简洁的中文摘要（200字以内），"
-        "保留关键事实、结论、用户意图与未完成事项。"
-        "只输出摘要正文，不要标题或解释。\n\n"
+        "请把以下对话压缩成**结构化中文摘要**,严格用下面这些小标题,"
+        "信息不足的段落写「(无)」,不要加别的标题,也不要写解释性开场白。\n\n"
+        "## 目标\n用户想达成什么\n\n"
+        "## 约束与偏好\n用户明确提出的要求、忌讳\n\n"
+        "## 进度\n"
+        "### 已完成\n- 做完且确认成功的事\n"
+        "### 进行中\n- 此刻还没做完的事(最重要,续跑全靠它)\n"
+        "### 受阻\n- 失败过、被报错或限流挡住的事\n\n"
+        "## 关键决策\n- 做了什么选择、为什么\n\n"
+        "## 下一步\n1. 接下来该做什么\n\n"
+        "## 关键上下文\n- 续跑必须知道的事实(文件路径、命令、报错原文)\n\n"
+        "注意:凡对话里出现过具体操作(读了哪个文件、改了哪个、跑了什么命令、"
+        "哪一步失败),都要点名写清楚,不要概括成「进行了若干操作」。\n"
     )
+    if file_block:
+        prompt += (
+            "\n以下文件清单由系统从工具调用记录里精确提取,"
+            "请**原样附在摘要最后**,不要改写、不要增删:\n"
+            f"{file_block}\n"
+        )
+
     if prev_summary:
         prompt += f"【已有摘要】\n{prev_summary}\n\n"
     prompt += f"【需压缩的新对话】\n{dialogue}"
