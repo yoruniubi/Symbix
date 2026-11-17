@@ -14,6 +14,12 @@
 
 **[⬇️ 下载安装](../../releases/latest)** · [功能与开发日志](./当前已实现的功能.md) · [English](README_EN.md)
 
+
+
+https://github.com/user-attachments/assets/e79dab23-a440-4901-a3a6-d92135a0739e
+
+
+
 </div>
 
 <div id="中文">

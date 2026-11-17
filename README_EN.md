@@ -14,6 +14,10 @@ Symbix puts an **AI Agent** inside a **desktop pet**: state what you need, and i
 
 **[⬇️ Download](../../releases/latest)** · [Feature log (Chinese)](./当前已实现的功能.md) · [中文](README.md)
 
+
+https://github.com/user-attachments/assets/5c8d7f29-7ac0-423a-8592-0855031d0158
+
+
 </div>
 
 **Stack**: Tauri 2 desktop shell (Vue 3 + PixiJS) + FastAPI backend + a custom Python Agent SDK (31 tools / memory / skills / MCP / scheduled jobs).
