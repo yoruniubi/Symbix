@@ -4,6 +4,12 @@ import json
 from datetime import datetime
 from threading import Lock
 
+# 工具 memo 落库用的内部角色名。**不能**用 "tool":OpenAI 兼容协议里
+# role="tool" 必须带 tool_call_id 并与 assistant 的 tool_calls 配对,
+# 而从历史里读回来的 memo 没有这些字段,发给上游会被判 400。
+TOOL_MEMO_ROLE = "tool_memo"
+
+
 class ConversationMemory:
     """基于 SQLite 的对话历史存储（线程安全）
 
@@ -216,15 +222,34 @@ class ConversationMemory:
             )
             self.conn.commit()
 
+    @staticmethod
+    def as_upstream_message(msg: dict) -> dict:
+        """把库里的消息转成能直接发给上游的 messages 元素。
+
+        工具 memo 不能以 role="tool" 发出去(缺 tool_call_id 会被判 400),
+        这里改成 user 并加前缀说明。不用 system 是因为 system 一变,
+        上游的 prompt cache 就整段失效。
+        """
+        role = msg.get("role")
+        if role in (TOOL_MEMO_ROLE, "tool"):
+            return {
+                "role": "user",
+                "content": f"[工具执行记录,供你继续这轮任务时参考]\n{msg.get('content', '')}",
+            }
+        return {"role": role, "content": msg.get("content", "")}
+
     def get_compressed_history(
         self, session_id: str, recent_limit: int = 12
     ) -> list[dict]:
         """返回压缩后的上下文：
         - 若有摘要：[{role:system, content:摘要}, ...最近 recent_limit 条]
         - 若无摘要：最近 recent_limit 条
+
+        返回的每一条都经过 as_upstream_message,可以直接进上游 messages。
         """
         summary_info = self.get_summary(session_id)
-        recent = self.get_history(session_id, limit=recent_limit)
+        recent = [self.as_upstream_message(x)
+                  for x in self.get_history(session_id, limit=recent_limit)]
 
         if not summary_info or not summary_info.get("summary"):
             return recent

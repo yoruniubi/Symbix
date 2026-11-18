@@ -40,6 +40,7 @@ from Symbix_sdk.checkpoint import (
     set_current as _ctx_set_current,
     get_recorder as _get_recorder,
 )
+from Symbix_sdk.memory.memory import TOOL_MEMO_ROLE
 from Symbix_sdk.time_context import current_time_line
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
@@ -841,8 +842,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 # 这样断线续跑、上下文压缩、子 Agent 都能看到读过什么、改了什么。
                 if round_results:
                     try:
+                        # 用内部角色名而不是 "tool":后者是协议关键字,
+                        # 从历史读回来直接发会被上游判 400。
                         memory.add(
-                            request.session_id, "tool",
+                            request.session_id, TOOL_MEMO_ROLE,
                             format_tool_memo(round_count, round_results),
                         )
                     except Exception as _e:

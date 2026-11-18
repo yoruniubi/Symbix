@@ -20,6 +20,29 @@ SKILL_INJECT_MAX_BYTES = 12000
 
 # 流式读取的空闲上限:上游「接了连接但不发数据」时,靠它把等待打断。
 # 定时任务这类无人值守链路会传更短的值,见 job_schedule.runner.JOB_READ_TIMEOUT。
+
+# 记下哪些 (base_url, model) 要求「带 tools 时必须显式关推理」。
+# 上游原话:Function tools with reasoning_effort are not supported for <model>
+# in /v1/chat/completions. ... set reasoning_effort to 'none'.
+# 进程级记忆:第一次撞上并重试成功后,后续请求直接带 none,不再多打一次。
+_REASONING_NONE_KEYS: set[str] = set()
+
+
+def _needs_reasoning_none(error_text: str) -> bool:
+    """上游是否在抱怨「function tools 与 reasoning_effort 互斥」。
+
+    Args:
+        error_text: 上游返回的错误正文
+
+    Returns:
+        True 表示可以用 reasoning_effort="none" 重试解决
+    """
+    low = (error_text or "").lower()
+    if "reasoning_effort" not in low:
+        return False
+    return "function tools" in low or "chat/completions" in low
+
+
 DEFAULT_READ_TIMEOUT = 300.0
 
 # 单条工具结果**进上下文**时的字符上限(保头保尾,中间省略并给模型指路)。
@@ -827,68 +850,86 @@ class SymbixClient:
         usage_acc: dict | None = None
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", url, headers=headers, json=body) as resp:
-                if resp.status_code != 200:
-                    error_text = await resp.aread()
-                    print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
-                    # 把状态码交给重试外壳决定「退避重发」还是「判失败」
-                    yield {"type": "http_error", "status": resp.status_code,
-                           "error": error_text.decode(errors="replace")[:300],
-                           "retry_after": resp.headers.get("retry-after")}
-                    return
+            _reason_key = f"{url}|{model}"
+            if body.get("tools") and _reason_key in _REASONING_NONE_KEYS:
+                body["reasoning_effort"] = "none"
 
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        evt = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
+            for _attempt in range(2):
+                async with client.stream("POST", url, headers=headers, json=body) as resp:
+                    if resp.status_code == 400:
+                        _err = (await resp.aread()).decode(errors="replace")
+                        # 上游默认给模型开了推理,而 chat/completions 下
+                        # function tools 与 reasoning 互斥 → 显式关掉重发一次。
+                        # 只在带 tools 时这么做:不带 tools 的请求本来就是好的。
+                        if (_attempt == 0 and body.get("tools")
+                                and _needs_reasoning_none(_err)):
+                            _REASONING_NONE_KEYS.add(_reason_key)
+                            body["reasoning_effort"] = "none"
+                            print("[OpenAI] 上游默认开推理且与 tools 互斥,"
+                                  "已改用 reasoning_effort=none 重发")
+                            continue
+                    if resp.status_code != 200:
+                        error_text = await resp.aread()
+                        print(f"[OpenAI] HTTP {resp.status_code}: {error_text.decode(errors='replace')[:500]}")
+                        # 把状态码交给重试外壳决定「退避重发」还是「判失败」
+                        yield {"type": "http_error", "status": resp.status_code,
+                               "error": error_text.decode(errors="replace")[:300],
+                               "retry_after": resp.headers.get("retry-after")}
+                        return
 
-                    choices = evt.get("choices", [])
-                    # 上游若自带 usage(部分网关默认返回),顺手透出供前端对照估算误差;
-                    # 这里不主动加 stream_options.include_usage,免得部分网关 400。
-                    usage_chunk = evt.get("usage")
-                    if usage_chunk:
-                        usage_acc = usage_chunk
-                    if not choices:
-                        continue
-                    choice = choices[0]
-                    delta = choice.get("delta", {})
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
 
-                    # 文本增量
-                    content = delta.get("content")
-                    if content:
-                        full_text += content
-                        yield {"type": "delta", "content": content}
+                        choices = evt.get("choices", [])
+                        # 上游若自带 usage(部分网关默认返回),顺手透出供前端对照估算误差;
+                        # 这里不主动加 stream_options.include_usage,免得部分网关 400。
+                        usage_chunk = evt.get("usage")
+                        if usage_chunk:
+                            usage_acc = usage_chunk
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta", {})
 
-                    # 推理增量（DeepSeek / Groq thinking）
-                    reasoning_chunk = delta.get("reasoning_content")
-                    if reasoning_chunk:
-                        full_reasoning += reasoning_chunk
-                        yield {"type": "reasoning", "content": reasoning_chunk}
+                        # 文本增量
+                        content = delta.get("content")
+                        if content:
+                            full_text += content
+                            yield {"type": "delta", "content": content}
 
-                    # 工具调用增量
-                    tc_deltas = delta.get("tool_calls")
-                    if tc_deltas:
-                        for tc in tc_deltas:
-                            idx = tc.get("index", 0)
-                            if idx not in tool_calls_acc:
-                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                            entry = tool_calls_acc[idx]
-                            if tc.get("id"):
-                                entry["id"] = tc["id"]
-                            func = tc.get("function", {})
-                            if func.get("name"):
-                                entry["name"] = func["name"]
-                            if func.get("arguments"):
-                                entry["arguments"] += func["arguments"]
-                                yield {"type": "tool_call", "id": entry["id"], "name": entry["name"], "arguments": func["arguments"]}
+                        # 推理增量（DeepSeek / Groq thinking）
+                        reasoning_chunk = delta.get("reasoning_content")
+                        if reasoning_chunk:
+                            full_reasoning += reasoning_chunk
+                            yield {"type": "reasoning", "content": reasoning_chunk}
+
+                        # 工具调用增量
+                        tc_deltas = delta.get("tool_calls")
+                        if tc_deltas:
+                            for tc in tc_deltas:
+                                idx = tc.get("index", 0)
+                                if idx not in tool_calls_acc:
+                                    tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                                entry = tool_calls_acc[idx]
+                                if tc.get("id"):
+                                    entry["id"] = tc["id"]
+                                func = tc.get("function", {})
+                                if func.get("name"):
+                                    entry["name"] = func["name"]
+                                if func.get("arguments"):
+                                    entry["arguments"] += func["arguments"]
+                                    yield {"type": "tool_call", "id": entry["id"], "name": entry["name"], "arguments": func["arguments"]}
+                break
 
         # 正常读完整个流，直接 done 并退出（不再继续重试循环）
         tool_calls = [
