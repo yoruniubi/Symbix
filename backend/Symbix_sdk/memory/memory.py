@@ -9,6 +9,35 @@ from threading import Lock
 # 而从历史里读回来的 memo 没有这些字段,发给上游会被判 400。
 TOOL_MEMO_ROLE = "tool_memo"
 
+# 上游失败时后端写进 assistant 位置的占位文本特征。这些**不是模型说的话**,
+# 读历史时必须挡住:否则模型会对着「[错误] HTTP 500」自我安慰、复述报错,
+# 用户看到的就是「怎么修都没用」。老库里已经有这类脏数据,所以判定放在
+# 读取侧(而不是只保证新代码不写),新旧一并兼容,不用清库。
+_UPSTREAM_ERROR_MARKERS = (
+    "[错误] HTTP",          # 早期版本:纯占位
+    "[本轮执行被打断:",     # 现在:带工具轮进度的收尾
+    "上游返回为空(本轮未完成)",
+)
+
+# 摘要里出现这些片段的**整行**要剥掉。梗概见下:压缩提示曾经明确要求
+# 模型把「报错原文」抄进摘要,于是 `[错误] HTTP 429/500` 这类文本被
+# 当成 system 消息每轮重发上游,累积后踩中上游长上下文审核器
+# (hashlinear_model,confidence 卡在 0.700~0.702),导致该会话**每轮必 500**。
+# 实测:剥掉这些行之后同一个会话立刻恢复正常。
+_SUMMARY_NOISE_MARKERS = _UPSTREAM_ERROR_MARKERS + (
+    "报错原文",             # 「## 关键上下文」里那一行
+    "失败命令原文",
+    "MODERATION_BLOCKED",
+)
+# 摘要长度兜底。摘要是滚动重写的(每次压缩把旧摘要喂回去),不设上限会
+# 越滚越大,既费 token 又更容易触发上游长上下文审核器。
+#
+# 3000 这个数来自实测:同一个会话,摘要 5818 字时 3/3 被审核拦(confidence
+# 0.700~0.702,正好压在阈值上),5000 字以下 3/3 放行。留足安全余量取 3000。
+# 注意这个审核器是特征哈希线性模型,对原文长度极敏感 —— 同一段文本加 1 个
+# 字符就翻成拦截,加 20 个字符又变回放行,所以**不能贴着边界设**。
+SUMMARY_MAX_CHARS = 3000
+
 
 class ConversationMemory:
     """基于 SQLite 的对话历史存储（线程安全）
@@ -223,20 +252,73 @@ class ConversationMemory:
             self.conn.commit()
 
     @staticmethod
-    def as_upstream_message(msg: dict) -> dict:
+    def is_upstream_error_placeholder(content: str) -> bool:
+        """判断这条 assistant 内容是不是「后端写的报错占位」而非模型回复。"""
+        text = (content or "").strip()
+        return any(m in text for m in _UPSTREAM_ERROR_MARKERS)
+
+    @staticmethod
+    def sanitize_summary_for_upstream(
+        summary: str, max_chars: int = SUMMARY_MAX_CHARS
+    ) -> str:
+        """把摘要里的「报错噪音」剥掉,再夹一个长度上限。
+
+        摘要会作为 system 消息**每一轮**发给上游。里面抄了 `[错误] HTTP 429`
+        这类原文时,文本一多就会踩中上游长上下文审核器(MODERATION_BLOCKED),
+        该会话从此每轮必 500 —— 用户看到的就是「怎么修都没用」。
+        这些报错信息对续跑没有价值(该知道的进度在 task_progress /
+        tool_digest 里都有),直接剥掉最安全。
+
+        只删整行,不删半句,免得把行内其他有用内容一起毁掉。
+        """
+        if not summary:
+            return ""
+        kept: list[str] = []
+        for line in summary.splitlines():
+            if any(m in line for m in _SUMMARY_NOISE_MARKERS):
+                continue
+            kept.append(line)
+        out = "\n".join(kept).strip()
+        if len(out) > max_chars:
+            out = out[:max_chars].rstrip() + "\n…(摘要过长,已截断)"
+        return out
+
+    @staticmethod
+    def as_upstream_message(msg: dict) -> dict | None:
         """把库里的消息转成能直接发给上游的 messages 元素。
 
         工具 memo 不能以 role="tool" 发出去(缺 tool_call_id 会被判 400),
         这里改成 user 并加前缀说明。不用 system 是因为 system 一变,
         上游的 prompt cache 就整段失效。
+
+        报错占位降级处理(**返回 None 表示整条丢弃**):
+        - 整段都是占位的 assistant 轮 → 丢。模型不需要「自己上次失败了」,
+          上一轮 user 还在,任务本身没丢;留着它只会招来自我安慰式复述。
+        - 模型说了话但末尾被追加了占位 → 截掉占位保留正文。
         """
         role = msg.get("role")
+        content = msg.get("content", "") or ""
         if role in (TOOL_MEMO_ROLE, "tool"):
             return {
                 "role": "user",
-                "content": f"[工具执行记录,供你继续这轮任务时参考]\n{msg.get('content', '')}",
+                "content": f"[工具执行记录,供你继续这轮任务时参考]\n{content}",
             }
-        return {"role": role, "content": msg.get("content", "")}
+        if role == "assistant":
+            stripped = content.strip()
+            if not stripped:
+                return None
+            if ConversationMemory.is_upstream_error_placeholder(stripped):
+                # 找到最早出现的占位起点,截断它后面的部分
+                cut = len(stripped)
+                for marker in _UPSTREAM_ERROR_MARKERS:
+                    pos = stripped.find(marker)
+                    if pos != -1:
+                        cut = min(cut, pos)
+                head = stripped[:cut].rstrip()
+                if not head:
+                    return None
+                return {"role": "assistant", "content": head}
+        return {"role": role, "content": content}
 
     def get_compressed_history(
         self, session_id: str, recent_limit: int = 12
@@ -246,18 +328,27 @@ class ConversationMemory:
         - 若无摘要：最近 recent_limit 条
 
         返回的每一条都经过 as_upstream_message,可以直接进上游 messages。
+        后端写的报错占位会被这里滤掉(见 as_upstream_message)。
         """
         summary_info = self.get_summary(session_id)
-        recent = [self.as_upstream_message(x)
-                  for x in self.get_history(session_id, limit=recent_limit)]
+        # as_upstream_message 可能返回 None(整条是报错占位),过滤掉
+        recent = [m for m in (self.as_upstream_message(x)
+                              for x in self.get_history(session_id, limit=recent_limit))
+                  if m is not None]
 
         if not summary_info or not summary_info.get("summary"):
+            return recent
+
+        # 摘要里的报错原文必须剥掉:它会作为 system 消息每轮重发上游,
+        # 累积到一定量就踩中上游长上下文审核 → 该会话每轮必 500。
+        clean_summary = self.sanitize_summary_for_upstream(summary_info["summary"])
+        if not clean_summary:
             return recent
 
         # 摘要作为 system 角色的上下文前缀（兼容 OpenAI messages 格式）
         prefix = {
             "role": "system",
-            "content": f"[对话历史摘要]\n{summary_info['summary']}",
+            "content": f"[对话历史摘要]\n{clean_summary}",
         }
         return [prefix] + recent
 

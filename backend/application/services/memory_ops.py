@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json as _json
 from typing import Optional
+from Symbix_sdk.memory.memory import ConversationMemory
 from application.state import (
     memory,
     memory_store,
@@ -194,6 +195,11 @@ async def maybe_compress_session(
     lines: list[str] = []
     budget = COMPRESS_INPUT_CHARS
     for msg in old_msgs:
+        # 后端写的报错占位不是对话内容。「## 进度 / 受阻」两段最容易被它
+        # 带偏成「上游一直报错」,把真正的任务进度淹没。
+        if msg["role"] == "assistant" and \
+                ConversationMemory.is_upstream_error_placeholder(msg["content"] or ""):
+            continue
         line = f"{msg['role']}: {(msg['content'] or '')[:COMPRESS_MSG_CHARS]}"
         if budget - len(line) <= 0:
             break
@@ -218,12 +224,16 @@ async def maybe_compress_session(
         "## 进度\n"
         "### 已完成\n- 做完且确认成功的事\n"
         "### 进行中\n- 此刻还没做完的事(最重要,续跑全靠它)\n"
-        "### 受阻\n- 失败过、被报错或限流挡住的事\n\n"
+        "### 受阻\n- 被什么挡住了、后来怎么绕过的(一句话说清;"
+        "**不要抄错误码、HTTP 状态码或报错原文**)\n\n"
         "## 关键决策\n- 做了什么选择、为什么\n\n"
         "## 下一步\n1. 接下来该做什么\n\n"
-        "## 关键上下文\n- 续跑必须知道的事实(文件路径、命令、报错原文)\n\n"
+        "## 关键上下文\n- 续跑必须知道的事实(文件路径、已跑通的命令、"
+        "已验证可用的入口;不要抄报错原文)\n\n"
         "注意:凡对话里出现过具体操作(读了哪个文件、改了哪个、跑了什么命令、"
         "哪一步失败),都要点名写清楚,不要概括成「进行了若干操作」。\n"
+        "摘要总长控制在 3000 字以内;已有摘要里的过时细节该删就删,"
+        "只留仍然影响后续推进的内容。\n"
     )
     if file_block:
         prompt += (
@@ -233,7 +243,11 @@ async def maybe_compress_session(
         )
 
     if prev_summary:
-        prompt += f"【已有摘要】\n{prev_summary}\n\n"
+        # 旧摘要可能带着上一版提示抄进去的报错原文,喂回去只会有样学样,
+        # 污染一代代传下去。先剥干净。
+        prev_summary = ConversationMemory.sanitize_summary_for_upstream(prev_summary)
+        if prev_summary:
+            prompt += f"【已有摘要】\n{prev_summary}\n\n"
     prompt += f"【需压缩的新对话】\n{dialogue}"
 
     try:

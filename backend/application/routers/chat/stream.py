@@ -91,6 +91,22 @@ def _humanize_upstream_error(raw: str) -> str:
 # 不熔断的话,一次限流能让 Agent 空转几十分钟,用户只看到它在原地打转。
 MAX_CONSECUTIVE_UPSTREAM_ERRORS = 3
 
+
+def _fallback_with_progress(round_error: str, round_count: int,
+                            tool_round: bool) -> str:
+    """上游失败时的收尾文案。
+
+    `tool_round=True` 表示本轮**确实跑过工具**:这时必须点明「已完成的工具轮」,
+    否则历史上下文会脱节 —— 读回来只看得到报错,看不到刚才读过什么文件、
+    跑过什么命令,模型会以为任务还没开始,把查过的再查一遍。
+
+    文本首行保持以 `[本轮执行被打断` 开头,memory.as_upstream_message
+    靠它识别「这不是模型说的话」,读历史时整条替换,不再污染上下文。
+    """
+    done = (f"已完成 {round_count} 轮工具调用,已停止续跑。"
+            if tool_round else "尚未执行工具调用,已停止续跑。")
+    return f"[本轮执行被打断:{round_error}。{done}]"
+
 def _tool_call_signature(name: str, arguments) -> tuple:
     """工具调用签名(用于本轮去重)。参数解析失败时退化为原字符串。"""
     try:
@@ -278,6 +294,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             round_error: str | None = None
             # 连续整轮失败计数:到上限就熔断,别在限流里空转到轮次用尽
             consecutive_upstream_errors = 0
+            # 本轮是否需要给用户一句「上游为什么失败」的提示。只影响展示,
+            # 不参与内容累积(见 error_placeholder 分支)。
+            error_notice: str = ""
             async for event in symbix_client.chat_stream(
                 user_input=user_for_llm,
                 history=history[:-1],
@@ -295,6 +314,20 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     full_text = ""
                     _batcher = _DeltaBatcher()
                     yield format_sse({"type": "content_reset", "reason": event.get("reason")})
+                    continue
+
+                if event["type"] == "error_placeholder":
+                    # 上游非重试性失败(内容审核/额度/鉴权)。单独记提示,
+                    # 绝不累加进 full_text —— 否则下面「本轮执行被打断」的
+                    # 兜底不触发,这条占位会被当成模型回复落库。
+                    #
+                    # 必须在 _batch_yield 之前拦:那里对非 delta 事件是原样
+                    # 转发,会把内部事件名漏给前端。先把缓冲的 delta 冲掉,
+                    # 免得上一个分片的正文被吞。
+                    _flushed = _batcher.flush()
+                    if _flushed is not None:
+                        yield format_sse(_flushed)
+                    error_notice = event.get("content") or ""
                     continue
 
                 for _sse in _batch_yield(event, _batcher):
@@ -820,6 +853,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         full_text_round = ""
                         yield format_sse({"type": "content_reset", "reason": e.get("reason")})
                         continue
+                    if e["type"] == "error_placeholder":
+                        error_notice = e.get("content") or ""
+                        continue
                     yield format_sse(_client_event(e))
                     if e["type"] == "delta":
                         full_text_round += e["content"]
@@ -863,10 +899,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 if round_error:
                     # 别再写成「请继续提问以推进」—— 用户继续问,模型也不知道
                     # 刚才为什么失败,只会原样再撞一次。
-                    full_text = (
-                        f"[本轮执行被打断:{round_error}。"
-                        f"已完成 {round_count} 轮工具调用,已停止续跑。]"
-                    )
+                    full_text = _fallback_with_progress(
+                        round_error, round_count, tool_round=bool(steps))
                 else:
                     full_text = (
                         f"[已完成 {round_count} 轮工具调用，但模型未返回最终文本。"
@@ -880,6 +914,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 "act_mode": act_mode,
                 "act_plan": act_plan,
                 "usage": _usage_payload(),
+                # 上游失败的原话:只给前端提示用,不进 content。
+                # 前端拿不到它时,正文里的兜底文案本身也说明了原因。
+                "error_notice": error_notice or None,
             })
             # 陪伴:任务完成 → 弹幕庆祝(静默失败不影响主流程)
             try:

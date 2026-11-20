@@ -53,6 +53,35 @@ _NON_RETRYABLE_MARKERS = (
 )
 
 
+# 内容审核拦截专用的子集。跟 _NON_RETRYABLE_MARKERS 分开是有意的:
+# 额度耗尽/密钥无效这类重试一万次也没用,而审核拦截是**概率性误判**
+# (上游 hashlinear_model 置信度常压着阈值走),值得换一份输入重试。
+_MODERATION_MARKERS = (
+    "moderation_blocked",
+    "moderation_error",
+    "smart moderation blocked",
+)
+
+
+def is_moderation_block_body(body: str) -> bool:
+    """上游错误体是否表明「被内容审核拦了」。
+
+    这类拦截对同样的输入通常会稳定复现,但换一份输入(比如丢掉摘要、
+    只留最近几轮对话)往往就能过 —— 所以调用方应当降级重试,而不是
+    像额度耗尽那样直接失败。
+
+    Args:
+        body: 上游返回的错误正文
+
+    Returns:
+        True 表示这是内容审核拦截
+    """
+    if not body:
+        return False
+    low = body.lower()
+    return any(m in low for m in _MODERATION_MARKERS)
+
+
 def is_non_retryable_body(body: str) -> bool:
     """上游错误体是否表明「重试也没用」。
 

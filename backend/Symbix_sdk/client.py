@@ -12,6 +12,7 @@ from .retry_policy import (
     is_retryable_status,
     reset_reason,
     retry_delay,
+    is_moderation_block_body,
 )
 from .app_paths import data_path
 
@@ -582,11 +583,40 @@ class SymbixClient:
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
         print(f"[stream] {provider_type} → {url}, model={model_name}")
 
+        # 内容审核拦截是概率性误判(上游 hashlinear_model 置信度常压着阈值走),
+        # 同样的输入可能连打几次都拦。对它做一次降级重试:丢掉 system 里那段
+        # 历史摘要(只用于续跑上下文,丢了最多损失点概要),只带最近几轮对话。
+        # 实测:摘要 5818 字 → 3/3 被拦;去掉摘要 → 3/3 放行。
+        moderation_retried = False
+        pending_error: Optional[dict] = None
         async for event in self._open_stream(
             url, provider_type, headers, model_name, messages, tools,
             caps_model_override=raw_model,
         ):
+            if event.get("type") == "error_placeholder" and event.get("moderation"):
+                if not moderation_retried:
+                    pending_error = event
+                    continue
+            if pending_error is not None and event.get("type") == "done":
+                # 第一遍只留下了占位,还没下发任何正文 —— 可以安全地重来
+                moderation_retried = True
+                pending_error = None
+                degraded = [m for m in messages if m.get("role") != "system"]
+                print(f"[stream] 命中内容审核,丢掉摘要降级重试({len(messages)} → {len(degraded)} 条消息)")
+                async for evt2 in self._open_stream(
+                    url, provider_type, headers, model_name, degraded, tools,
+                    caps_model_override=raw_model,
+                ):
+                    yield evt2
+                return
+            if pending_error is not None:
+                # 第一遍居然吐了正文(审核标记是误报),那就正常往下走
+                yield pending_error
+                pending_error = None
             yield event
+
+        if pending_error is not None:
+            yield pending_error
 
     # ── 统一重试外壳 ──────────────────────────────────────────
     async def _open_stream(
@@ -680,7 +710,14 @@ class SymbixClient:
                     print(f"[{label}] HTTP {http_status} 可重试,{delay}s 后第 {attempt + 2}/{total} 次尝试")
                     await asyncio.sleep(delay)
                     continue
-                yield {"type": "delta", "content": f"[错误] HTTP {http_status}"}
+                # 不要冒充模型正文:这条占位曾经作为 delta 下发给前端,
+                # 又被 stream.py 累加进 full_text 落库,下一轮读历史时
+                # 原样发回上游 —— 模型会对着「[错误] HTTP 500」自我安慰、
+                # 反复复述报错,用户看到的就是「一直没修好」。
+                # 改成独立事件:前端照样提示,但绝不进内容累积。
+                yield {"type": "error_placeholder", "code": http_status,
+                       "moderation": is_moderation_block_body(http_body),
+                       "content": f"[错误] HTTP {http_status}"}
                 yield {"type": "done", "content": "", "tool_calls": None,
                        "error": f"HTTP {http_status}: {http_body[:300]}"}
                 return
