@@ -24,6 +24,7 @@ import { getCurrentWindow, cursorPosition } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
 // 后端端口是动态的,SSE(EventSource)不走 fetch 改写,必须直接引用
 import { BACKEND_URL } from '@/utils/backend'
+import { startMemorySentinel } from '@/utils/memorySentinel'
 
 // 全屏透明弹幕窗口。
 // 主动搭话要能点,但整窗一旦不穿透就会吃掉**整块屏幕**的点击,所以做法是:
@@ -57,6 +58,8 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let ignoring = true
 /** cursorPosition 不可用(权限/平台问题)时置位:退化成「只显示不可点」,绝不能锁屏 */
 let pollBroken = false
+/** 内存哨兵停止函数 */
+let stopMemSentinel: (() => void) | null = null
 let winOriginX = 0
 let winOriginY = 0
 let dpr = 1
@@ -70,42 +73,77 @@ async function applyIgnore(through: boolean) {
   }
 }
 
+/** 命中测试重入锁:上一轮没跑完就跳过本轮。
+ *
+ * 必须要有。pollHit 里两个 await 都是跨进程 IPC(cursorPosition 读全局鼠标、
+ * setIgnoreCursorEvents 改穿透状态),系统一忙就会变慢;而 setInterval 不看
+ * 上一轮是否结束,未完成的轮次会不断堆叠,每个都持有闭包与 DOM 引用 ——
+ * 越堆越慢、越慢越堆,长时间运行后渲染进程内存就被吃穿。
+ */
+let polling = false
+
 /** 鼠标是否压在某个主动搭话气泡上 */
 async function pollHit(): Promise<void> {
-  if (pollBroken) return
-  const items = document.querySelectorAll<HTMLElement>('.danmaku-item.dm-proactive')
-  if (!items.length) {
-    // 屏上没有可点的气泡 → 必须穿透
-    if (!ignoring) await applyIgnore(true)
-    return
-  }
-  let cur: { x: number; y: number }
+  if (pollBroken || polling) return
+  polling = true
   try {
-    cur = await cursorPosition()
-  } catch (e) {
-    pollBroken = true
-    if (pollTimer) clearInterval(pollTimer)
-    pollTimer = null
-    console.warn('[danmaku] cursorPosition 不可用,主动搭话气泡改为只展示不响应点击:', e)
-    await applyIgnore(true)
-    return
-  }
-  // cursorPosition 是屏幕物理像素,换算成窗口内的 CSS 像素再和 DOM 矩形比
-  const x = (cur.x - winOriginX) / dpr
-  const y = (cur.y - winOriginY) / dpr
-  let hit = false
-  items.forEach((el) => {
-    if (hit) return
-    const r = el.getBoundingClientRect()
-    if (
-      x >= r.left - HIT_MARGIN && x <= r.right + HIT_MARGIN
-      && y >= r.top - HIT_MARGIN && y <= r.bottom + HIT_MARGIN
-    ) {
-      hit = true
+    const items = document.querySelectorAll<HTMLElement>('.danmaku-item.dm-proactive')
+    if (!items.length) {
+      // 屏上没有可点的气泡 → 必须穿透
+      if (!ignoring) await applyIgnore(true)
+      return
     }
-  })
-  if (hit === !ignoring) return
-  await applyIgnore(!hit)
+    let cur: { x: number; y: number }
+    try {
+      cur = await cursorPosition()
+    } catch (e) {
+      pollBroken = true
+      if (pollTimer) clearInterval(pollTimer)
+      pollTimer = null
+      console.warn('[danmaku] cursorPosition 不可用,主动搭话气泡改为只展示不响应点击:', e)
+      await applyIgnore(true)
+      return
+    }
+    // cursorPosition 是屏幕物理像素,换算成窗口内的 CSS 像素再和 DOM 矩形比。
+    // 矩形只取一次并当场读完四个边:getBoundingClientRect 会强制同步布局,
+    // 每 70ms 对每个气泡各调一次纯属浪费。
+    const x = (cur.x - winOriginX) / dpr
+    const y = (cur.y - winOriginY) / dpr
+    let hit = false
+    for (const el of Array.from(items)) {
+      const r = el.getBoundingClientRect()
+      const left = r.left - HIT_MARGIN
+      const right = r.right + HIT_MARGIN
+      const top = r.top - HIT_MARGIN
+      const bottom = r.bottom + HIT_MARGIN
+      if (x >= left && x <= right && y >= top && y <= bottom) {
+        hit = true
+        break
+      }
+    }
+    if (hit === !ignoring) return
+    await applyIgnore(!hit)
+  } finally {
+    polling = false
+  }
+}
+
+/** 屏幕上有几条主动搭话气泡(不用查 DOM,直接看数据源) */
+function proactiveCount(): number {
+  return activeDanmaku.value.reduce((n, d) => n + (d.kind === 'proactive' ? 1 : 0), 0)
+}
+
+/** 按需启停命中测试:没有可点的气泡就不该每 70ms 扫一遍文档树。 */
+function syncHitTest() {
+  const need = proactiveCount() > 0
+  if (need && pollTimer === null) {
+    pollTimer = setInterval(() => { void pollHit() }, POLL_MS)
+  } else if (!need && pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+    // 气泡没了就必须恢复穿透,不能停在「吃点击」的状态
+    if (!ignoring) void applyIgnore(true)
+  }
 }
 
 async function startHitTest() {
@@ -118,7 +156,8 @@ async function startHitTest() {
   } catch (e) {
     console.warn('[danmaku] hit test init failed:', e)
   }
-  pollTimer = setInterval(() => { void pollHit() }, POLL_MS)
+  // 只读一次几何,轮询等真出现主动搭话气泡时再起
+  syncHitTest()
 }
 
 // ---- SSE 连接:订阅后端 /pet/events ----
@@ -165,6 +204,9 @@ function handleEvent(raw: string) {
   spawnDanmaku(String(data.text), kind, data.memory ? String(data.memory) : undefined)
 }
 
+/** 所有在途的移除定时器:卸载时统一清掉,否则它们会去改已销毁的 ref */
+const removeTimers = new Set<ReturnType<typeof setTimeout>>()
+
 function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
   const id = nextId++
   const item: DanmakuItem = {
@@ -176,9 +218,14 @@ function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
     duration: kind === 'proactive' ? 16000 : 8000 + Math.random() * 4000,
   }
   activeDanmaku.value.push(item)
-  setTimeout(() => {
+  if (kind === 'proactive') syncHitTest()
+  const timer = setTimeout(() => {
+    removeTimers.delete(timer)
     activeDanmaku.value = activeDanmaku.value.filter((d) => d.id !== id)
+    // 最后一条主动搭话消失时,轮询该停了(顺带恢复穿透)
+    if (kind === 'proactive') syncHitTest()
   }, item.duration + 200)
+  removeTimers.add(timer)
 }
 
 /** 点击主动搭话气泡 → 广播给 Home 窗打开聊天窗并带入上下文 */
@@ -190,6 +237,7 @@ function onDanmakuClick(d: DanmakuItem) {
   activeDanmaku.value = activeDanmaku.value.filter((x) => x.id !== d.id)
   // 点完立刻恢复穿透,不等下一轮轮询
   void applyIgnore(true)
+  syncHitTest()
 }
 
 /** kind → 样式类:完成 / 出错 / 时段问候 / 主动搭话 各有强调,其余走默认柔和 */
@@ -219,9 +267,23 @@ onMounted(async () => {
   }
   connectSSE()
   await startHitTest()
+  // 这个窗口是全屏透明的,一旦渲染进程被 OOM 杀掉,透明合成失效就会露出
+  // 白底盖满整个屏幕(用户看到的「弹窗覆盖整个界面」)。之前它没上报内存,
+  // 日志里只有 home/chat,所以从没被发现过。这里补上,让增长可见。
+  stopMemSentinel = startMemorySentinel({
+    window: 'danmaku',
+    // 弹幕窗没有会话,不自动重载 —— 重载会清屏且用户可能正要点气泡
+    autoReload: false,
+    warnMB: 800,
+    onWarn: (s) => console.warn('[danmaku] 内存偏高:', s.heapMB.toFixed(0), 'MB'),
+  })
 })
 
 onUnmounted(() => {
+  stopMemSentinel?.()
+  stopMemSentinel = null
+  for (const tid of removeTimers) clearTimeout(tid)
+  removeTimers.clear()
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
   if (reconnectTimer) clearTimeout(reconnectTimer)

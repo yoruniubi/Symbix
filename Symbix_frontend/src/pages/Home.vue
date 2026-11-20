@@ -191,6 +191,13 @@ function animationSpeedFor(state: PetState) {
 let app: Application | null = null
 let sprite: AnimatedSprite | null = null
 let baseSource: TextureSource | null = null
+/** 上一次 Assets.load 实际用的 URL(带 cache-bust)。
+ *
+ * 卸载必须用这个而不是原始 path —— Pixi 按完整 URL 做缓存 key,
+ * 用不带 `?_t=` 的 path 去 unload 只会卸载一个不存在的 key,
+ * 旧贴图就永久留在 Assets.cache 里,每切一次皮肤多留一整张图集。
+ */
+let loadedAssetUrl: string | null = null
 // rAF 停摆兜底(桌宠窗被完全遮挡时 WebView2 会停投 rAF,导致动画冻住)
 let tickerGuard: TickerResilienceHandle | null = null
 let currentState: PetState = 'idle'
@@ -1070,17 +1077,18 @@ async function loadPetTexture(spritesheetPath: string) {
   const cacheBust = path.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`
   const loadPath = `${assetUrl(path)}${cacheBust}`
 
-  // 卸载旧纹理(失败忽略)
+  // 卸载旧纹理。必须用 loadedAssetUrl(带 cache-bust 的完整 URL),
+  // 用原始 path 会卸载一个不存在的 key → 旧图集永久驻留内存。
   try {
-    if (baseSource) {
-      // 尝试按当前 path 卸载;失败也不阻塞新加载
-      await Assets.unload(path).catch(() => undefined)
+    if (loadedAssetUrl) {
+      await Assets.unload(loadedAssetUrl).catch(() => undefined)
     }
   } catch { /* ignore */ }
 
   // 加载新纹理(后端刚起来时前几次会 Failed to fetch,重试几次)
   const texture = await loadWithRetry(() => Assets.load<Texture>(loadPath))
   baseSource = texture.source as TextureSource
+  loadedAssetUrl = loadPath
   applyPetScaleMode(currentPetStyle(path))
 
   // 重建 sprite textures 并回到 idle

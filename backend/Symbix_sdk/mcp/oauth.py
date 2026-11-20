@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import webbrowser
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import parse_qs, urlparse
@@ -45,6 +46,82 @@ DEFAULT_CALLBACK_PORT = 38577
 
 CALLBACK_PATH = "/mcp-oauth/callback"
 """本地回调路径。SDK 注册的 redirect_uri 为 http://127.0.0.1:<port><path>。"""
+
+# 首选端口绑不上时,先在其后紧邻的这么多端口里找 —— 端口号接近,
+# 排查时一眼能看出「跳过了几个」。
+_NEAR_PORT_PROBES = 8
+
+
+def _can_bind(port: int) -> bool:
+    """127.0.0.1:port 当前能否绑定。
+
+    探测时开的选项与 ThreadingHTTPServer.allow_reuse_address 保持一致,
+    免得这里探到空闲、真绑定时又因为 TIME_WAIT 失败。
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def find_available_callback_port(preferred: int = DEFAULT_CALLBACK_PORT) -> tuple[int, bool]:
+    """找一个能绑定的本地回调端口。
+
+    Windows 上端口绑不上有两种完全不同的原因:
+      · WinError 10048 —— 真的被别的进程占了
+      · WinError 10013 —— 权限/系统保留(Hyper-V、winnat 预留端口段)
+    后者在任务管理器里看不到任何占用者,而且往往**成片保留**(本机实测
+    37000~39160 共 2161 个端口全不可用),靠几个端口的小偏移跳不出去,
+    所以最后一招交给 OS 分配。
+
+    Args:
+        preferred: 首选端口(默认 38577,与已注册的 redirect_uri 保持一致)
+
+    Returns:
+        (端口, 是否就是首选端口)。第二个值用来决定要不要清掉旧的 OAuth
+        client 注册 —— 换了端口就必须重新注册,否则 redirect_uri 对不上。
+    """
+    if _can_bind(preferred):
+        return preferred, True
+
+    for offset in range(1, _NEAR_PORT_PROBES + 1):
+        port = preferred + offset
+        if port <= 65535 and _can_bind(port):
+            return port, False
+
+    # 附近整段都被系统保留:让 OS 挑一个(它会避开保留区间)。
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1], False
+    finally:
+        s.close()
+
+
+def _bind_error_hint(err: OSError, port: int) -> str:
+    """把绑定失败翻译成用户能动手的方向,而不是一句「被占用」。"""
+    code = getattr(err, "winerror", None) or err.errno
+    if code == 10013:
+        return (
+            f"本地回调端口 {port} 无法绑定:该端口落在 Windows 保留区间"
+            f"([WinError 10013] 访问权限不允许)。\n"
+            f"这不是端口被占用 —— 任务管理器里看不到占用进程是正常的。\n"
+            f"常见原因是 Hyper-V / winnat / Docker 预留了端口段。\n"
+            f"查看保留范围:netsh interface ipv4 show excludedportrange protocol=tcp\n"
+            f"释放办法(管理员 PowerShell):net stop winnat && net start winnat,"
+            f"或直接重启电脑。"
+        )
+    if code == 10048:
+        return (
+            f"本地回调端口 {port} 被占用: [WinError 10048]\n"
+            f"请确认没有残留的 MCP OAuth 回调进程占用 127.0.0.1:{port}。"
+        )
+    return f"本地回调端口 {port} 绑定失败: {err}"
 
 
 class TokenStore:
@@ -133,6 +210,19 @@ class TokenStore:
         with self._lock:
             if server_id in self._data:
                 del self._data[server_id]
+                self._save()
+
+    def clear_client_info(self, server_id: str):
+        """清除 client 注册信息(仅保留 token)。
+
+        本地回调端口变了之后必须调用:redirect_uri 变了,旧注册对不上,
+        要让 SDK 重新做一次动态客户端注册。
+        """
+        with self._lock:
+            ns = self._data.get(server_id)
+            if isinstance(ns, dict):
+                ns["client_info"] = None
+                ns["updated_at"] = time.time()
                 self._save()
 
     def clear_tokens(self, server_id: str):
@@ -291,10 +381,9 @@ class OAuthBrowserHandler:
                 ("127.0.0.1", self.callback_port), self._make_handler()
             )
         except OSError as e:
-            # 端口被占:可能是上次授权残留的服务器没关。尝试换随机端口不可行
-            # (redirect_uri 是固定注册的),所以直接报错提示用户关掉占用进程。
-            self._error = f"本地回调端口 {self.callback_port} 被占用: {e}\n" \
-                          f"请确认没有残留的 MCP OAuth 回调进程占用 127.0.0.1:{self.callback_port}。"
+            # 探测阶段已经避开不可绑定的端口,走到这里说明探测到绑定之间
+            # 被别的进程抢了,或者端口全试完都不行。按 errno 说清楚原因。
+            self._error = _bind_error_hint(e, self.callback_port)
             self._done.set()
             return
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
@@ -417,18 +506,30 @@ def ensure_oauth_token(
         return None
     if on_status:
         on_status("starting")
+
+    # 首选端口绑不上就往上找(见 find_available_callback_port 的注释)。
+    # 命中系统保留端口段的机器上,38577 大概率不可用。
+    actual_port, is_preferred = find_available_callback_port(callback_port)
+    if actual_port != callback_port:
+        print(f"[MCP OAuth] 回调端口 {callback_port} 不可用,改用 {actual_port}")
+
     handler = OAuthBrowserHandler(
-        callback_port=callback_port, timeout_seconds=timeout_seconds, no_browser=no_browser
+        callback_port=actual_port, timeout_seconds=timeout_seconds, no_browser=no_browser
     )
 
     storage = token_store.make_storage(server_id)
+
+    # 换了端口就必须重新注册:redirect_uri 变了,复用旧 client_info 会让
+    # 授权服务器对不上(它记的还是老端口)。清掉后 SDK 会走动态注册。
+    if not is_preferred:
+        token_store.clear_client_info(server_id)
 
     import asyncio
 
     def _run():
         async def _inner():
             meta = OAuthClientMetadata(
-                redirect_uris=[f"http://127.0.0.1:{callback_port}{CALLBACK_PATH}"],
+                redirect_uris=[f"http://127.0.0.1:{actual_port}{CALLBACK_PATH}"],
                 client_name="Symbix",
             )
             provider = OAuthClientProvider(

@@ -8,6 +8,7 @@ from .color_extract import extract_palette_b64, palette_to_hint
 from .retry_policy import (
     DEFAULT_MAX_RETRIES,
     RETRYABLE_EXCEPTIONS,
+    is_non_retryable_body,
     is_retryable_status,
     reset_reason,
     retry_delay,
@@ -668,7 +669,10 @@ class SymbixClient:
 
             if http_status is not None:
                 print(f"[{label}] HTTP {http_status}: {http_body[:400]}")
-                if is_retryable_status(http_status) and attempt < max_retries:
+                # 内容审核/额度耗尽这类业务判定包成 500 时,重试只会让用户多等十几秒
+                # 再拿到同样结果,直接失败并把上游原话告诉他更有用。
+                if (is_retryable_status(http_status) and attempt < max_retries
+                        and not is_non_retryable_body(http_body)):
                     if produced:
                         yield {"type": "stream_reset", "reason": reset_reason(status=http_status),
                                "attempt": attempt + 1, "total": total}

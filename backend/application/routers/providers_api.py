@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, HTTPException
 from application.schemas import ProviderAddRequest
 from application.state import provider_registry
@@ -74,6 +75,81 @@ async def update_provider_model(name: str, body: dict):
         return {"status": "ok", "message": f"Provider '{name}' model updated to {new_model}"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _normalize_api_base(url: str) -> str:
+    """把用户填的 base_url 归一成「到 /v1 为止」的形式。
+
+    与前端 useApiClient.normalizeBaseUrl 保持一致:
+      https://api.x.com          -> https://api.x.com/v1
+      https://api.x.com/v1/      -> https://api.x.com/v1
+      https://api.x.com/v1beta   -> https://api.x.com/v1
+
+    Args:
+        url: 用户填写的原始 base_url
+
+    Returns:
+        归一化后的 base(不含结尾斜杠)
+    """
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return ""
+    if not u.lower().startswith(("http://", "https://")):
+        u = "https://" + u
+    import re
+    m = re.match(r"^(.*?/v\d+)", u, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return u + "/v1"
+
+
+@router.post("/providers/models")
+async def list_upstream_models(body: dict):
+    """代取上游 /models 列表。
+
+    前端直连会被 CORS 拦(上游中转网关普遍不返 Access-Control-Allow-Origin),
+    所以改由后端发。请求体:
+        {"api_key": "...", "api_base": "https://api.x.com"}
+
+    返回:
+        {"models": ["a", "b"], "base": "https://api.x.com/v1"}
+    """
+    api_key = (body.get("api_key") or "").strip()
+    api_base = (body.get("api_base") or "").strip()
+    base = _normalize_api_base(api_base)
+    if not base:
+        raise HTTPException(status_code=400, detail="缺少 api_base")
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/models", headers=headers)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"连不上上游: {type(e).__name__}")
+
+    if resp.status_code >= 400:
+        # 把上游原话带给前端,比自己编一句「获取失败」有用得多
+        raise HTTPException(status_code=resp.status_code,
+                            detail=f"上游返回 {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        data = resp.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="上游返回的不是 JSON")
+
+    raw_items = data.get("data") or data.get("models") or []
+    models: list[str] = []
+    for m in raw_items:
+        if isinstance(m, str):
+            models.append(m)
+        elif isinstance(m, dict):
+            name = m.get("id") or m.get("name")
+            if name:
+                models.append(str(name))
+    return {"models": sorted(set(models)), "base": base}
 
 
 @router.get("/model/capabilities")

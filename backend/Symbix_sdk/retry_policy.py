@@ -36,6 +36,40 @@ def is_retryable_status(status: int) -> bool:
     return status in RETRYABLE_STATUS
 
 
+# 错误体里出现这些标记时,无论状态码是多少都不重试。
+# 这些是上游的**业务判定**(内容审核/账号状态/模型不存在),不是临时故障,
+# 重试只会让用户多等十几秒然后拿到同样的结果。
+_NON_RETRYABLE_MARKERS = (
+    "moderation_blocked",     # 内容审核拦截
+    "moderation_error",
+    "smart moderation blocked",
+    "content_policy",
+    "content_filter",
+    "insufficient_quota",     # 额度耗尽
+    "invalid_api_key",        # 密钥无效
+    "model_not_found",        # 模型不存在
+    "does not exist",         # 模型/资源不存在
+    "unauthorized",
+)
+
+
+def is_non_retryable_body(body: str) -> bool:
+    """上游错误体是否表明「重试也没用」。
+
+    Args:
+        body: 上游返回的错误正文(JSON 或 HTML 均可)
+
+    Returns:
+        True 表示这是业务判定错误,应当立刻失败而不是重试
+    """
+    if not body:
+        return False
+    low = body.lower()
+    # 429 的 HTML 限流页是例外:那是真限流,值得退避重试,
+    # 不会命中下面这些标记,所以不需要额外排除。
+    return any(m in low for m in _NON_RETRYABLE_MARKERS)
+
+
 def is_retryable_exc(exc: BaseException) -> bool:
     """异常是否值得重试(传输层中断/超时)。"""
     return isinstance(exc, RETRYABLE_EXCEPTIONS)

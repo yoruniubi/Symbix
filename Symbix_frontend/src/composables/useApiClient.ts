@@ -1,3 +1,5 @@
+import { BACKEND_URL } from '@/utils/backend'
+
 export function useApiClient() {
   function normalizeBaseUrl(url: string): string {
     let u = url.trim().replace(/\/+$/, '')
@@ -9,23 +11,24 @@ export function useApiClient() {
     return u + '/v1'
   }
 
+  /**
+   * 取上游模型列表。
+   *
+   * **必须走后端**:浏览器直连上游会被 CORS 拦(上游中转网关普遍不返回
+   * Access-Control-Allow-Origin),而后端发同样的请求不受浏览器策略约束。
+   */
   async function fetchModels(apiKey: string, baseUrl: string): Promise<string[]> {
-    const base = normalizeBaseUrl(baseUrl)
-    const res = await fetch(`${base}/models`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+    const res = await fetch(`${BACKEND_URL}/providers/models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, api_base: baseUrl }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(`${res.status} ${(err as any)?.error?.message || res.statusText}`)
+      throw new Error(`${res.status} ${err?.detail || res.statusText}`)
     }
     const data = await res.json()
-    return (data.data || data.models || [])
-      .map((m: any) => m.id || m.name || String(m))
-      .filter(Boolean)
-      .sort()
+    return (data.models || []).filter(Boolean)
   }
 
   async function testConnection(apiKey: string, baseUrl: string): Promise<void> {
