@@ -17,6 +17,8 @@
 export interface MemorySample {
   window: string
   heapMB: number
+  /** 当前存活的 Blob URL 数。JS 堆不涨但 renderer 私有内存涨时，这里会涨。 */
+  blobs: number
   nodes: number
   messages: number
   uptimeMin: number
@@ -55,11 +57,50 @@ const WARN_COOLDOWN_MS = 10 * 60_000
 const HARD_COOLDOWN_MS = 2 * 60_000
 
 /** 采一次样。`performance.memory` 只有 Chromium 有,拿不到就退化成 0。 */
+/**
+ * 活着的 Blob URL 计数。
+ *
+ * renderer 私有内存涨、但 `performance.memory.usedJSHeapSize` 纹丝不动，
+ * 说明漏的东西在 C++ 侧 —— Blob（图片/SVG/音频字节）正是这一类：
+ * JS 里只留一个短字符串 URL，实际字节由浏览器进程持有，JS 堆看不见。
+ * 所以这个数字比堆大小更能反映「有没有漏 Blob」。
+ *
+ * 包装 createObjectURL / revokeObjectURL 是唯一的观测手段（浏览器不暴露
+ * 已注册 Blob 列表）。标记直接打在 URL 构造器自身上，而不是 window 上：
+ * 只要换成另一个 URL 窗口（测试替身、同进程另一个 realm），就会自动重新包装。
+ */
+const BLOB_PROBE = '__symbixBlobProbeInstalled'
+/** 当前存活的 Blob URL。只放活着的：重复 revoke 查不到就忽略，不会减穿也不会无限涨。 */
+const liveBlobUrls = new Set<string>()
+
+function installBlobProbe(): void {
+  try {
+    const hook = URL as unknown as Record<string, unknown>
+    if (hook[BLOB_PROBE]) return
+    const origCreate = URL.createObjectURL.bind(URL)
+    const origRevoke = URL.revokeObjectURL.bind(URL)
+    URL.createObjectURL = ((obj: Blob | MediaSource) => {
+      const url = origCreate(obj)
+      liveBlobUrls.add(url)
+      return url
+    }) as typeof URL.createObjectURL
+    URL.revokeObjectURL = ((url: string) => {
+      // 只减真的还活着的；重复 revoke 同一个 URL 不会把计数减穿
+      liveBlobUrls.delete(url)
+      origRevoke(url)
+    }) as typeof URL.revokeObjectURL
+    hook[BLOB_PROBE] = true
+  } catch {
+    /* 非浏览器环境 / 不允许改写 URL 时静默：观测功能不能反过来弄坏应用 */
+  }
+}
+
 export function sampleMemory(windowName: string, messages: number = 0): MemorySample {
   const perf = performance as Performance & {
     memory?: { usedJSHeapSize: number }
   }
   const heap = perf.memory?.usedJSHeapSize
+  installBlobProbe()
   let nodes = 0
   try {
     nodes = document.getElementsByTagName('*').length
@@ -69,6 +110,7 @@ export function sampleMemory(windowName: string, messages: number = 0): MemorySa
   return {
     window: windowName,
     heapMB: heap ? heap / (1024 * 1024) : 0,
+    blobs: liveBlobUrls.size,
     nodes,
     messages,
     uptimeMin: Math.round(performance.now() / 60_000),
@@ -103,6 +145,9 @@ export function startMemorySentinel(opts: MemorySentinelOptions): () => void {
   let lastHard = 0
   let lastReport = 0
   let warnedHeap = 0
+
+  // 一开始就装，别等到第一次采样——否则启动到首次 tick 之间建的 Blob 会漏计
+  installBlobProbe()
 
   const tick = () => {
     const s = sampleMemory(windowName, messages ? messages() : 0)
@@ -146,6 +191,7 @@ async function reportSample(url: string, s: MemorySample): Promise<void> {
       body: JSON.stringify({
         window: s.window,
         heap_mb: Math.round(s.heapMB),
+        blobs: s.blobs,
         nodes: s.nodes,
         messages: s.messages,
         uptime_min: s.uptimeMin,

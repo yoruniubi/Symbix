@@ -499,10 +499,23 @@ function _playNextSentence() {
   _speakCurrentUrl = next.url
   const audio = new Audio(next.url)
   _speakAudio = audio
-  const finish = () => {
+  // onended / onerror / play().catch() / onpause 都可能走到收尾,
+  // 做个幂等闸:否则同一句会重复 revoke、重复 _playNextSentence(),
+  // 队列被跳过一半(表现为「朗读漏句」),旧的 Audio 闭包也会被多带一份出去。
+  let settled = false
+  const releaseOnce = (): boolean => {
+    if (settled) return false
+    settled = true
+    audio.onended = null
+    audio.onerror = null
+    audio.onpause = null
     URL.revokeObjectURL(next.url)
     if (_speakCurrentUrl === next.url) _speakCurrentUrl = ''
     _speakAudio = null
+    return true
+  }
+  const finish = () => {
+    if (!releaseOnce()) return
     // 当前会话未被停止才继续播下一句;并指未被合成的队列继续补满
     if (!_speakStopRequested) {
       if (_speakQueue.length > 0) void _hydrateQueue()
@@ -514,20 +527,15 @@ function _playNextSentence() {
   audio.onended = finish
   audio.onerror = finish
   audio.onpause = () => {
-    // 只在非主动暂停时标记结束(防 stop 时重复触发)
+    // 只在主动暂停时才收尾(正常播完走 onended)
     if (_speakStopRequested) {
-      _speakAudio = null
-      if (_speakCurrentUrl === next.url) {
-        URL.revokeObjectURL(next.url)
-        _speakCurrentUrl = ''
-      }
+      releaseOnce()
+      _speakPlaying = false
     }
   }
   audio.play().catch(() => {
     // 自动播放被浏览器阻止:跳过本句继续播下一句,不卡死队列
-    URL.revokeObjectURL(next.url)
-    if (_speakCurrentUrl === next.url) _speakCurrentUrl = ''
-    _speakAudio = null
+    if (!releaseOnce()) return
     _playNextSentence()
   })
 }
@@ -549,6 +557,12 @@ export function speakStart() {
   _speakBuffer = ''
   if (_speakAudio) {
     _speakAudio.pause()
+    // 必须解绑再丢弃:回调闭包里引用着 next.url(Blob URL),
+    // 不解绑的话整条 闭包→Audio→Blob 链都 GC 不掉,长跑越积越多。
+    _speakAudio.onended = null
+    _speakAudio.onerror = null
+    _speakAudio.onpause = null
+    _speakAudio.src = ''
     _speakAudio = null
   }
   // 释放正在播放的 URL(切轮/新开)
@@ -600,6 +614,10 @@ export function stopSpeak() {
   _speakBuffer = ''
   if (_speakAudio) {
     _speakAudio.pause()
+    _speakAudio.onended = null
+    _speakAudio.onerror = null
+    _speakAudio.onpause = null
+    _speakAudio.src = ''
     _speakAudio = null
   }
   if (_speakCurrentUrl) {

@@ -24,6 +24,8 @@ class ClientMemory(BaseModel):
 
     window: str = ""
     heap_mb: float = 0.0
+    # 存活的 Blob URL 数。renderer 私有内存涨而 JS 堆不涨时,这个数会先露馅
+    blobs: int = 0
     nodes: int = 0
     messages: int = 0
     uptime_min: float = 0.0
@@ -40,7 +42,7 @@ def client_memory(payload: ClientMemory) -> dict:
     _last_report[key] = now
     print(
         f"[mem] window={key} heap={payload.heap_mb:.0f}MB "
-        f"nodes={payload.nodes} messages={payload.messages} "
+        f"blobs={payload.blobs} nodes={payload.nodes} messages={payload.messages} "
         f"uptime={payload.uptime_min:.0f}min",
         flush=True,
     )

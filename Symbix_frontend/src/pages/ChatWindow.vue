@@ -93,7 +93,7 @@
       <div class="message-list" ref="messageListRef" v-else>
         <ChatMessage
           v-for="(msg, idx) in messages"
-          :key="idx"
+          :key="msg.uid ?? idx"
           :msg="msg"
           :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
           :preview="idx >= messages.length - PREVIEW_TAIL"
@@ -638,6 +638,7 @@ onMounted(async () => {
     messages.value.push({
       role: 'assistant',
       content: line,
+      uid: crypto.randomUUID(),
       proactive: true,   // 标记为搭话气泡(非回复),前端可按需区分样式
     })
     lastProactivePushAt = Date.now()
@@ -1130,7 +1131,7 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     displayContent = text ? `${fileNames}\n${text}` : fileNames
   }
 
-  messages.value.push({ role: 'user', content: displayContent })
+  messages.value.push({ role: 'user', content: displayContent, uid: crypto.randomUUID() })
 
   // 新对话首轮:创建带 UUID 的 session,并激活
   if (!activeSessionId.value) {
@@ -1164,7 +1165,9 @@ async function sendMessage(text: string, files: any[], supersededRoundId?: strin
     idleWatch = null
   }
   try {
-    assistantMsgIndex = messages.value.push({ role: 'assistant', content: '' }) - 1
+    assistantMsgIndex = messages.value.push({
+      role: 'assistant', content: '', uid: crypto.randomUUID(),
+    }) - 1
     const assistantMsg = messages.value[assistantMsgIndex] as any
 
     // 不打断正常的慢任务,只把「已经等了多久」显示出来;超过硬阈值才收尾

@@ -1045,6 +1045,10 @@ async function openChatFromProactive(payload: { text?: string; memory?: string }
 let unlistenPetSwitched: UnlistenFn | null = null
 let onPetStorage: ((e: StorageEvent) => void) | null = null
 let lastPetSwitchKey = ''
+/** 上次真正处理换肤的时间。三条信号连发，靠它 + key 一起去重。 */
+let lastPetSwitchAt = 0
+/** 连发窗口：emit / emitTo / storage 基本同一瞬间发出，给足 1.5s 余量。 */
+const SKIN_SWITCH_DEDUP_MS = 1500
 
 /**
  * 带退避的重试(0.6s / 1.2s)。
@@ -1077,13 +1081,9 @@ async function loadPetTexture(spritesheetPath: string) {
   const cacheBust = path.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`
   const loadPath = `${assetUrl(path)}${cacheBust}`
 
-  // 卸载旧纹理。必须用 loadedAssetUrl(带 cache-bust 的完整 URL),
-  // 用原始 path 会卸载一个不存在的 key → 旧图集永久驻留内存。
-  try {
-    if (loadedAssetUrl) {
-      await Assets.unload(loadedAssetUrl).catch(() => undefined)
-    }
-  } catch { /* ignore */ }
+  // 先记下旧的,稍后再卸载 —— 必须等 sprite 换到新纹理之后才能销毁旧的
+  const prevAssetUrl = loadedAssetUrl
+  const prevSource = baseSource
 
   // 加载新纹理(后端刚起来时前几次会 Failed to fetch,重试几次)
   const texture = await loadWithRetry(() => Assets.load<Texture>(loadPath))
@@ -1091,12 +1091,30 @@ async function loadPetTexture(spritesheetPath: string) {
   loadedAssetUrl = loadPath
   applyPetScaleMode(currentPetStyle(path))
 
-  // 重建 sprite textures 并回到 idle
+  // 重建 sprite textures 并回到 idle(先把引用切走,再去销毁旧图集)
   sprite.textures = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
   sprite.animationSpeed = animationSpeedFor('idle')
   sprite.loop = true
   sprite.gotoAndPlay(0)
   currentState = 'idle'
+
+  // 卸载旧纹理。必须用带 cache-bust 的完整 URL:
+  // 用原始 path 会去 unload 一个不存在的 key,Pixi 静默返回,旧图集永久驻留。
+  //
+  // 顺序很关键:Pixi 的 Assets.unload 会 texture.destroy(true) → 连同
+  // TextureSource 一起销毁(TextureSource.unload 里遍历 _gpuData 调 destroy)。
+  // 若此时 sprite 还指着旧纹理,渲染器下一帧就会拿着已销毁的 source 去画。
+  // 所以放在换完 sprite.textures 之后。
+  if (prevAssetUrl && prevAssetUrl !== loadPath) {
+    try {
+      await Assets.unload(prevAssetUrl).catch(() => undefined)
+    } catch { /* 卸载失败不该影响换肤本身 */ }
+    // 旧 source 上的子纹理由 petFrameCache 的 WeakMap 持有,source 没了整批可回收;
+    // 这里再显式 destroy 一次,兜住 Assets 已被别处清过的情形。
+    if (prevSource && prevSource !== baseSource && !prevSource.destroyed) {
+      try { prevSource.destroy() } catch { /* 已销毁过就跳过 */ }
+    }
+  }
 }
 
 async function onPetSwitched(payload: {
@@ -1107,11 +1125,20 @@ async function onPetSwitched(payload: {
   style?: 'pixel' | 'smooth'
 }) {
   const key = `${payload.petId}|${payload.spritesheetPath}`
-  // 去重:emit + emitTo + storage 可能连发
-  if (key && key === lastPetSwitchKey) {
-    // 允许短时间后再次切换同一皮肤(用户手动再点)
+  // 去重:SkinWindow 一次换肤会连发最多三条信号
+  // (emit 全局 + emitTo(main) + localStorage petSwitchSignal),每条都会走到这里。
+  // 不去重的话一次换肤要跑 2~3 遍 Assets.unload + Assets.load(新图集),
+  // 即无谓的 GPU 纹理与解码位图重建 —— 在「纹理泄漏」这件事上等于把偶发变常态。
+  //
+  // 只拦「同一皮肤 且 距上次处理不超过 SKIN_SWITCH_DEDUP_MS」的连发;
+  // 用户过一会儿手动再点同一个皮肤,仍然要能生效。
+  const now = Date.now()
+  if (key && key === lastPetSwitchKey && now - lastPetSwitchAt < SKIN_SWITCH_DEDUP_MS) {
+    console.log('[pet] 换肤去重,忽略连发的同一 key:', key)
+    return
   }
   lastPetSwitchKey = key
+  lastPetSwitchAt = now
   console.log('[pet] pet-switched received:', payload)
   try {
     await loadPetTexture(payload.spritesheetPath)
@@ -1172,8 +1199,12 @@ onMounted(async () => {
   await waitBackendReady()
 
   let texture: Texture | null = null
+  // 记下初次加载用的 URL:不记的话第一次换肤时 unload 会因
+  // loadedAssetUrl 为 null 而跳过,这张图集就永远留在 Pixi 缓存里。
+  let initialAssetUrl = ''
   try {
-    texture = await loadWithRetry(() => Assets.load<Texture>(assetUrl(spritesheetPath)))
+    initialAssetUrl = assetUrl(spritesheetPath)
+    texture = await loadWithRetry(() => Assets.load<Texture>(initialAssetUrl))
     // 尺寸不符同样会「加载成功」,但切出来是错位马赛克 —— 当作失败回退,不把坏皮肤播出去
     if (!fitsSheetContract(texture.width, texture.height)) {
       throw new Error(
@@ -1186,7 +1217,8 @@ onMounted(async () => {
     console.warn(`[pet] 加载 ${spritesheetPath} 失败，回退到 frieren`, e)
     spritesheetPath = '/codex_pet/frieren/spritesheet.webp'
     try { localStorage.setItem('currentPetId', 'frieren') } catch { /* ignore */ }
-    texture = await loadWithRetry(() => Assets.load<Texture>(assetUrl(spritesheetPath))).catch(
+    initialAssetUrl = assetUrl(spritesheetPath)
+    texture = await loadWithRetry(() => Assets.load<Texture>(initialAssetUrl)).catch(
       (e2) => {
         // 连内置皮肤都拿不到(后端没起来/资源缺失)。这里绝不能抛:onMounted 后面还有
         // ticker 兜底、桌宠 SSE、弹幕窗口要装,抛出去它们就全不执行了
@@ -1199,6 +1231,8 @@ onMounted(async () => {
 
   if (texture) {
     baseSource = texture.source as TextureSource
+    // 与 loadPetTexture 对齐:初次加载也必须登记,否则首张图集卸载不掉
+    loadedAssetUrl = initialAssetUrl
     applyPetScaleMode(currentPetStyle(spritesheetPath))
     const frames = getFrames(baseSource as TextureSource, ROWS.idle.row, ROWS.idle.frames)
     sprite = new AnimatedSprite(frames)

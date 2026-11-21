@@ -97,5 +97,41 @@ await sleep(60)
 check('空闲时越硬线才 reload', reloads, 1)
 stop3()
 
+// ── 6. Blob 探针:建了必计数,释放必减,重复释放不减穿 ────────
+//
+// 这是本轮「renderer 私有内存涨、JS 堆不涨」的唯一可观测窗口:
+// 图片/SVG/音频字节由浏览器进程持有,JS 里只留一个短 URL。
+let blobSeq = 0
+;(globalThis as any).URL = {
+  createObjectURL: () => `blob:test/${++blobSeq}`,
+  revokeObjectURL: () => {},
+}
+
+const a = sampleMemory('blobtest', 0)
+const base = a.blobs
+check('采样里带 blobs 字段', typeof base, 'number')
+
+const u1 = URL.createObjectURL({} as Blob)
+const u2 = URL.createObjectURL({} as Blob)
+check('建 2 个 Blob 后计数 +2', sampleMemory('blobtest', 0).blobs, base + 2)
+
+URL.revokeObjectURL(u1)
+check('释放 1 个后计数 -1', sampleMemory('blobtest', 0).blobs, base + 1)
+
+URL.revokeObjectURL(u1)
+URL.revokeObjectURL(u1)
+check('重复释放同一个不会减穿', sampleMemory('blobtest', 0).blobs, base + 1)
+
+URL.revokeObjectURL(u2)
+check('全部释放后回到基线', sampleMemory('blobtest', 0).blobs, base)
+
+URL.revokeObjectURL('blob:never-created')
+check('释放从没建过的 URL 不影响计数', sampleMemory('blobtest', 0).blobs, base)
+
+// 探针不能破坏原有行为:包装后返回值应与原实现一致
+const u3 = URL.createObjectURL({} as Blob)
+check('包装后仍返回合法 blob URL', u3.startsWith('blob:'), true)
+URL.revokeObjectURL(u3)
+
 console.log(failed === 0 ? '\n全部通过' : `\n${failed} 项失败`)
 process.exit(failed === 0 ? 0 : 1)
