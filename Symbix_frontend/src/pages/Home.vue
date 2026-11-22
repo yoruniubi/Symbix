@@ -1069,6 +1069,18 @@ async function loadWithRetry<T>(load: () => Promise<T>, tries = 3): Promise<T> {
   throw lastErr
 }
 
+/** 换肤代数令牌。
+ *
+ * loadPetTexture 是 async 的，而 SkinWindow 一次换肤会连发多条信号、用户也可能
+ * 连点。没有令牌时，两个并发的 load 会互相踩：后进来的那次把 loadedAssetUrl
+ * 改成自己，先前那次醒来后又把 sprite.textures 覆回旧图集，同时还可能去
+ * unload 一个正在被 sprite 引用的 source —— 图集引用丢失，GPU 纹理永远回收不掉。
+ *
+ * 做法：每次调用领一个自增号；await 回来后号不是最新的就直接丢弃自己
+ * （并卸载自己刚载进来的那张，避免白占内存），绝不碰全局状态。
+ */
+let textureLoadSeq = 0
+
 async function loadPetTexture(spritesheetPath: string) {
   if (!app || !sprite) return
 
@@ -1081,12 +1093,30 @@ async function loadPetTexture(spritesheetPath: string) {
   const cacheBust = path.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`
   const loadPath = `${assetUrl(path)}${cacheBust}`
 
+  // 领令牌：这一轮的编号。await 回来后若已不是最新，说明有更新的换肤请求
+  // 还在路上或已生效，本轮必须整体作废（见下方 mySeq !== textureLoadSeq 判断）。
+  const mySeq = ++textureLoadSeq
+
   // 先记下旧的,稍后再卸载 —— 必须等 sprite 换到新纹理之后才能销毁旧的
   const prevAssetUrl = loadedAssetUrl
   const prevSource = baseSource
 
   // 加载新纹理(后端刚起来时前几次会 Failed to fetch,重试几次)
   const texture = await loadWithRetry(() => Assets.load<Texture>(loadPath))
+
+  // 载入期间又有更新的换肤请求 → 本轮作废。
+  // 但刚载进来的这张图集已经进了 Pixi 缓存，必须自己收掉，否则就是纯粹的泄漏。
+  if (mySeq !== textureLoadSeq) {
+    try {
+      await Assets.unload(loadPath).catch(() => undefined)
+    } catch { /* 收不掉也不该影响那次真正生效的换肤 */ }
+    const staleSource = texture.source as TextureSource
+    if (staleSource && !staleSource.destroyed) {
+      try { staleSource.destroy() } catch { /* 已销毁过就跳过 */ }
+    }
+    return
+  }
+
   baseSource = texture.source as TextureSource
   loadedAssetUrl = loadPath
   applyPetScaleMode(currentPetStyle(path))
@@ -1105,7 +1135,10 @@ async function loadPetTexture(spritesheetPath: string) {
   // TextureSource 一起销毁(TextureSource.unload 里遍历 _gpuData 调 destroy)。
   // 若此时 sprite 还指着旧纹理,渲染器下一帧就会拿着已销毁的 source 去画。
   // 所以放在换完 sprite.textures 之后。
-  if (prevAssetUrl && prevAssetUrl !== loadPath) {
+  // 到这里 sprite 已经指向新图集，旧图集可以安全释放。
+  // 但若在这之前又有更新的换肤生效了（mySeq 过期），旧图集可能已被那次接管，
+  // 再 unload 就会把正在用的纹理销毁掉 —— 所以先看令牌。
+  if (prevAssetUrl && prevAssetUrl !== loadPath && mySeq === textureLoadSeq) {
     try {
       await Assets.unload(prevAssetUrl).catch(() => undefined)
     } catch { /* 卸载失败不该影响换肤本身 */ }

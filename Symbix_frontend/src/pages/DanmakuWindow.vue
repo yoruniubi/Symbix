@@ -60,6 +60,10 @@ let ignoring = true
 let pollBroken = false
 /** 内存哨兵停止函数 */
 let stopMemSentinel: (() => void) | null = null
+/** 同时在屏的弹幕气泡上限。每个气泡都是一个独立合成图层，而本窗是全屏透明
+ *  的 2520x1680（DPI 2x），层数不封顶时 renderer 私有内存会线性上涨。
+ *  实测该进程曾冲到 8.2GB。超过上限就丢最老的那几条（它是飘走的，丢了无感）。 */
+const MAX_ACTIVE_DANMAKU = 24
 let winOriginX = 0
 let winOriginY = 0
 let dpr = 1
@@ -218,6 +222,16 @@ function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
     duration: kind === 'proactive' ? 16000 : 8000 + Math.random() * 4000,
   }
   activeDanmaku.value.push(item)
+  // 封顶：气泡是绝对定位 + 各自独立合成层，不封顶时 SSE 密集推送会把
+  // renderer 的图层数堆上去（全屏透明窗每层 ~16MB 光栅）。丢最老的即可。
+  if (activeDanmaku.value.length > MAX_ACTIVE_DANMAKU) {
+    const drop = activeDanmaku.value.length - MAX_ACTIVE_DANMAKU
+    const dropped = activeDanmaku.value.slice(0, drop)
+    activeDanmaku.value = activeDanmaku.value.slice(drop)
+    // 它们的移除定时器还在跑，到点后 filter 找不到 id 会自动空转（无副作用），
+    // 这里只需确保主动搭话的命中测试状态不因此错乱。
+    if (dropped.some((d) => d.kind === 'proactive')) syncHitTest()
+  }
   if (kind === 'proactive') syncHitTest()
   const timer = setTimeout(() => {
     removeTimers.delete(timer)
@@ -275,6 +289,11 @@ onMounted(async () => {
     // 弹幕窗没有会话,不自动重载 —— 重载会清屏且用户可能正要点气泡
     autoReload: false,
     warnMB: 800,
+    // 报点进后端日志。之前没传 reportUrl,日志里从来没有 window=danmaku 这行,
+    // 它涨到 8.2GB 都是靠外部采样进程内存才发现的 —— 这是个监控盲区。
+    reportUrl: `${BACKEND_URL}/api/diagnostics/client-memory`,
+    // 弹幕条数,用来分辨「层数涨」还是「JS 堆涨」
+    messages: () => activeDanmaku.value.length,
     onWarn: (s) => console.warn('[danmaku] 内存偏高:', s.heapMB.toFixed(0), 'MB'),
   })
 })
@@ -332,7 +351,10 @@ onUnmounted(() => {
   border: 1px solid var(--accent-border, rgba(239, 107, 110, 0.28));
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
   animation: danmaku-move var(--dur, 10s) linear forwards;
-  will-change: transform;
+  /* 不要常驻 will-change:transform——每个气泡都会被强制升成一个独立合成层,
+     而本窗口是全屏透明的 2520x1680(DPI 2x),一层离屏光栅就是 ~16MB。
+     气泡是无上限累积的,常驻 will-change 会让层数随气泡线性增长。
+     translateX 本身就会走合成器,不需要提示。 */
 }
 
 /* 左侧小色点:完成 = 联想色 / 出错 = 错误红 / 问候 = 信息蓝,其余柔和灰 */
@@ -381,6 +403,10 @@ onUnmounted(() => {
     rgba(255, 255, 255, 0.92),
     rgba(255, 214, 224, 0.86)
   );
+  /* 只保留飘动。原来这里还挂了 proactive-pulse(无限循环动 box-shadow),
+     box-shadow 每帧都要整层重新光栅化且不进缓存 —— 在全屏透明窗口里
+     这是把 renderer 私有内存顶到 GB 级的直接原因(实测单进程 8.2GB)。
+     呼吸感改用 border-color/opacity 的合成器友好动画。 */
   animation: danmaku-move var(--dur, 16s) linear forwards,
     proactive-pulse 2.4s ease-in-out infinite;
 }
@@ -388,6 +414,9 @@ onUnmounted(() => {
   background: var(--accent-500);
 }
 .dm-proactive:hover {
+  /* filter 会新建离屏层,只在鼠标悬停这一个气泡时短暂生效,可以接受;
+     但配上 animation-play-state:paused 会让该层一直留在缓存里,所以
+     离开时由浏览器自然回收(不写 transition,避免多一层)。 */
   filter: brightness(1.05);
   /* 鼠标压上来就暂停飘动,方便对准点击(此时窗已由命中测试解除穿透) */
   animation-play-state: paused;
@@ -400,12 +429,14 @@ onUnmounted(() => {
 @keyframes proactive-pulse {
   0%,
   100% {
-    box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+    /* 动 opacity/border-color 而不是 box-shadow:这两个属性可以只重绘气泡
+       自己的小区域(而且 opacity 走合成器),不会触发整层重光栅化。 */
+    opacity: 1;
+    border-color: var(--accent-500);
   }
   50% {
-    box-shadow:
-      0 0 0 6px var(--accent-glow, rgba(239, 107, 110, 0.14)),
-      var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+    opacity: 0.84;
+    border-color: var(--accent-glow, rgba(239, 107, 110, 0.14));
   }
 }
 
