@@ -91,20 +91,34 @@
 
       <!-- Message List -->
       <div class="message-list" ref="messageListRef" v-else>
-        <ChatMessage
-          v-for="(msg, idx) in messages"
-          :key="msg.uid ?? idx"
-          :msg="msg"
-          :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
-          :preview="idx >= messages.length - PREVIEW_TAIL"
-          :read-aloud="readAloud"
-          v-show="!hideDuringLoading(msg)"
-          @edit="handleEditMessage(idx, $event)"
-          @approve="approveTool(idx, $event)"
-          @answer="answerQuestion(idx, $event)"
-          @retry="handleRetryMessage(idx)"
-          @speak="speakAgain(idx)"
-        />
+        <!-- 更早的历史默认**不挂载**（v-if），只留一行「展开」按钮。
+             一条消息实测约 230 个 DOM 节点（工具卡片 + SVG 图标 + 代码块），
+             50 轮就是 1 万多个节点、且随对话无限增长 —— 这是聊天窗内存随
+             对话次数线性上涨的主因。点一下按钮就能把这批重新挂回来。
+             v-for + v-if 不能写在同一个元素上，所以用 template 包一层。 -->
+        <button
+          v-if="hiddenHistoryCount > 0"
+          class="history-collapsed-bar"
+          type="button"
+          @click="revealAllHistory"
+        >
+          {{ t('chat.revealHistory', { n: hiddenHistoryCount }) }}
+        </button>
+        <template v-for="(msg, idx) in messages" :key="msg.uid ?? idx">
+          <ChatMessage
+            v-if="idx >= historyCutoff"
+            :msg="msg"
+            :final="!(loading && msg.role === 'assistant' && idx === messages.length - 1)"
+            :preview="idx >= messages.length - PREVIEW_TAIL"
+            :read-aloud="readAloud"
+            v-show="!hideDuringLoading(msg)"
+            @edit="onMsgEdit(msg, $event)"
+            @approve="onMsgApprove(msg, $event)"
+            @answer="onMsgAnswer(msg, $event)"
+            @retry="onMsgRetry(msg)"
+            @speak="onMsgSpeak(msg)"
+          />
+        </template>
         <div v-if="loading && messages[messages.length - 1]?.role === 'assistant'"
             v-show="hideDuringLoading(messages[messages.length - 1])"
             class="loading-row">
@@ -217,6 +231,77 @@ import { listen as listenTauri } from '@tauri-apps/api/event'
 const { messages, sessions, activeSessionId, persistError, persistSessions, getActiveSession } = useChatStore()
 /** 只有最近这么多条消息加载图片预览;更早的关掉,避免几百个 Blob 常驻内存 */
 const PREVIEW_TAIL = 16
+
+/** 默认挂载最近多少条消息，更早的不挂载（只用一行按钮代表）。
+ *
+ *  为什么要有：一条消息实测约 230 个 DOM 节点（工具卡片、SVG 图标、代码块、
+ *  产物卡片……），而消息列表从不虚拟化。50 轮对话下来 1 万多个节点常驻，
+ *  DOM 的内存大头记在 Blink 的 C++ 侧，`performance.memory` 只看 JS 堆，
+ *  所以哨兵日志里 heap 一直 20~45MB 很健康，实际内存却在涨。
+ *
+ *  30 条足够覆盖正常回看的需求（约 7 屏），超出的折起来。 */
+const HISTORY_TAIL = 30
+
+/** 用户点了「展开更早的」之后置 true，本会话内不再折叠 */
+const historyExpanded = ref(false)
+
+/** 已经确认折叠到的位置（只增不减）。
+ *
+ *  为什么不直接用 messages.length - HISTORY_TAIL：那个值每来一条新消息就 +1，
+ *  于是最老的一条会被悄悄卸载。用户正往上翻着历史看，头顶的内容就会凭空
+ *  消失、整屏上移 —— 这比多占点内存难受得多。
+ *  所以这里用一个「冻结」的下标：只有确认用户正贴着底部时才推进它。 */
+const historyCutoffLocked = ref(0)
+
+/** 第一条「要挂载」的消息下标：小于它的一律不渲染 */
+const historyCutoff = computed(() =>
+  historyExpanded.value ? 0 : historyCutoffLocked.value,
+)
+
+/** 有多少条被折叠掉了（0 表示不显示那条按钮） */
+const hiddenHistoryCount = computed(() => historyCutoff.value)
+
+/** 用户是不是贴着底部（留 80px 容差，避免平滑滚动途中误判） */
+function isNearBottom(): boolean {
+  const el = messageListRef.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+/** 在「用户没在看上面」的前提下推进折叠。
+ *
+ *  调用点：消息数变化后。用户滚上去了就一动不动，等他回到底部再收。 */
+function syncHistoryCutoff() {
+  if (historyExpanded.value) return
+  // 人还在上面看历史：这一轮先不折，否则他眼前的内容会突然少一截
+  if (!isNearBottom()) return
+  const want = Math.max(0, messages.value.length - HISTORY_TAIL)
+  if (want > historyCutoffLocked.value) historyCutoffLocked.value = want
+}
+
+/** 展开全部历史。展开瞬间 scrollHeight 会暴涨，滚到底部免得停在中间。 */
+function revealAllHistory() {
+  historyExpanded.value = true
+  void nextTick(() => scrollToBottom(true))
+}
+
+// 消息条数变了（新消息 / 切会话 / 删除）就重算一次折叠位置。
+// 放在 watch 而非 computed 里，是为了能读 isNearBottom()（要访问真实 DOM）。
+watch(
+  () => messages.value.length,
+  () => {
+    void nextTick(() => syncHistoryCutoff())
+  },
+  { immediate: true },
+)
+
+// 切会话必须把折叠状态清零：否则上一个会话的 cutoff 会被带到新会话上，
+// 而新会话消息更少 —— 结果整个对话被折叠成一行「展开更早的」按钮。
+watch(activeSessionId, () => {
+  historyExpanded.value = false
+  historyCutoffLocked.value = 0
+  void nextTick(() => syncHistoryCutoff())
+})
 const loading = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const abortController = ref<AbortController | null>(null)
@@ -836,6 +921,45 @@ function handleStopGeneration() {
   }
   loading.value = false
   publishAgentStatus('idle', t('chat.stopGenerate'))
+}
+
+/** 下面 5 个是给模板用的稳定引用。
+ *
+ * 模板里写成 @edit="handleEditMessage(idx, $event)" 这种内联形式，每次父组件
+ * 重渲染都会为每条消息新建闭包 —— 闭包身份变了，子组件的 handler prop 就变了，
+ * 即使 msg 没动也会整条重渲染。对话几十轮后，每来一个新 token 就要把 50 条
+ * 消息的子组件全部重跑一遍，同时把旧闭包留给 GC。
+ * 改成传固定函数后，只有 msg 真正变化的子组件才会更新。
+ *
+ * idx 由消息对象反查，不用 msg.uid —— 历史会话从磁盘读回的消息没有 uid 字段。
+ */
+function idxOf(msg: any): number {
+  return messages.value.indexOf(msg)
+}
+
+function onMsgEdit(msg: any, newText: string) {
+  const i = idxOf(msg)
+  if (i >= 0) handleEditMessage(i, newText)
+}
+
+function onMsgApprove(msg: any, approved: boolean) {
+  const i = idxOf(msg)
+  if (i >= 0) void approveTool(i, approved)
+}
+
+function onMsgAnswer(msg: any, answer: string) {
+  const i = idxOf(msg)
+  if (i >= 0) void answerQuestion(i, answer)
+}
+
+function onMsgRetry(msg: any) {
+  const i = idxOf(msg)
+  if (i >= 0) handleRetryMessage(i)
+}
+
+function onMsgSpeak(msg: any) {
+  const i = idxOf(msg)
+  if (i >= 0) speakAgain(i)
 }
 
 function handleEditMessage(idx: number, newText: string) {
@@ -2189,6 +2313,27 @@ function scrollToBottom(instant: boolean = false) {
 
 
 /* ---- Message List ---- */
+/* 被折叠掉的历史：一行轻量按钮，代替几十条消息的几百个 DOM 节点 */
+.history-collapsed-bar {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 6px 0 2px;
+  padding: 6px 16px;
+  border: 1px dashed var(--border-subtle, rgba(128, 128, 128, 0.35));
+  border-radius: var(--radius-full, 999px);
+  background: transparent;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.history-collapsed-bar:hover {
+  background: var(--surface-hover, rgba(128, 128, 128, 0.08));
+  border-color: var(--accent-500, #ef6b6e);
+  color: var(--text-primary);
+}
+
 .message-list {
   flex: 1 1 auto;
   min-height: 0; /* critical: shrink so input is not pushed off-screen */

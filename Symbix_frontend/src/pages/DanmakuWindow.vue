@@ -64,9 +64,69 @@ let stopMemSentinel: (() => void) | null = null
  *  的 2520x1680（DPI 2x），层数不封顶时 renderer 私有内存会线性上涨。
  *  实测该进程曾冲到 8.2GB。超过上限就丢最老的那几条（它是飘走的，丢了无感）。 */
 const MAX_ACTIVE_DANMAKU = 24
+/** 屏上一条弹幕都没有超过这么久，就把整个窗口 hide() 掉。
+ *
+ *  为什么值得做：这个窗口是**全屏透明 + alwaysOnTop**，只要它 visible，
+ *  合成器就得为整块屏幕（2520x1680 @DPI2x）维持一层透明合成，哪怕里面
+ *  一个像素都没有。而后端空闲弹幕的间隔是 idle_interval_s=600s（10 分钟），
+ *  也就是说 99% 的时间它都在白占着这层。
+ *
+ *  用 hide() 而不是 close()：hide 只是让窗口不可见，webview 和里面的 SSE
+ *  连接都还活着，下一条弹幕来了直接 show() 就能画。close() 会销毁 webview，
+ *  下次还得重建+重连，反而更贵。
+ *
+ *  注意不算「合成层能省多少」，而是省掉一个常年存在的全屏透明窗口本身。 */
+const IDLE_HIDE_MS = 30_000
 let winOriginX = 0
 let winOriginY = 0
 let dpr = 1
+/** 空闲隐藏定时器（详见 IDLE_HIDE_MS 注释） */
+let idleHideTimer: ReturnType<typeof setTimeout> | null = null
+/** 窗口当前是否因为我们空闲隐藏而不可见 */
+let hiddenByIdle = false
+
+/** 正在进行的 show()：并发来的气泡共用它，避免各插各的 */
+let showing: Promise<void> | null = null
+
+/** 有气泡要画时确保窗口可见。返回的 promise 在窗口真正可见后 resolve。 */
+function ensureVisible(): Promise<void> {
+  if (!hiddenByIdle) return Promise.resolve()
+  // 已经在显示了：后来的调用者等同一个 promise，而不是直接往下走
+  if (showing) return showing
+  hiddenByIdle = false
+  showing = (async () => {
+    try {
+      const win = getCurrentWindow()
+      await win.show()
+      // show() 会重置焦点相关状态,穿透和不可聚焦需要重新设一遍
+      await win.setIgnoreCursorEvents(true)
+      await win.setFocusable(false)
+    } catch (e) {
+      console.warn('[danmaku] show failed:', e)
+    } finally {
+      showing = null
+    }
+  })()
+  return showing
+}
+
+/** 屏上没东西了就开始计时,到点 hide 掉 */
+function scheduleIdleHide() {
+  if (idleHideTimer) clearTimeout(idleHideTimer)
+  idleHideTimer = setTimeout(async () => {
+    idleHideTimer = null
+    // 计时期间又有新气泡了,就什么也不做
+    if (activeDanmaku.value.length > 0) return
+    hiddenByIdle = true
+    try {
+      await getCurrentWindow().hide()
+    } catch (e) {
+      // hide 失败不影响功能,最多是继续占着那层合成
+      hiddenByIdle = false
+      console.warn('[danmaku] hide failed:', e)
+    }
+  }, IDLE_HIDE_MS)
+}
 
 async function applyIgnore(through: boolean) {
   ignoring = through
@@ -205,13 +265,25 @@ function handleEvent(raw: string) {
     keep.forEach((k) => seenEventIds.add(k))
   }
   const kind = String(data.type === 'proactive' ? 'proactive' : data.kind || 'idle')
-  spawnDanmaku(String(data.text), kind, data.memory ? String(data.memory) : undefined)
+  // spawnDanmaku 现在是 async（要等窗口 show 完再插节点），
+  // 这里不 await：事件处理不该因为一次 show 而串行，也不需要它的返回值。
+  void spawnDanmaku(String(data.text), kind, data.memory ? String(data.memory) : undefined)
 }
 
 /** 所有在途的移除定时器:卸载时统一清掉,否则它们会去改已销毁的 ref */
 const removeTimers = new Set<ReturnType<typeof setTimeout>>()
 
-function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
+async function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
+  // 有东西要画了，先取消空闲隐藏
+  if (idleHideTimer) {
+    clearTimeout(idleHideTimer)
+    idleHideTimer = null
+  }
+  // 窗口可能正被我们空闲隐藏着。必须**等它真的可见**再插节点：
+  // 气泡一进 DOM，CSS 动画（danmaku-move）就开始计时；要是先插后 show，
+  // 这段飘动会在隐藏期间偷偷跑完，等窗口亮起来气泡早已飘出屏幕外，
+  // 用户什么也看不到。
+  await ensureVisible()
   const id = nextId++
   const item: DanmakuItem = {
     id,
@@ -238,6 +310,8 @@ function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
     activeDanmaku.value = activeDanmaku.value.filter((d) => d.id !== id)
     // 最后一条主动搭话消失时,轮询该停了(顺带恢复穿透)
     if (kind === 'proactive') syncHitTest()
+    // 屏上清空了 → 开始空闲计时,到点把这个全屏透明窗 hide 掉
+    if (activeDanmaku.value.length === 0) scheduleIdleHide()
   }, item.duration + 200)
   removeTimers.add(timer)
 }
@@ -252,6 +326,7 @@ function onDanmakuClick(d: DanmakuItem) {
   // 点完立刻恢复穿透,不等下一轮轮询
   void applyIgnore(true)
   syncHitTest()
+  if (activeDanmaku.value.length === 0) scheduleIdleHide()
 }
 
 /** kind → 样式类:完成 / 出错 / 时段问候 / 主动搭话 各有强调,其余走默认柔和 */
@@ -296,11 +371,16 @@ onMounted(async () => {
     messages: () => activeDanmaku.value.length,
     onWarn: (s) => console.warn('[danmaku] 内存偏高:', s.heapMB.toFixed(0), 'MB'),
   })
+  // 刚起来屏上是空的：按当前有没有气泡决定要不要开始空闲计时。
+  // 不写这句的话，开机后若一直没弹幕，这个全屏透明窗会永远挂着。
+  if (activeDanmaku.value.length === 0) scheduleIdleHide()
 })
 
 onUnmounted(() => {
   stopMemSentinel?.()
   stopMemSentinel = null
+  if (idleHideTimer) clearTimeout(idleHideTimer)
+  idleHideTimer = null
   for (const tid of removeTimers) clearTimeout(tid)
   removeTimers.clear()
   if (pollTimer) clearInterval(pollTimer)

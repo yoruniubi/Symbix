@@ -57,7 +57,9 @@
             <span>{{ t('chat.thinkingProcess') }}</span>
             <svg class="reasoning-arrow" :class="{ expanded: showReasoning }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
-          <div v-show="showReasoning" class="reasoning-text">{{ String(msg.reasoning).trim() }}</div>
+          <!-- v-if 而非 v-show：v-show 只切 display，reasoning 全文仍留在 DOM 里。
+               每轮都带 reasoning 的话，几十轮后就是几十份长文本常驻内存。 -->
+          <div v-if="showReasoning" class="reasoning-text">{{ String(msg.reasoning).trim() }}</div>
         </div>
 
         <!-- Steps / 工具卡片 — 过滤无效空 step -->
@@ -84,7 +86,10 @@
             <div v-if="step.progress" class="step-progress">
               <span class="step-progress-dot"></span>{{ step.progress }}
             </div>
-            <div v-show="expandedSteps[Number(i)]" class="step-details">
+            <!-- 同上：step.arguments / step.result 是工具参数与返回原文，
+                 单条常常几 KB。用 v-show 折叠等于把整轮所有工具的输出
+                 永久钉在 DOM 里，这是消息数一多就涨内存的主因。 -->
+            <div v-if="expandedSteps[Number(i)]" class="step-details">
               <div v-if="step.arguments" class="step-detail-row">
                 <div class="detail-label">{{ t('chat.param') }}</div>
                 <pre class="detail-pre">{{ formatJson(step.arguments) }}</pre>

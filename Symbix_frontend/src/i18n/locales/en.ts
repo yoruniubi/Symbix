@@ -98,6 +98,7 @@ export default {
     retrying: 'Upstream interrupted, regenerating',
     proactiveBadge: 'It came to say hi',
     tapToChat: 'Tap to chat',
+    revealHistory: 'Show {n} earlier messages',
     actModeReactive: 'Auto',
     actModeReactiveTip: 'Agent auto-routed this turn to a direct reply (no plan)',
     actModePlan: 'Plan',
