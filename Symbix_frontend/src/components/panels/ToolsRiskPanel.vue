@@ -301,7 +301,12 @@ async function clearGrants() {
 
 // ---- MCP server 信任 ----
 async function loadServerTrust() {
-  const sids = (props.mcpServerGroups || []).map((g) => g.server_id).filter(Boolean)
+  // 显式标注:defineProps 的运行时声明会退化成 { type: Array },
+  // 不标注的话 g 是隐式 any。用类型谓词收窄,
+  // 否则 filter(Boolean) 在 TS 里不会把 undefined 洗掉
+  const sids = (props.mcpServerGroups || [])
+    .map((g: { server_id?: string }) => g.server_id)
+    .filter((s: string | undefined): s is string => !!s)
   const out: { server_id: string; trusted: boolean }[] = []
   for (const sid of sids) {
     try {

@@ -11,6 +11,17 @@ export interface ToolCallStep {
 }
 
 export interface Message {
+  /**
+   * 稳定唯一 id，仅前端用，不传给后端。
+   *
+   * 消息列表不能拿数组下标当 :key：handleEditMessage / handleRetryMessage 会
+   * splice 截断中间的若干条，下标整体前移 → Vue 会错位复用同位置的旧组件，
+   * 旧组件的 onUnmounted 不触发，它持有的 Blob URL / Audio 就永远不释放。
+   *
+   * 懒生成：历史会话从磁盘读回来的消息没有这个字段（后端不存它），
+   * 渲染时用 `msg.uid ?? idx` 兜底；新建的消息一律挂上。
+   */
+  uid?: string
   role: 'user' | 'assistant'
   content: string
   reasoning?: string

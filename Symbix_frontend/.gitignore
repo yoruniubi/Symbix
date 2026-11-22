@@ -27,3 +27,7 @@ public/pixiv_pet
 *.njsproj
 *.sln
 *.sw?
+
+# check-vue-types.mjs 的中间产物（脚本自己会清，这里是兜底）
+src/__vue_typecheck__/
+.tmp-vue-types.tsconfig.json

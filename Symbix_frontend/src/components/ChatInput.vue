@@ -349,7 +349,9 @@ function makeImagePreview(raw: File): string | undefined {
 }
 
 const currentModelLabel = computed(() => {
-  const opt = props.modelOptions.find(o => o.value === props.currentModel)
+  // 显式标注:defineProps 的运行时声明会退化成 { type: Array },
+  // 不标注的话这里的 o 是隐式 any(严格模式下报 TS7006)
+  const opt = props.modelOptions.find((o: { label: string; value: string }) => o.value === props.currentModel)
   return opt?.label || props.currentModel || t('chatInput.selectModel')
 })
 
