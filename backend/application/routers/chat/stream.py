@@ -42,6 +42,7 @@ from Symbix_sdk.checkpoint import (
 )
 from Symbix_sdk.memory.memory import TOOL_MEMO_ROLE
 from Symbix_sdk.time_context import current_time_line
+from Symbix_sdk.tools.file_pipeline import set_active_session, reset_active_session
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
     _is_interaction_tool,
@@ -91,6 +92,17 @@ def _humanize_upstream_error(raw: str) -> str:
 # 不熔断的话,一次限流能让 Agent 空转几十分钟,用户只看到它在原地打转。
 MAX_CONSECUTIVE_UPSTREAM_ERRORS = 3
 
+# 内容审核拦截单独计数,**不参与**上面的 3 次熔断。
+#
+# 为什么分开:审核是「这份输入不合规」的确定性判定,不是临时故障。再开一轮
+# 只是把同一份上下文原样再发一次,上游会给出同样的结论 —— 而每一次都是一次
+# 真实的请求,既白烧配额又容易把网关的 RPM 打满(实测一次提问能连打 2~3 次,
+# 叠上降级重试就是「一秒七八次」,直接触发 all candidate channels are locally
+# rate limited,把正常请求也一起拖死)。
+#
+# 所以撞到审核就**当场收尾**,把上游原话告诉用户,让他改输入或换模型。
+MAX_CONSECUTIVE_MODERATION = 1
+
 
 def _fallback_with_progress(round_error: str, round_count: int,
                             tool_round: bool) -> str:
@@ -106,6 +118,30 @@ def _fallback_with_progress(round_error: str, round_count: int,
     done = (f"已完成 {round_count} 轮工具调用,已停止续跑。"
             if tool_round else "尚未执行工具调用,已停止续跑。")
     return f"[本轮执行被打断:{round_error}。{done}]"
+
+def _is_moderation_round_error(round_error: str) -> bool:
+    """本轮的失败是不是「内容审核拦截」。
+
+    审核会被上游包成 500,但 body 里带 moderation_error / MODERATION_BLOCKED,
+    `_humanize_upstream_error` 会把它们原样留在文本里,所以这里扫关键字即可。
+
+    Args:
+        round_error: 本轮 `_humanize_upstream_error()` 的结果,空串表示没出错
+
+    Returns:
+        True 表示这是内容审核拦截(确定性判定,重开一轮没有意义)
+    """
+    if not round_error:
+        return False
+    low = round_error.lower()
+    return (
+        "moderation_error" in low
+        or "moderation_blocked" in low
+        or "smart moderation blocked" in low
+        or "content_policy" in low
+        or "content_filter" in low
+    )
+
 
 def _tool_call_signature(name: str, arguments) -> tuple:
     """工具调用签名(用于本轮去重)。参数解析失败时退化为原字符串。"""
@@ -149,6 +185,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
     """AI 流式对话接口 (SSE) - 支持完整的 tool_calls 循环和审批"""
 
     async def generate():
+        # 把当前请求标记为本会话:uploads/ 的沙箱可见面按此收窄,
+        # 防止模型找附件时读到别的会话的文档(上下文串味)。
+        _scope_token = set_active_session(request.session_id)
         # 注册本会话进行中任务:删除对话时可一并取消,终止 chat/action。
         _gen_task = asyncio.current_task()
         register_session_task(request.session_id, _gen_task)
@@ -308,6 +347,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 image_parts=image_parts or None,
                 supports_vision=supports_vision,
                 system_prompt=stable_prompt,
+                session_id=request.session_id,
             ):
                 if event["type"] == "stream_reset":
                     # 上游连接中断，前端已渲染的这部分内容作废，通知其清空重新开始
@@ -363,8 +403,13 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             repeat_blocked_streak = 0
             # 首轮就撞 429/鉴权时,while 里的 round_error = None 会把它清掉,
             # 先在这里计入熔断基数,免得首轮失败被当成「一切正常」。
+            # 审核拦截单独记:它是确定性判定,重开一轮只会原样再撞一次。
+            moderation_blocked = False
             if round_error:
                 consecutive_upstream_errors += 1
+                if _is_moderation_round_error(round_error):
+                    moderation_blocked = True
+                    print("[stream] 首轮命中内容审核,不再进入工具循环")
 
             # 长任务期间收到的插话先攒这里,下一轮模型调用前拼进上下文。
             # 工具一根命令跑十几分钟时「不在轮间隙」,插话没地方消费 ——
@@ -384,6 +429,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 image_parts=image_parts or None,
                 supports_vision=supports_vision,
                 system_prompt=stable_prompt,
+                # 多轮工具循环每轮都会重建 messages,这里漏了 sid 的话,
+                # 第 2 轮起 system 里的 [当前会话] 段就消失了 —— 模型于是
+                # 又不知道上传目录,回到「按文件名去 uploads 里搜」的老路。
+                session_id=request.session_id,
             )
             cum_tool_tokens = 0
             # token 统计:估算用的 messages 快照(每轮更新)
@@ -429,6 +478,12 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             if tool_calls_raw and (not max_rounds or round_count < max_rounds):
                 await chat_injection.set_tool_loop_active(request.session_id, True)
             while tool_calls_raw and (not max_rounds or round_count < max_rounds):
+                # 内容审核拦截:确定性判定,重开一轮=原样再打一次上游。
+                # 实测一次提问会因此连打 2~3 次,叠上降级重试就是「一秒七八次」,
+                # 直接把网关 RPM 打满,把正常请求也拖成 429。撞到就收尾。
+                if moderation_blocked:
+                    print("[stream] 内容审核已拦截,停止续跑(不再重试同一份输入)")
+                    break
                 # 连续整轮失败:上游限流/鉴权挂了,再开新一轮也只是再撞一次
                 if consecutive_upstream_errors >= MAX_CONSECUTIVE_UPSTREAM_ERRORS:
                     print(f"[stream] 连续 {consecutive_upstream_errors} 轮上游失败,熔断收尾")
@@ -888,8 +943,11 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         print(f"[stream] 工具 memo 落库失败: {_e}")
                 if round_error:
                     consecutive_upstream_errors += 1
+                    if _is_moderation_round_error(round_error):
+                        moderation_blocked = True
                 else:
                     consecutive_upstream_errors = 0
+                    moderation_blocked = False
 
             # 循环结束(不再有 tool_calls / 轮次用尽 / 被中断):这轮不会再有轮间隙了
             await chat_injection.set_tool_loop_active(request.session_id, False)
@@ -981,6 +1039,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             yield format_sse({"type": "error", "content": str(e)})
             yield "data: [DONE]\n\n"
         finally:
+            # 还原会话作用域:不还原的话,这个 Task 后续复跑会带着上一轮的 sid,
+            # 让别的会话看到错误的 uploads 子目录。
+            reset_active_session(_scope_token)
             # 插话:流结束,清注入槽并唤醒还在等投递的 POST(让它走 no_stream 退路)
             await chat_injection.clear_injection_target(request.session_id)
             unregister_session_task(request.session_id, _gen_task)

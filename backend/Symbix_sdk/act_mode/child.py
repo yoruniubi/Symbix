@@ -171,8 +171,13 @@ async def run_child_agent(
         api_key_val = override_api_key or provider.api_key
         caps = resolve_capabilities(raw_model, provider)
 
+        # 子 Agent 在同一个 asyncio 上下文里跑,ContextVar 会自动继承父请求的
+        # 会话作用域;显式读出来传给 _build_messages,让它也看到 [当前会话] 段,
+        # 否则子 Agent 找附件时同样会去 uploads/ 根下通读别的会话。
+        from Symbix_sdk.tools.file_pipeline import active_session as _active_session
         messages = llm_client._build_messages(
             [], user_msg, registry=None, tools=tools, system_prompt=system_prompt,
+            session_id=_active_session() or None,
         )
 
         tools_used: list[str] = []

@@ -248,7 +248,8 @@ class SymbixClient:
     def _build_messages(self, history, user_input, registry=None, tools=None, image_parts=None,
                          supports_vision: Optional[bool] = None,
                          system_prompt: Optional[str] = None,
-                         system_tail: Optional[str] = None):
+                         system_tail: Optional[str] = None,
+                         session_id: Optional[str] = None):
         messages = []
         # 显式传入的 system_prompt 优先(后台链路如记忆提取/决策),
         # 不覆盖全局 self.system_prompt,避免并发跑到一半被读走污染值。
@@ -336,6 +337,33 @@ class SymbixClient:
                     "请直接调用相应的工具函数,而不是告诉用户你无法执行;"
                     "工具的完整参数说明见本次请求的 tools 定义,不要凭猜测填参数。\n"
                     f"可用工具({len(tool_names)} 个): {', '.join(tool_names)}"
+                )
+
+        # ── 当前会话的上传目录 ─────────────────────────────────────
+        # uploads/ 下**每个会话一个独立子目录**,沙箱允许读整个 uploads/,所以如果不
+        # 明确告诉模型「你的是哪一个」,它为了找附件会去 `uploads/` 根下通读,
+        # 顺手把别的会话的文档吃进上下文 —— 用户实测到过这种串味。
+        # 这里把 sid 和它对应的绝对目录钉死,并明确禁止横向扫目录。
+        # 会话在请求内稳定,放 system 前缀不影响 prompt cache。
+        _sid = (session_id or "").strip()
+        if _sid:
+            try:
+                from .tools.file_pipeline import session_upload_dir as _session_upload_dir
+                _up_dir = _session_upload_dir(_sid)
+            except Exception:
+                _up_dir = ""
+            if _up_dir:
+                system += (
+                    f"\n\n[当前会话]\n"
+                    f"session_id = {_sid}\n"
+                    f"本会话的上传目录 = {_up_dir}\n\n"
+                    "上传件的绝对路径会直接写在本轮用户消息的「附件」块里(`路径:` 那一行),"
+                    "需要重读某个附件时**直接用那个路径**,不要自己拼、不要按文件名去搜。\n"
+                    "- 严禁遍历或读取 `uploads/` 下的其他会话目录 —— 那些是别的对话的私有文件,"
+                    "读进来会污染本轮上下文,用户会看到莫名其妙的内容。\n"
+                    f"- 只允许读 `{_up_dir}` 这一个目录(及其子目录)里的文件。\n"
+                    "- 用户说「我刚才上传的 / 那个文件」时,指的就是本会话上传目录里的东西;"
+                    "如果该目录为空或没有匹配项,如实说没有,不要拿其他会话的同名文件顶替。\n"
                 )
 
         # ── 当前工作区:用户可能在文件面板里打开了某个目录 ──────────
@@ -564,6 +592,7 @@ class SymbixClient:
         image_parts: Optional[list[dict]] = None,
         supports_vision: Optional[bool] = None,
         system_prompt: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         流式输出统一的 dict 事件（原生 HTTP）:
@@ -578,15 +607,21 @@ class SymbixClient:
         api_key = override_api_key or provider.api_key
 
         messages = self._build_messages(history or [], user_input, registry=registry, tools=tools, image_parts=image_parts,
-                                        supports_vision=supports_vision, system_prompt=system_prompt)
+                                        supports_vision=supports_vision, system_prompt=system_prompt,
+                                        session_id=session_id)
 
         url, provider_type, headers, model_name = self._resolve_endpoint(raw_model, raw_base, api_key)
         print(f"[stream] {provider_type} → {url}, model={model_name}")
 
         # 内容审核拦截是概率性误判(上游 hashlinear_model 置信度常压着阈值走),
-        # 同样的输入可能连打几次都拦。对它做一次降级重试:丢掉 system 里那段
+        # 同样的输入可能连打几次都拦。对它做**一次**降级重试:丢掉 system 里那段
         # 历史摘要(只用于续跑上下文,丢了最多损失点概要),只带最近几轮对话。
         # 实测:摘要 5818 字 → 3/3 被拦;去掉摘要 → 3/3 放行。
+        #
+        # ⚠️ 这里必须退避。之前是拿到拦截就立刻重发,上游那边表现为「同一秒内
+        # 连打 2~3 次」,直接把网关的 RPM 打满(用户实测一秒七八次,触发
+        # all candidate channels are locally rate limited)。审核拦截本身也吃
+        # 配额,不退避的重试既救不回来,还会把本来正常的请求连坐限流。
         moderation_retried = False
         pending_error: Optional[dict] = None
         async for event in self._open_stream(
@@ -601,8 +636,14 @@ class SymbixClient:
                 # 第一遍只留下了占位,还没下发任何正文 —— 可以安全地重来
                 moderation_retried = True
                 pending_error = None
+                # 第一档降级:去掉 system 摘要
                 degraded = [m for m in messages if m.get("role") != "system"]
                 print(f"[stream] 命中内容审核,丢掉摘要降级重试({len(messages)} → {len(degraded)} 条消息)")
+                # 退避后再打。审核判定是过载的,连着打多半还是同一个结论。
+                delay = retry_delay(0)
+                await asyncio.sleep(delay)
+                # 第二档降级:只保留最近几轮。摘要和长历史都可能命中审核,
+                # 而「最新的几轮」是模型真正需要接上的上下文。
                 async for evt2 in self._open_stream(
                     url, provider_type, headers, model_name, degraded, tools,
                     caps_model_override=raw_model,

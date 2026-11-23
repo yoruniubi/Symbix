@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import mimetypes
+import contextvars
 import os
 import re
 import uuid
@@ -130,6 +131,45 @@ def _resize_image_bytes(
 # 会话内累积的“用户授权目录”(FilePanel 浏览过的项目外目录)。
 # 进程内可变;重启后端即清空(不落盘,避免悄悄扩大授权面)。
 _workspace_roots: set[str] = set()
+
+
+# 「当前正在跑哪个会话」——只影响 uploads/ 的可见范围。
+#
+# 为什么需要它:uploads/ 下每个会话一个子目录,而沙箱原先允许读整个 uploads/ 根。
+# 模型为了找附件会把别人的会话目录一起搜出来,把无关文档吃进上下文(用户实测到过
+# 这种串味)。这里把 uploads/ 的可见面收窄到「当前会话自己的子目录」。
+#
+# 用 ContextVar 而不是全局变量:后端是 asyncio 单进程多会话并发,全局变量会被
+# 旁边那个请求覆盖,导致 A 会话读到 B 的目录。ContextVar 随 Task 拷贝,天然隔离。
+_ACTIVE_SESSION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "symbix_active_session", default=""
+)
+
+
+def set_active_session(session_id: str) -> "contextvars.Token":
+    """把当前请求标记为某个会话。返回 token,供 reset_active_session 还原。
+
+    Args:
+        session_id: 本轮请求的会话 id;空串表示不做会话级收窄(后台链路)
+
+    Returns:
+        ContextVar token,必须原样传给 reset_active_session
+    """
+    return _ACTIVE_SESSION.set(str(session_id or ""))
+
+
+def reset_active_session(token: "contextvars.Token") -> None:
+    """还原 set_active_session 设置的作用域。请求结束务必调用,避免串到下一个请求。"""
+    try:
+        _ACTIVE_SESSION.reset(token)
+    except (ValueError, LookupError):
+        # token 已被别的栈帧 reset 过(异常路径重复调用),忽略即可
+        pass
+
+
+def active_session() -> str:
+    """返回当前请求的会话 id;不在会话上下文里时返回空串。"""
+    return _ACTIVE_SESSION.get() or ""
 
 
 def add_workspace_root(path: str) -> str:
@@ -279,14 +319,60 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
     return candidates[0] if candidates else None
 
 
+def _shadows_uploads_root(root: str) -> bool:
+    """判断某个 root 是不是「把 uploads 整棵盖进来」了。
+
+    开发态 `_backend_dir()` == backend/,而 uploads/ 就在 backend/uploads/,
+    于是 sandbox 里加一句 backend 就等于放行全部会话目录。命中这种 root 就
+    把它剔掉 —— 它想覆盖的其它内容由 project_root 兜着,不影响正常使用。
+
+    Args:
+        root: 候选沙箱根目录
+
+    Returns:
+        True 表示这个 root 包含了 uploads 根、会让会话隔离失效
+    """
+    try:
+        up = os.path.abspath(get_uploads_root())
+        r = os.path.abspath(root)
+        # root 与 uploads 相同,或 root 是 uploads 的祖先 → 都会放行 uploads 整棵
+        if os.path.commonpath([up, r]) == r:
+            return True
+    except (ValueError, OSError):
+        # 跨盘符 / 路径非法:保守判定为不影响
+        return False
+    return False
+
+
 def sandbox_roots() -> list[str]:
-    """native 文件工具允许访问的根目录 = 项目根 + uploads + 会话内授权目录。"""
+    """native 文件工具允许访问的根目录 = 项目根 + uploads + 会话内授权目录。
+
+    uploads/ 这部分**按当前会话收窄**:有活跃会话时只放行该会话的子目录,
+    不再把整个 uploads/ 根暴露出去。否则模型找附件时会顺手读到别的会话的
+    文档,把无关内容带进上下文(用户实测到过这种串味)。
+
+    没有活跃会话时(后台链路如记忆提取/定时任务)退回整个 uploads/ —— 那些
+    链路本来就不带会话上下文,收窄了反而读不到自己的产物。
+    """
+    sid = active_session()
+    if sid:
+        uploads_scope = [session_upload_dir(sid)]
+    else:
+        uploads_scope = [get_uploads_root()]
+    # ⚠️ 开发态 uploads/ 就在 backend/ 里面(app_paths._LAYOUT: uploads → "uploads"),
+    # 所以 `_backend_dir()` 天然把整棵 uploads 也放行了 —— 上面按会话收窄的努力
+    # 会被这一个 root 全部抵消。必须在这里不让 backend 根覆盖 uploads 子目录。
+    # 打包态 uploads 在 <安装目录>/data/ 下,不在 backend 里,这条对它是无操作。
     return [
-        get_project_root(),
-        get_uploads_root(),
-        _backend_dir(),
-        *workspace_roots(),
-    ]
+        root
+        for root in (
+            get_project_root(),
+            *uploads_scope,
+            _backend_dir(),
+            *workspace_roots(),
+        )
+        if not _shadows_uploads_root(root)
+    ] + uploads_scope
 
 
 def check_path_in_sandbox(path: str) -> tuple[bool, str]:

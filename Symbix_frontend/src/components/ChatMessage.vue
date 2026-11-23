@@ -102,9 +102,6 @@
           </div>
         </div>
 
-        <!-- 本轮产物:Agent 写出/下载的文件直接列成卡片,免得照着路径去翻 -->
-        <MessageArtifactBar :steps="msg.steps" />
-
         <!-- pet-forge 预览:Agent 写一次 base.svg 就刷新一次,方便直观看到形象 -->
         <div v-if="rigPath && !rigMissing" class="rig-preview">
           <div class="rig-preview-head">
@@ -132,6 +129,40 @@
             </div>
           </div>
         </div>
+
+        <!-- 生成中状态提示 -->
+        <div v-if="msg.generating" class="generating-block">
+          <svg class="generating-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+          <span class="generating-text">{{ msg.idleSec ? t('chat.generatingSlow', { n: msg.idleSec }) : t('chat.generating') }}</span>
+        </div>
+
+        <div v-if="hasContent" class="message-bubble" :class="msg.role" ref="bubbleRef">
+          <!-- assistant：流式 Markdown；user：纯文本 -->
+          <MarkdownRender
+            v-if="msg.role === 'assistant'"
+            class="msg-markdown"
+            mode="chat"
+            :content="markdownContent"
+            :final="isFinal"
+            :max-live-nodes="0"
+            :batch-rendering="true"
+            :render-batch-size="16"
+            :render-batch-delay="8"
+            :typewriter="true"
+            :fade="false"
+            :is-dark="isDark"
+          />
+          <div v-else class="msg-text">{{ plainContent }}</div>
+        </div>
+
+        <!-- ── 以下是「本轮结果区」:产物 / 待决策卡 ──────────────────
+             故意放在正文**之后**:这些是用户需要操作或查看的东西,贴着气泡底部
+             就等于贴着输入框。放在正文上方时,长回复会把卡片和输入框隔开,
+             用户滚到输入框就看不见「等你确认」,以为 Agent 卡住了。 -->
+        <!-- 本轮产物:Agent 写出/下载的文件直接列成卡片,免得照着路径去翻 -->
+        <MessageArtifactBar :steps="msg.steps" />
 
         <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续。kind=plan 时为待办清单确认卡 -->
         <div v-if="msg.pending_question" class="question-block"
@@ -211,33 +242,6 @@
             <n-button size="small" type="primary" :loading="msg.approval_pending === true" :disabled="msg.approval_pending === true" @click="emit('approve', true)">{{ t('chat.approve') }}</n-button>
             <n-button size="small" tertiary :disabled="msg.approval_pending === true" @click="emit('approve', false)">{{ t('chat.reject') }}</n-button>
           </div>
-        </div>
-
-        <!-- 生成中状态提示 -->
-        <div v-if="msg.generating" class="generating-block">
-          <svg class="generating-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-          </svg>
-          <span class="generating-text">{{ msg.idleSec ? t('chat.generatingSlow', { n: msg.idleSec }) : t('chat.generating') }}</span>
-        </div>
-
-        <div v-if="hasContent" class="message-bubble" :class="msg.role" ref="bubbleRef">
-          <!-- assistant：流式 Markdown；user：纯文本 -->
-          <MarkdownRender
-            v-if="msg.role === 'assistant'"
-            class="msg-markdown"
-            mode="chat"
-            :content="markdownContent"
-            :final="isFinal"
-            :max-live-nodes="0"
-            :batch-rendering="true"
-            :render-batch-size="16"
-            :render-batch-delay="8"
-            :typewriter="true"
-            :fade="false"
-            :is-dark="isDark"
-          />
-          <div v-else class="msg-text">{{ plainContent }}</div>
         </div>
 
         <!-- 上游中断重试提示:后端发 content_reset 时带上原因;重试吐出内容后由 delta/done 清掉 -->

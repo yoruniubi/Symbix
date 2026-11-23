@@ -21,6 +21,7 @@ from application.state import (
     unregister_session_task,
 )
 from application.services.risk_context import classify_for_chat, get_session_trust
+from application.routers.chat.stream import _is_moderation_round_error
 from application.services.memory_ops import (
     maybe_compress_session,
     maybe_extract_memories,
@@ -28,6 +29,7 @@ from application.services.memory_ops import (
 )
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
 from Symbix_sdk.client import build_tool_result_messages
+from Symbix_sdk.tools.file_pipeline import set_active_session, reset_active_session
 from Symbix_sdk.checkpoint import set_current as _ctx_set_current
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
@@ -267,6 +269,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
         # 追加到 messages，然后用流式 SSE 输出，避免前端干等。
         async def _stream_approve():
             nonlocal last_reasoning
+            # 把当前请求标记为本会话:uploads/ 沙箱可见面按此收窄,
+            # 防止续跑阶段读到别的会话的附件(上下文串味)。
+            _scope_token = set_active_session(session_id)
             # token 用量收口:多个 done 出口共用,整轮只记一次(与 stream.py 同一套路)
             _usage_recorded = False
 
@@ -325,6 +330,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     # 显式传本轮 system prompt(优先用挂起时快照的,否则用前端上送),
                     # 不碰全局 symbix_client.system_prompt → 并发会话不会互串。
                     system_prompt=ctx.get("system_prompt") or req.system_prompt or None,
+                    # 续跑同样要带 session_id:否则模型不知道本会话的上传目录,
+                    # 找附件时会去 uploads/ 根下通读,读到别的会话的文档。
+                    session_id=session_id,
                 )
                 tool_chain_msgs = ctx.get("tool_chain_msgs") or []
                 if tool_chain_msgs:
@@ -350,7 +358,12 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                     raw_model, raw_base, api_key_val
                 )
 
-                # 第一轮流式输出（审批后继续生成）;统一走 _open_stream 以享用重试外壳
+                # 内容审核拦截:确定性判定,再开一轮只是把同一份上下文原样再发一次。
+                # 每次都是一次真实请求,既白烧配额又会把网关 RPM 打满(实测一次提问
+                # 能连打 2~3 次,直接把正常请求也拖成 429)。首轮就要置位。
+                moderation_blocked = False
+
+                # 第一轮流式输出（审批后继续生成）;统一走 _open_stream 以享用重试外套
                 async for e in symbix_client._open_stream(
                     url, ptype, headers, model_name, msgs, mcp_tools,
                     caps_model_override=raw_model,
@@ -374,6 +387,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             last_usage = e["usage"]
                         if e.get("error"):
                             print(f"[_stream_approve] 内容不完整: {e['error']}")
+                            if _is_moderation_round_error(str(e["error"])):
+                                moderation_blocked = True
 
                 flushed = _batcher.flush()
                 if flushed is not None:
@@ -388,6 +403,9 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 # 连续被拦次数:模型无视提示原地打转时靠它收尾
                 repeat_blocked_streak = 0
                 while tool_calls_raw and (not rounds_cap or round_count_local < rounds_cap):
+                    if moderation_blocked:
+                        print("[approve] 内容审核已拦截,停止续跑(不再重试同一份输入)")
+                        break
                     # 客户端断连检测：前端 abort / 删 session 会断 SSE 连接，后端需主动停。
                     if await http_request.is_disconnected():
                         print(f"[approve] client disconnected at round {round_count_local}, stopping")
@@ -633,6 +651,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 last_usage = e["usage"]
                             if e.get("error"):
                                 print(f"[_stream_approve] 内容不完整: {e['error']}")
+                                if _is_moderation_round_error(str(e["error"])):
+                                    moderation_blocked = True
                     flushed2 = _batcher2.flush()
                     if flushed2 is not None:
                         yield flushed2
@@ -668,6 +688,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 yield format_sse({"type": "error", "content": str(e)})
                 yield "data: [DONE]\n\n"
             finally:
+                # 还原会话作用域,避免这个 Task 后续复跑时带着上一轮的 sid
+                reset_active_session(_scope_token)
                 _processing_approvals.discard(req.approval_id)
                 unregister_session_task(session_id, _gen_task)
 

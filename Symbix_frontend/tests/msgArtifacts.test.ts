@@ -140,6 +140,73 @@ check('非数组 steps', collectMessageArtifacts({ a: 1 }).length, 0)
 check('缺字段 steps', collectMessageArtifacts([{ name: 'create_file' }]).length, 0)
 check('入参不是 JSON', collectMessageArtifacts([{ name: 'create_file', arguments: 'not json', status: 'done' }]).length, 0)
 
+// ---- 12. doc_to_markdown_file 返回 md_path（以前不在 RESULT_PATH_KEYS 里）----
+const mdConv = collectMessageArtifacts([
+  {
+    name: 'doc_to_markdown_file',
+    arguments: JSON.stringify({ file_path: 'C:\\a\\x.docx', out_md_path: 'C:\\a\\x.md' }),
+    result: JSON.stringify({ success: true, md_path: 'C:\\a\\x.md' }),
+    status: 'done',
+  },
+])
+check('doc_to_markdown_file 产出被识别', mdConv.length, 1)
+check('doc_to_markdown_file 路径对', mdConv[0]?.path, 'C:\\a\\x.md')
+
+// ---- 13. open_terminal 里渲染出来的文件要能被列出来 ----
+// 以前完全不扫终端输出:渲染 40 个 clip 生成了 mp4,卡片上一条都没有
+const term = collectMessageArtifacts([
+  {
+    name: 'open_terminal',
+    arguments: JSON.stringify({ command: 'ffmpeg -i a.mp4 D:\\out\\clip01.mp4' }),
+    result: 'rendering...\nDone: D:\\out\\clip01.mp4 (12.3 MB)\nDone: D:\\out\\clip02.mp4 (11.8 MB)',
+    status: 'done',
+  },
+])
+check('终端产物: 找到 2 个 mp4', term.length, 2)
+check('终端产物: clip01', term.some((a) => a.path === 'D:\\out\\clip01.mp4'), true)
+check('终端产物: clip02', term.some((a) => a.path === 'D:\\out\\clip02.mp4'), true)
+check('终端产物: kind=image? 不,mp4 归 other', term[0]?.kind, 'other')
+
+// 依赖/缓存目录里的文件不能当产物
+const termNoise = collectMessageArtifacts([
+  {
+    name: 'open_terminal',
+    arguments: '{}',
+    result: 'wrote C:\\p\\node_modules\\pkg\\index.js\nwrote C:\\p\\.venv\\lib\\x.py\nwrote C:\\p\\node_modules\\a\\logo.png',
+    status: 'done',
+  },
+])
+check('终端产物: 过滤 node_modules/.venv', termNoise.length, 0)
+
+// 源码/配置类扩展名不进终端产物(避免把 package.json 当产物)
+const termSrc = collectMessageArtifacts([
+  {
+    name: 'open_terminal',
+    arguments: '{}',
+    result: 'edited C:\\proj\\src\\App.vue\nread C:\\proj\\package.json\nwrote C:\\proj\\out\\report.pdf',
+    status: 'done',
+  },
+])
+check('终端产物: 只认 report.pdf', termSrc.length, 1)
+check('终端产物: 是 pdf', termSrc[0]?.path, 'C:\\proj\\out\\report.pdf')
+
+// 去重:同一路径在 stdout 出现两次只占一格
+const termDup = collectMessageArtifacts([
+  {
+    name: 'open_terminal',
+    arguments: '{}',
+    result: 'writing E:\\o\\a.mp4 ...\nwrote E:\\o\\a.mp4 (5MB)\nverifed E:\\o\\a.mp4',
+    status: 'done',
+  },
+])
+check('终端产物: 重复路径去重', termDup.length, 1)
+
+// 未完成的终端步骤不算
+const termNotDone = collectMessageArtifacts([
+  { name: 'open_terminal', arguments: '{}', result: 'wrote E:\\o\\b.mp4', status: 'running' },
+])
+check('终端产物: running 不算', termNotDone.length, 0)
+
 if (failed > 0) {
   console.error(`\n${failed} 项失败`)
   process.exit(1)

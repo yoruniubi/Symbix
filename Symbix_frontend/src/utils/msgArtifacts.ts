@@ -63,33 +63,70 @@ const CODE_EXTS = new Set([
   '.yml', '.toml', '.ini', '.xml', '.sql', '.lua', '.kt', '.swift',
 ])
 
-/** 写入类工具 → 入参里代表「输出文件」的字段名(按优先级)。 */
+/** 写入类工具 → 入参里代表「输出文件」的字段名(按优先级)。
+ *
+ * ⚠️ 键必须是**后端真实存在**的工具名(tool_setup.ALL_TOOL_SCHEMAS)。
+ * 历史上这里写过 `write_to_file` / `replace_in_file` —— 两个后端都没有的工具,
+ * 属于纯噪音,已删。加工具前先 `tests/test_artifact_contract.py` 对一遍。
+ */
 const WRITE_ARG_TOOLS: Record<string, string[]> = {
   create_file: ['file_path'],
   edit_file: ['file_path'],
-  write_to_file: ['file_path', 'path'],
-  replace_in_file: ['file_path', 'path'],
   md_to_docx: ['out_path'],
   md_to_xlsx: ['out_path'],
   md_to_pptx: ['out_path'],
   md_to_pdf: ['out_path'],
+  // 办公文档 → md 落盘,输出字段叫 md_path 而不是 out_path
+  doc_to_markdown_file: ['out_md_path'],
 }
 
 /** 允许扫描返回值找输出路径的工具(必须是「会写盘」的,读类工具不许进来)。 */
 const RESULT_SCAN_TOOLS = new Set([
-  'create_file', 'edit_file', 'write_to_file', 'replace_in_file',
-  'search_and_replace',
+  'create_file', 'edit_file', 'search_and_replace',
   'md_to_docx', 'md_to_xlsx', 'md_to_pptx', 'md_to_pdf',
+  'doc_to_markdown_file',
   'download_file',
 ])
 
 /** 返回值里代表输出路径的 JSON 字段名。 */
 const RESULT_PATH_KEYS = new Set([
   'path', 'file', 'file_path', 'out_path', 'output_path', 'saved_to', 'dest',
+  // doc_to_markdown_file 的落盘字段
+  'md_path',
 ])
 
-const EDIT_TOOLS = new Set(['edit_file', 'write_to_file', 'replace_in_file', 'search_and_replace'])
+const EDIT_TOOLS = new Set(['edit_file', 'search_and_replace'])
 const DOWNLOAD_TOOLS = new Set(['download_file'])
+
+/**
+ * `open_terminal` 跑脚本/命令产出的文件。
+ *
+ * 这是产物检测最大的一个盲区:视频渲染、批量导出、ffmpeg、pandoc 这些几乎
+ * 全走 open_terminal,命令只回一段 stdout 文本,路径混在日志里。以前完全不扫,
+ * 于是「渲染了 40 个 clip、生成了 3 个 mp4」这种事在卡片上一条都看不到。
+ *
+ * 判据(宁少不滥):
+ *   · 必须带常见产物扩展名,避免把日志里的 `package.json`、`node_modules/x.js`
+ *     这类阅读性路径当成产物;
+ *   · 必须落在 uploads/ 或工作区之外也行,但**不能**是明显的依赖/缓存目录。
+ */
+const TERMINAL_TOOL = 'open_terminal'
+
+/** 终端输出里值得当成产物的扩展名(故意不含 .json/.js/.ts 这类源码/配置)。 */
+const TERMINAL_ARTIFACT_EXTS = new Set([
+  '.mp4', '.mov', '.avi', '.mkv', '.webm', '.gif',
+  '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.svg',
+  '.docx', '.xlsx', '.pptx', '.pdf',
+  '.zip', '.7z', '.gz', '.tar',
+  '.csv', '.md', '.txt', '.srt',
+  '.mp3', '.wav', '.m4a', '.flac',
+])
+
+/** 明显不是用户产物的目录(依赖、缓存、虚拟环境、git)。 */
+const TERMINAL_NOISE_DIRS = /[\\/](?:node_modules|__pycache__|site-packages|\.git|\.venv|venv|dist|build|\.cache)[\\/]/i
+
+/** 从终端输出里挖出来的绝对路径(带 Windows 盘符或 UNC 前缀)。 */
+const TERMINAL_PATH_RE = /(?:[A-Za-z]:[\\/][^\s"'<>|*?\r\n]+|\\\\\\\\[^\s"'<>|*?\r\n]+)/g
 
 /** `[Image saved: C:\a\b.png]` —— connector 把 MCP 返回的图片落盘后打的标记。 */
 const IMAGE_MARK = /\[Image saved:\s*([^\]\r\n]+?)\s*\]/
@@ -198,6 +235,40 @@ function pathsFromResult(result: unknown): string[] {
 }
 
 /**
+ * 从 open_terminal 的输出里挖出「刚被写出来的文件」。
+ *
+ * 为什么单独写一个:终端输出是混合文本(stdout + 报错 + 日志),路径混在里面,
+ * 而且同一个文件会在「处理中 / 完成」两行各出现一次。这版只做保守筛选:
+ *   · 绝对路径 + 产物扩展名;
+ *   · 排除 node_modules / site-packages / __pycache__ 这类目录;
+ *   · 排除「命令本身提到的输入文件」—— 无法可靠判断,靠扩展名白名单挡掉大部分。
+ *
+ * 保守优先:多列一个假产物比漏列十个真产物更容易让用户困惑,
+ * 但全不列也不行 —— 视频渲染完一个卡片都没有,用户根本不知道去哪找。
+ */
+function pathsFromTerminal(result: unknown): string[] {
+  const text = asText(result)
+  if (!text) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  const matches = text.match(TERMINAL_PATH_RE) || []
+  for (const raw of matches) {
+    // 行尾常见 `)` `]` `,` 之类,先剥掉再判
+    const p = cleanPath(raw)
+    if (!looksProducedPath(p)) continue
+    if (TERMINAL_NOISE_DIRS.test(p)) continue
+    const ext = extOf(p)
+    if (!TERMINAL_ARTIFACT_EXTS.has(ext)) continue
+    const key = p.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(p)
+    if (out.length >= MAX_ARTIFACTS) break
+  }
+  return out
+}
+
+/**
  * 同一路径多次出现时的取舍:先用 create 列出,后续变成 edit 就升级展示,
  * 下载/绘图标记比泛化路径更具体,优先覆盖。
  */
@@ -210,7 +281,6 @@ function safeOp(name: string): ArtifactOp {
   if (EDIT_TOOLS.has(name)) return 'edit'
   return 'create'
 }
-
 /**
  * 主入口:把一条消息的 steps 变成产物清单(按出现顺序,已去重)。
  *
@@ -268,6 +338,15 @@ export function collectMessageArtifacts(steps: unknown): MessageArtifact[] {
     if (imgMark) {
       const p = cleanPath(imgMark[1])
       if (looksProducedPath(p)) push(p, 'image')
+    }
+
+    // ④ 终端产物:视频渲染/批量导出/ffmpeg/pandoc 几乎全走 open_terminal,
+    //    它的 stdout 里混着路径。以前完全不扫,于是「渲染了 40 个 clip」
+    //    在卡片上一条都看不到。
+    if (tool === TERMINAL_TOOL) {
+      for (const p of pathsFromTerminal(rec.result)) {
+        push(p, 'create')
+      }
     }
   }
 
