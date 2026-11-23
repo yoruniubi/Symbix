@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from Symbix_sdk.tools.file_pipeline import (
+    _session_sibling_upload,
     assert_path_allowed,
     get_project_root,
     parse_file_path,
@@ -211,6 +212,15 @@ def list_files(directory: str = ".", recursive: bool = False, max_entries: int =
             for root, dirs, files in os.walk(directory):
                 # 跳过常见超大目录,避免把 node_modules / .git 等塞进上下文
                 dirs[:] = [d for d in dirs if d not in omit_dirs]
+                # 会话隔离:别的会话的 uploads 子目录不进遍历(否则能 ls 出全部会话)
+                dirs[:] = [
+                    d for d in dirs
+                    if not _session_sibling_upload(os.path.join(root, d))
+                ]
+                files = [
+                    f for f in files
+                    if not _session_sibling_upload(os.path.join(root, f))
+                ]
                 rel = os.path.relpath(root, directory)
                 prefix = "" if rel == "." else rel + "/"
                 for d in dirs:
@@ -230,6 +240,8 @@ def list_files(directory: str = ".", recursive: bool = False, max_entries: int =
         else:
             for name in os.listdir(directory):
                 full = os.path.join(directory, name)
+                if _session_sibling_upload(full):
+                    continue
                 if os.path.isdir(full):
                     entries.append(f"{name}/")
                 else:
@@ -360,8 +372,12 @@ def _search_with_rg(
             continue
         if obj.get("type") != "match":
             continue
+        _f = obj["data"]["path"]["text"]
+        # 会话隔离:rg 按目录扫,不经过 resolve_under_root,必须在这里挡一道
+        if _session_sibling_upload(_f):
+            continue
         matches.append({
-            "file": obj["data"]["path"]["text"],
+            "file": _f,
             "line_number": obj["data"]["line_number"],
             "line_content": obj["data"]["lines"]["text"].rstrip("\n"),
         })
@@ -417,6 +433,8 @@ def _search_with_python(
                 if glob_re and not glob_re.search(name):
                     continue
                 fpath = os.path.join(dirpath, name)
+                if _session_sibling_upload(fpath):
+                    continue
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                         for lineno, line in enumerate(f, 1):
@@ -534,9 +552,25 @@ def search_file_with_name(
             return {"success": False, "error_msg": f"不是目录或不存在: {r}", "results": []}
         roots = [r]
     else:
+        # sandbox_roots() 里 project_root 与 backend 互相包含 uploads,
+        # 直接全喂给 rg 会让同一个文件被列出多次。这里只保留「不在别的
+        # 已选 root 之下」的那些,即去掉被其他 root 覆盖的冗余项。
+        cand = []
         for r in sandbox_roots():
             r = os.path.abspath(r)
-            if os.path.isdir(r) and r not in roots:
+            if os.path.isdir(r) and r not in cand:
+                cand.append(r)
+        for r in sorted(cand, key=len):
+            # 已被某个更短的 root 覆盖就跳过
+            covered = False
+            for kept in roots:
+                try:
+                    if os.path.commonpath([r, kept]) == kept:
+                        covered = True
+                        break
+                except ValueError:
+                    continue
+            if not covered:
                 roots.append(r)
 
     # 用 ripgrep --files 列出所有文件,再按文件名做包含匹配。
@@ -561,9 +595,18 @@ def search_file_with_name(
             if proc.returncode not in (0, 1):  # 1 = 无匹配,是正常
                 use_walk = True
             else:
+                _seen: set[str] = set()
                 for line in proc.stdout.splitlines():
                     if not line:
                         continue
+                    # 会话隔离:rg 是按目录扫的,不经过 resolve_under_root,
+                    # 所以必须在这里单独挡掉「别的会话 uploads」里的文件。
+                    if _session_sibling_upload(line):
+                        continue
+                    key = os.path.normcase(os.path.abspath(line))
+                    if key in _seen:
+                        continue
+                    _seen.add(key)
                     base = os.path.basename(line)
                     if needle in base.lower():
                         results.append({"file": line, "name": base})
@@ -587,13 +630,21 @@ def search_file_with_name(
         # 跳过常见大目录,避免扫死项目(与 _PY_FALLBACK_IGNORE_DIRS 同口径)
         _SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".next", "dist", "build",
                       ".venv", "venv", "checkpoint_blobs"}
+        _seen2: set[str] = set()
         for root in roots:
             for dirpath, dirs, files in os.walk(root):
                 dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
                 for name in files:
                     if needle in name.lower():
+                        fpath = os.path.join(dirpath, name)
+                        if _session_sibling_upload(fpath):
+                            continue
+                        key = os.path.normcase(os.path.abspath(fpath))
+                        if key in _seen2:
+                            continue
+                        _seen2.add(key)
                         results.append({
-                            "file": os.path.join(dirpath, name),
+                            "file": fpath,
                             "name": name,
                         })
                         if len(results) >= max_results:

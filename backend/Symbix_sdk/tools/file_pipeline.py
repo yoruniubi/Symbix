@@ -286,6 +286,10 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
         for root_abs in roots_abs:
             try:
                 if os.path.commonpath([abs_path, root_abs]) == root_abs:
+                    # 会话隔离:落在 uploads 下但不属于本会话的路径一律不放行。
+                    # 在「已确认在沙箱内」之后才查这条,所以不影响项目源码。
+                    if _session_sibling_upload(abs_path):
+                        return None
                     return abs_path
             except ValueError:
                 continue
@@ -307,6 +311,8 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
             continue
     # 过滤硬禁止区
     candidates = [c for c in candidates if not _in_forbidden(c)]
+    # 会话隔离:剔掉落在别的会话上传目录里的候选(同样只针对 uploads,不动项目源码)
+    candidates = [c for c in candidates if not _session_sibling_upload(c)]
     # 1) 优先选路径本身存在的( 目录或文件,读根据不歧义)
     for c in candidates:
         if os.path.exists(c):
@@ -319,60 +325,59 @@ def resolve_under_root(path: str, roots: list[str]) -> Optional[str]:
     return candidates[0] if candidates else None
 
 
-def _shadows_uploads_root(root: str) -> bool:
-    """判断某个 root 是不是「把 uploads 整棵盖进来」了。
+def _session_sibling_upload(path_abs: str) -> Optional[str]:
+    """判断路径是否落在「别的会话」的上传目录里。是则返回那个会话 id,否则 None。
 
-    开发态 `_backend_dir()` == backend/,而 uploads/ 就在 backend/uploads/,
-    于是 sandbox 里加一句 backend 就等于放行全部会话目录。命中这种 root 就
-    把它剔掉 —— 它想覆盖的其它内容由 project_root 兜着,不影响正常使用。
+    这是会话隔离的**唯一判据**。放在路径解析结果之后判定,而不是靠删 root:
+    删 root 会连带把项目根/backend 一起删掉(两者都包含 uploads),得不偿失。
 
     Args:
-        root: 候选沙箱根目录
+        path_abs: 已绝对化的候选路径
 
     Returns:
-        True 表示这个 root 包含了 uploads 根、会让会话隔离失效
+        命中的「别人的」会话 id;不在 uploads 下、或就是本会话、或当前没有活跃
+        会话(后台链路)时返回 None
     """
+    sid = active_session()
+    if not sid:
+        return None
     try:
         up = os.path.abspath(get_uploads_root())
-        r = os.path.abspath(root)
-        # root 与 uploads 相同,或 root 是 uploads 的祖先 → 都会放行 uploads 整棵
-        if os.path.commonpath([up, r]) == r:
-            return True
+        p = os.path.abspath(path_abs)
+        if os.path.commonpath([p, up]) != up:
+            return None            # 压根不在 uploads 下,与本规则无关
     except (ValueError, OSError):
-        # 跨盘符 / 路径非法:保守判定为不影响
-        return False
-    return False
+        return None                # 跨盘符等异常情形,交给上层其它规则处理
+
+    rel = os.path.relpath(p, up)
+    if rel in ('.', ''):
+        # uploads 根**自身**:有活跃会话时也不放行。
+        # 一 ls 就能看到所有会话的目录名,等于把隔离的前半截漏掉。
+        return '__uploads_root__'
+    first = rel.split(os.sep, 1)[0]
+    if not first or first in ('.', '..'):
+        return None
+    if first == _sanitize_sid(sid):
+        return None                # 本会话,放行
+    # uploads/downloads 这类「无会话归属」的公共目录:仅在无 sid 时才该访问,
+    # 有 sid 时一律视为别人的,避免 Agent 从公共下载区摸到别的会话产物。
+    return first
 
 
 def sandbox_roots() -> list[str]:
-    """native 文件工具允许访问的根目录 = 项目根 + uploads + 会话内授权目录。
+    """native 工具允许访问的根目录 = 项目根 + uploads + 后端 + 已授权工作区。
 
-    uploads/ 这部分**按当前会话收窄**:有活跃会话时只放行该会话的子目录,
-    不再把整个 uploads/ 根暴露出去。否则模型找附件时会顺手读到别的会话的
-    文档,把无关内容带进上下文(用户实测到过这种串味)。
-
-    没有活跃会话时(后台链路如记忆提取/定时任务)退回整个 uploads/ —— 那些
-    链路本来就不带会话上下文,收窄了反而读不到自己的产物。
+    ⚠️ 这里**不做**会话级裁剪,一个 root 都不删。裁剪交给
+    `_session_sibling_upload()` 在路径解析之后做 —— 因为 project_root 与
+    backend 都天然包含 uploads,在这里删会连项目源码一起删掉
+    (上一版就是这么把 Agent 关进 uploads 里出不来的)。
     """
-    sid = active_session()
-    if sid:
-        uploads_scope = [session_upload_dir(sid)]
-    else:
-        uploads_scope = [get_uploads_root()]
-    # ⚠️ 开发态 uploads/ 就在 backend/ 里面(app_paths._LAYOUT: uploads → "uploads"),
-    # 所以 `_backend_dir()` 天然把整棵 uploads 也放行了 —— 上面按会话收窄的努力
-    # 会被这一个 root 全部抵消。必须在这里不让 backend 根覆盖 uploads 子目录。
-    # 打包态 uploads 在 <安装目录>/data/ 下,不在 backend 里,这条对它是无操作。
     return [
-        root
-        for root in (
-            get_project_root(),
-            *uploads_scope,
-            _backend_dir(),
-            *workspace_roots(),
-        )
-        if not _shadows_uploads_root(root)
-    ] + uploads_scope
+        get_project_root(),
+        get_uploads_root(),
+        _backend_dir(),
+        *workspace_roots(),
+    ]
 
 
 def check_path_in_sandbox(path: str) -> tuple[bool, str]:
@@ -400,8 +405,13 @@ def resolve_under_allowed(path: str) -> Optional[str]:
     return resolve_under_root(path, sandbox_roots())
 
 
+def _sanitize_sid(session_id: str) -> str:
+    """会话 id → 目录名。必须与 session_upload_dir 用同一套规则,否则守卫对不上。"""
+    return re.sub(r"[^\w\-]+", "_", (session_id or "default"))[:80] or "default"
+
+
 def session_upload_dir(session_id: str) -> str:
-    sid = re.sub(r"[^\w\-]+", "_", (session_id or "default"))[:80] or "default"
+    sid = _sanitize_sid(session_id)
     d = os.path.join(get_uploads_root(), sid)
     os.makedirs(d, exist_ok=True)
     return d

@@ -300,18 +300,48 @@ def _split_md_blocks(md: str) -> list[dict]:
                 i += 1
             blocks.append({"type": "table", "header": header, "rows": rows})
             continue
-        # 列表:连续收集
+        # 列表:连续收集(同时记下缩进层级,供 pptx 做多级缩进)
         if re.match(r"^\s*[-*+]\s+", line) or re.match(r"^\s*\d+\.\s+", line):
             items = []
+            levels = []
+            ordered = []
+            ordinals = []
             while i < n and (re.match(r"^\s*[-*+]\s+", lines[i]) or re.match(r"^\s*\d+\.\s+", lines[i])):
-                items.append(re.sub(r"^\s*[-*+]\s+|^\s*\d+\.\s+", "", lines[i].rstrip()))
+                raw_item = lines[i].rstrip()
+                # 两个空格算一级,和常见 md 规范一致;最多取 4 级防止离谱缩进
+                indent = len(raw_item) - len(raw_item.lstrip(" \t"))
+                m_ord = re.match(r"^\s*(\d+)\.\s+", raw_item)
+                is_ordered = m_ord is not None
+                items.append(re.sub(r"^\s*[-*+]\s+|^\s*\d+\.\s+", "", raw_item))
+                levels.append(min(indent // 2, 4))
+                ordered.append(is_ordered)
+                ordinals.append(int(m_ord.group(1)) if m_ord else 0)
                 i += 1
-            blocks.append({"type": "list", "items": items})
+            blocks.append({
+                "type": "list",
+                "items": items,
+                "levels": levels,
+                "ordered": ordered,
+                "ordinals": ordinals,
+            })
+            continue
+        # 分隔线(---、***、___):不渲染成正文,记成 hr 由下游决定是否忽略
+        if re.match(r"^\s*([-*_])(\s*\1){2,}\s*$", line):
+            blocks.append({"type": "hr"})
+            i += 1
             continue
         # 段落(合并连续文本行)
         para = [line]
         i += 1
-        while i < n and lines[i].strip() and not lines[i].lstrip().startswith(("```", "#")) and not lines[i].strip().startswith("|") and not re.match(r"^\s*[-*+]\s+", lines[i]) and not re.match(r"^\s*\d+\.\s+", lines[i]):
+        while (
+            i < n
+            and lines[i].strip()
+            and not lines[i].lstrip().startswith(("```", "#"))
+            and not lines[i].strip().startswith("|")
+            and not re.match(r"^\s*[-*+]\s+", lines[i])
+            and not re.match(r"^\s*\d+\.\s+", lines[i])
+            and not re.match(r"^\s*([-*_])(\s*\1){2,}\s*$", lines[i])
+        ):
             para.append(lines[i].rstrip())
             i += 1
         blocks.append({"type": "para", "text": "\n".join(para).strip()})
@@ -607,8 +637,346 @@ def md_to_xlsx(md_content: str, out_path: str) -> dict:
         return {"success": False, "error": f"openpyxl 写入失败: {e}"}
 
 
-def md_to_pptx(md_content: str, out_path: str) -> dict:
-    """把 Markdown 写成 .pptx(按 ## / ### 分页,正文做要点)。"""
+# ---------------------------------------------------------------------------
+# pptx:主题预设与排版辅助
+# ---------------------------------------------------------------------------
+
+# 只控制六类颜色,不做"设计感"堆料 —— 够用、可预期、不依赖模板主题。
+# 键名统一,缺省的键会从 default 继承。
+_PPTX_THEMES: dict[str, dict[str, str]] = {
+    "default": {
+        "bg": "",
+        "title": "1F3864",
+        "text": "262626",
+        "accent": "2E74B5",
+        "code_fg": "C7254E",
+        "code_bg": "F4F4F4",
+        "table_hd": "2E74B5",
+        "table_hd_fg": "FFFFFF",
+        "table_alt": "EAF1F8",
+    },
+    "dark": {
+        "bg": "1B1B1F",
+        "title": "FFFFFF",
+        "text": "E6E6E6",
+        "accent": "7AB8FF",
+        "code_fg": "FFC66D",
+        "code_bg": "2A2A31",
+        "table_hd": "3A4A63",
+        "table_hd_fg": "FFFFFF",
+        "table_alt": "23232A",
+    },
+    "light": {
+        "bg": "FFFFFF",
+        "title": "111111",
+        "text": "333333",
+        "accent": "4C6FFF",
+        "code_fg": "B8005A",
+        "code_bg": "F5F5F7",
+        "table_hd": "4C6FFF",
+        "table_hd_fg": "FFFFFF",
+        "table_alt": "EEF1FF",
+    },
+    "business": {
+        "bg": "",
+        "title": "0F2A44",
+        "text": "2B2B2B",
+        "accent": "A67C00",
+        "code_fg": "8A3B00",
+        "code_bg": "F6F2E8",
+        "table_hd": "0F2A44",
+        "table_hd_fg": "FFFFFF",
+        "table_alt": "EDE6D6",
+    },
+    "warm": {
+        "bg": "FFF9F2",
+        "title": "7A2E1F",
+        "text": "3A2A22",
+        "accent": "E2703A",
+        "code_fg": "9C3D00",
+        "code_bg": "FBEFE3",
+        "table_hd": "E2703A",
+        "table_hd_fg": "FFFFFF",
+        "table_alt": "FBE7DA",
+    },
+}
+
+# 幻灯片版式(mm):16:9 是现代投影默认,4:3 留给老模板
+_PPTX_ASPECTS: dict[str, tuple[float, float]] = {
+    "16:9": (13.333, 7.5),
+    "4:3": (10.0, 7.5),
+}
+
+
+def _pptx_theme(name: str) -> dict[str, str]:
+    """取主题预设,未知名字退回 default(不报错,避免为了配色把转换整死)。"""
+    base = dict(_PPTX_THEMES["default"])
+    extra = _PPTX_THEMES.get((name or "").strip().lower())
+    if extra:
+        base.update({k: v for k, v in extra.items() if v})
+    return base
+
+
+def _pptx_rgb(hex_str: str):
+    """'1F3864' -> RGBColor;空串返回 None(表示"用模板默认")。"""
+    from pptx.dml.color import RGBColor
+
+    s = (hex_str or "").strip().lstrip("#")
+    if len(s) != 6:
+        return None
+    try:
+        return RGBColor.from_string(s.upper())
+    except Exception:
+        return None
+
+
+def _pptx_set_run(run, *, size: float, bold: bool = False, color,
+                  latin: str, ea: str, mono: str = "", code: bool = False) -> None:
+    """统一设置 run 的字号/粗体/颜色/中西文字体。
+
+    python-pptx 只设 font.name 时中文字符会回落到模板默认字体,
+    真正生效要同时写 <a:latin> 和 <a:ea>。
+    """
+    from pptx.util import Pt
+
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    if color is not None:
+        run.font.color.rgb = color
+    face = mono if code else latin
+    face_ea = mono if code else ea
+    run.font.name = face
+    try:
+        from pptx.oxml.ns import qn
+
+        rPr = run.font._rPr
+        for tag, value in (('a:latin', face), ('a:ea', face_ea), ('a:cs', face)):
+            el = rPr.find(qn(tag))
+            if el is None:
+                el = rPr.makeelement(qn(tag), {})
+                rPr.append(el)
+            el.set('typeface', value)
+    except Exception:
+        pass
+
+
+def _pptx_set_bullet(paragraph, char: Optional[str], level: int,
+                     auto_num: int = 0) -> None:
+    """给段落挂/摘项目符号或自动编号,并设置悬挂缩进。
+
+    python-pptx 没有 bullet API,只能直接写 OOXML。pPr 子元素有固定顺序:
+    lnSpc / spcBef / spcAft / buClr.. / buFont / buChar|buAutoNum / tabLst / defRPr,
+    因此这里统一在末尾追加(前面只会有 spcAft,顺序仍然合法)。
+
+    Args:
+        paragraph: 目标段落
+        char: 项目符号字符;None 表示不要符号
+        level: 缩进层级(0 起)
+        auto_num: >0 时改用自动编号,值即起始序号(0 表示用 char 作符号)
+    """
+    from pptx.oxml.ns import qn
+
+    pPr = paragraph._p.get_or_add_pPr()
+    paragraph.level = level
+    for tag in ('a:buNone', 'a:buChar', 'a:buAutoNum', 'a:buFont', 'a:buFontTx'):
+        for el in pPr.findall(qn(tag)):
+            pPr.remove(el)
+    # 悬挂缩进:每级 0.32in,符号占 0.26in
+    mar_l = int(level * 292608)          # 0.32in ≈ 292608 EMU
+    indent = -int(237744)                # 0.26in
+    pPr.set('marL', str(mar_l))
+    pPr.set('indent', str(indent))
+    if auto_num > 0:
+        pPr.append(pPr.makeelement(
+            qn('a:buFont'), {'typeface': 'Arial'}))
+        pPr.append(pPr.makeelement(
+            qn('a:buAutoNum'),
+            {'type': 'arabicPeriod', 'startAt': str(auto_num)},
+        ))
+    elif char is None:
+        pPr.append(pPr.makeelement(qn('a:buNone'), {}))
+        pPr.set('marL', '0')
+        pPr.set('indent', '0')
+    else:
+        pPr.append(pPr.makeelement(qn('a:buFont'), {'typeface': 'Arial'}))
+        pPr.append(pPr.makeelement(qn('a:buChar'), {'char': char}))
+
+
+def _pptx_est_text_height(blocks: list[dict], base_size: int,
+                          content_w_emu: int) -> int:
+    """估算这些块渲染后占多少高度(EMU),用于把表格紧接在文本下方。
+
+    只是估算:按「可用宽度 / 单字符宽度」得到每行字符数,再乘行高。
+    中文字符按 1em、英文按 0.55em 折算 —— 偏差 10% 以内,排版上够用。
+    """
+    # 1pt = 12700 EMU
+    def _lines_for(text: str, size: int, extra_level: int) -> int:
+        # 每级缩进吃掉 0.32in
+        avail = content_w_emu - extra_level * 292608
+        em_emu = size * 12700
+        per_line = max(8, int(avail / (em_emu * 0.9)))  # 中英混排按 0.9em 均摊
+        n = 0
+        for ln in (text or "").splitlines() or [""]:
+            # 中文按 1 字 1 单位,ASCII 按 0.55 单位
+            units = sum(1.0 if ord(ch) > 0x2E80 else 0.55 for ch in ln)
+            n += max(1, int(-(-units // per_line)))
+        return n
+
+    total_lines = 0
+    for b in blocks:
+        if b["type"] == "heading":
+            total_lines += 1.0
+        elif b["type"] == "para":
+            total_lines += _lines_for(b.get("text") or "", base_size, 0)
+        elif b["type"] == "code":
+            total_lines += len((b.get("text") or "").splitlines()) or 1
+        elif b["type"] == "list":
+            items = b.get("items") or []
+            lvls = b.get("levels") or [0] * len(items)
+            for li, it in enumerate(items):
+                lv = lvls[li] if li < len(lvls) else 0
+                total_lines += _lines_for(
+                    _strip_inline_md(it), max(base_size - 2 * lv, 10), lv
+                )
+    # 行高 ≈ 1.4 倍字号(1pt = 12700 EMU);再留 12% 段间距余量
+    line_h = int(base_size * 1.4 * 12700)
+    return int(total_lines * line_h * 1.12) + 127000  # 额外 10pt 容差
+
+
+def _pptx_add_textbox(slide, left, top, width, height):
+    """加一个零内边距的文本框,方便精确排版。"""
+    from pptx.util import Emu
+
+    tb = slide.shapes.add_textbox(left, top, width, height)
+    tf = tb.text_frame
+    tf.word_wrap = True
+    tf.margin_left = Emu(0)
+    tf.margin_right = Emu(0)
+    tf.margin_top = Emu(0)
+    tf.margin_bottom = Emu(0)
+    return tb, tf
+
+
+def _pptx_add_accent_rule(slide, left, top, width, color) -> None:
+    """标题下方一条强调色细线。"""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Emu
+
+    bar = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, left, top, width, Emu(54864)  # 0.06in
+    )
+    fill = _pptx_rgb(color)
+    if fill is not None:
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = fill
+    bar.line.fill.background()
+    try:
+        bar.shadow.inherit = False
+    except Exception:
+        pass
+
+
+def _pptx_add_table(slide, header: list[str], rows: list[list[str]],
+                    left, top, width, max_height, theme: dict, latin: str, ea: str) -> int:
+    """插入真表格,返回估算占用高度(EMU)。"""
+    from pptx.util import Emu, Inches, Pt
+
+    ncols = max(1, len(header))
+    nrows = 1 + len(rows)
+    if nrows <= 1:
+        return 0
+
+    row_h = Inches(0.34)
+    height = int(row_h * nrows)
+    if height > max_height:
+        height = int(max_height)
+        row_h = int(height / nrows)
+
+    shape = slide.shapes.add_table(nrows, ncols, left, top, width, height)
+    table = shape.table
+    try:
+        table.first_row = True
+        table.horz_banding = False
+    except Exception:
+        pass
+
+    col_w = int(width / ncols)
+    for c in range(ncols):
+        table.columns[c].width = Emu(col_w)
+    for r in range(nrows):
+        table.rows[r].height = Emu(int(row_h))
+
+    hd_fill = _pptx_rgb(theme["table_hd"])
+    hd_fg = _pptx_rgb(theme["table_hd_fg"])
+    alt_fill = _pptx_rgb(theme["table_alt"])
+    body_fg = _pptx_rgb(theme["text"])
+
+    # 行多时自动缩字号,避免溢出被 PowerPoint 裁切
+    fsize = 14 if nrows <= 6 else (12 if nrows <= 10 else 10)
+
+    def _fill(cell, rgb):
+        if rgb is None:
+            return
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = rgb
+
+    def _text(cell, value: str, bold: bool, rgb):
+        cell.margin_left = Emu(54864)
+        cell.margin_right = Emu(54864)
+        cell.margin_top = Emu(18288)
+        cell.margin_bottom = Emu(18288)
+        tf = cell.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = ""
+        run = p.add_run()
+        run.text = value
+        _pptx_set_run(run, size=fsize, bold=bold, color=rgb,
+                      latin=latin, ea=ea)
+
+    for j in range(ncols):
+        cell = table.cell(0, j)
+        _fill(cell, hd_fill)
+        _text(cell, _strip_inline_md(header[j]) if j < len(header) else "",
+              True, hd_fg)
+
+    for ri, row in enumerate(rows, start=1):
+        for j in range(ncols):
+            cell = table.cell(ri, j)
+            if ri % 2 == 0 and alt_fill is not None:
+                _fill(cell, alt_fill)
+            _text(cell, _strip_inline_md(row[j]) if j < len(row) else "",
+                  False, body_fg)
+
+    return height
+
+
+def md_to_pptx(
+    md_content: str,
+    out_path: str,
+    aspect: str = "16:9",
+    theme: str = "default",
+    font: str = "",
+    body_size: int = 0,
+    page_numbers: bool = True,
+) -> dict:
+    """把 Markdown 写成 .pptx。
+
+    分页:`#` / `##` 各起一页;`###` 及更深的标题不另起页,作为页内小标题加粗显示。
+    正文支持段落、多级列表(按缩进)、代码块(等宽字体)、表格(真 pptx 表格)。
+
+    Args:
+        md_content: Markdown 文本。
+        out_path: 输出 .pptx 路径。
+        aspect: '16:9'(默认)或 '4:3'。
+        theme: 配色预设,可选 default / dark / light / business / warm。
+        font: 字体名;留空用 Calibri + 微软雅黑(中文)。
+        body_size: 正文字号(磅);0 表示按每页内容量自动收缩。
+        page_numbers: 是否在右下角标页码。
+
+    Returns:
+        {'success': True, 'path': ..., 'note': 'N 页'} 或 {'success': False, 'error': ...}
+    """
     ok, out_abs = _resolve(out_path)
     if not ok:
         return {"success": False, "error": out_abs}
@@ -616,52 +984,224 @@ def md_to_pptx(md_content: str, out_path: str) -> dict:
         return {"success": False, "error": "out_path 必须以 .pptx 结尾"}
     try:
         from pptx import Presentation
-        from pptx.util import Pt
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Emu, Inches, Pt
     except ImportError:
         return {"success": False, "error": _missing_hint("python-pptx", "pip install python-pptx")}
 
+    pal = _pptx_theme(theme)
+    latin = (font or "").strip() or "Calibri"
+    ea = (font or "").strip() or "Microsoft YaHei"
+    mono = "Consolas"
+
+    # 版式
+    key = re.sub(r"[^0-9:]", "", aspect or "")
+    if key not in _PPTX_ASPECTS:
+        key = "16:9"
+    sw_in, sh_in = _PPTX_ASPECTS[key]
+
     try:
         prs = Presentation()
-        # 按标题切分页:### 级别开新页
+        prs.slide_width = Inches(sw_in)
+        prs.slide_height = Inches(sh_in)
+
+        W = prs.slide_width
+        H = prs.slide_height
+        MARGIN_X = Inches(0.6)
+        CONTENT_W = W - MARGIN_X * 2
+        TITLE_TOP = Inches(0.34)
+        TITLE_H = Inches(0.9)
+        RULE_TOP = TITLE_TOP + TITLE_H + Inches(0.06)
+        BODY_TOP = RULE_TOP + Inches(0.34)
+        BODY_H = H - BODY_TOP - Inches(0.6)
+
+        # 选 Blank 版式:自己画标题/正文,不依赖模板占位符(模板各异,占位符位置会错位)
+        blank = None
+        for lay in prs.slide_layouts:
+            if (lay.name or "").strip().lower() == "blank":
+                blank = lay
+                break
+        if blank is None:
+            blank = prs.slide_layouts[len(prs.slide_layouts) - 1]
+
+        # ── 按一/二级标题切页 ───────────────────────────────────
         slides_blocks: list[dict] = []
         cur = None
         for blk in _split_md_blocks(md_content):
             if blk["type"] == "heading" and blk["level"] <= 2:
                 cur = {"title": _strip_inline_md(blk["text"]), "body": []}
                 slides_blocks.append(cur)
-            elif cur is None:
-                cur = {"title": "内容", "body": []}
-                slides_blocks.append(cur)
-                cur["body"].append(blk)
             else:
+                if cur is None:
+                    cur = {"title": "", "body": []}
+                    slides_blocks.append(cur)
                 cur["body"].append(blk)
         if not slides_blocks:
-            slides_blocks = [{"title": "内容", "body": []}]
-        for sb in slides_blocks:
-            slide = prs.slides.add_slide(prs.slide_layouts[1])
-            title = slide.shapes.title
-            if title is not None:
-                title.text = sb["title"][:120]
-            body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
-            if body is None:
-                continue
-            tf = body.text_frame
-            tf.clear()
-            first = True
-            for blk in sb["body"]:
-                if blk["type"] in ("para", "code"):
-                    lines = (blk.get("text") or "").splitlines()
-                elif blk["type"] == "list":
-                    lines = [f"• {it}" for it in blk["items"]]
+            slides_blocks = [{"title": "", "body": []}]
+
+        total = len(slides_blocks)
+        for idx, sb in enumerate(slides_blocks, start=1):
+            slide = prs.slides.add_slide(blank)
+
+            # 背景色(仅在主题显式给了 bg 时铺,避免覆盖模板底纹)
+            bg_rgb = _pptx_rgb(pal.get("bg", ""))
+            if bg_rgb is not None:
+                from pptx.enum.shapes import MSO_SHAPE
+                bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, W, H)
+                bg.fill.solid()
+                bg.fill.fore_color.rgb = bg_rgb
+                bg.line.fill.background()
+                try:
+                    bg.shadow.inherit = False
+                except Exception:
+                    pass
+
+            # 标题
+            title_color = _pptx_rgb(pal["title"])
+            if sb["title"]:
+                _, tf = _pptx_add_textbox(
+                    slide, MARGIN_X, TITLE_TOP, CONTENT_W, TITLE_H
+                )
+                tp = tf.paragraphs[0]
+                tp.alignment = PP_ALIGN.LEFT
+                tr = tp.add_run()
+                tr.text = sb["title"][:120]
+                _pptx_set_run(tr, size=30, bold=True, color=title_color,
+                              latin=latin, ea=ea)
+                _pptx_add_accent_rule(
+                    slide, MARGIN_X, RULE_TOP, Inches(1.15), pal["accent"]
+                )
+
+            body_blocks = sb["body"]
+
+            # ── 表格单独排版:文本区上移、表格依次向下堆 ─────────
+            tables = [b for b in body_blocks if b["type"] == "table"]
+            texts = [b for b in body_blocks if b["type"] != "table"]
+            text_color = _pptx_rgb(pal["text"])
+            code_fg = _pptx_rgb(pal["code_fg"])
+            accent = _pptx_rgb(pal["accent"])
+
+            # 字号:显式给了就用;否则先按 18pt 量一遍高度,超了按比例往下调。
+            # (只用一个估算函数,避免"数行数"和"量高度"两套逻辑各说各话)
+            body_top = BODY_TOP
+            if body_size and body_size > 0:
+                base_size = int(body_size)
+                est_h = _pptx_est_text_height(texts, base_size, CONTENT_W) if texts else 0
+            else:
+                est_h = _pptx_est_text_height(texts, 18, CONTENT_W) if texts else 0
+                ratio = est_h / float(BODY_H) if BODY_H else 1.0
+                if ratio <= 0.75:
+                    base_size = 18
+                elif ratio <= 0.95:
+                    base_size = 16
+                elif ratio <= 1.30:
+                    base_size = 14
                 else:
-                    lines = []
-                for ln in lines:
-                    p = tf.paragraphs[0] if first else tf.add_paragraph()
-                    first = False
-                    p.text = _strip_inline_md(ln)[:200]
-                    p.level = 0
+                    base_size = 12
+                # 字号变了要重算高度(近似按字号线性缩放)
+                est_h = int(est_h * base_size / 18.0) if est_h else 0
+            body_h = BODY_H
+            if tables:
+                # 有表格:文本区按估算高度给,余下全留给表格
+                body_h = min(max(est_h, 0), int(BODY_H * 0.62))
+
+            if texts and body_h > 0:
+                _, tf = _pptx_add_textbox(
+                    slide, MARGIN_X, body_top, CONTENT_W, Emu(body_h)
+                )
+                first_para = True
+                for b in texts:
+                    if b["type"] == "heading":
+                        p = tf.paragraphs[0] if first_para else tf.add_paragraph()
+                        first_para = False
+                        _pptx_set_bullet(p, None, 0)
+                        p.space_before = Pt(10)
+                        p.space_after = Pt(4)
+                        r = p.add_run()
+                        r.text = _strip_inline_md(b["text"])[:200]
+                        _pptx_set_run(r, size=max(base_size, 16), bold=True,
+                                      color=accent, latin=latin, ea=ea)
+                    elif b["type"] == "para":
+                        for ln in (b.get("text") or "").splitlines():
+                            p = tf.paragraphs[0] if first_para else tf.add_paragraph()
+                            first_para = False
+                            _pptx_set_bullet(p, None, 0)
+                            p.space_after = Pt(6)
+                            r = p.add_run()
+                            r.text = _strip_inline_md(ln)[:400]
+                            _pptx_set_run(r, size=base_size, color=text_color,
+                                          latin=latin, ea=ea)
+                    elif b["type"] == "list":
+                        items = b.get("items") or []
+                        levels = b.get("levels") or [0] * len(items)
+                        ordered = b.get("ordered") or [False] * len(items)
+                        for li, it in enumerate(items):
+                            p = tf.paragraphs[0] if first_para else tf.add_paragraph()
+                            first_para = False
+                            lv = levels[li] if li < len(levels) else 0
+                            is_ord = ordered[li] if li < len(ordered) else False
+                            if is_ord:
+                                # 真自动编号;起始号沿用原文里的数字
+                                ords = b.get("ordinals") or []
+                                starter = ords[li] if li < len(ords) else 1
+                                starter = max(1, int(starter or 1))
+                                _pptx_set_bullet(p, None, lv, auto_num=starter)
+                            else:
+                                _pptx_set_bullet(p, "–" if lv >= 1 else "•", lv)
+                            p.space_after = Pt(3)
+                            r = p.add_run()
+                            r.text = _strip_inline_md(it)[:300]
+                            _pptx_set_run(r, size=max(base_size - 2 * lv, 10),
+                                          color=text_color, latin=latin, ea=ea)
+                    elif b["type"] == "code":
+                        for ln in (b.get("text") or "").splitlines() or [""]:
+                            p = tf.paragraphs[0] if first_para else tf.add_paragraph()
+                            first_para = False
+                            _pptx_set_bullet(p, None, 0)
+                            p.space_after = Pt(0)
+                            r = p.add_run()
+                            r.text = ln[:400]
+                            _pptx_set_run(r, size=max(base_size - 3, 9), color=code_fg,
+                                          latin=latin, ea=ea, mono=mono, code=True)
+
+                # 表格从「文本实际底部」开始,而不是固定区段末尾
+                used_text_h = min(max(est_h, 0), body_h)
+                body_top = int(body_top + used_text_h + Inches(0.22))
+
+            # 表格依次向下堆,超出底部就压行高
+            avail = int(H - body_top - Inches(0.55))
+            for ti, tb_blk in enumerate(tables):
+                remain_slides = len(tables) - ti
+                slot = int(avail / max(1, remain_slides)) if remain_slides else avail
+                used = _pptx_add_table(
+                    slide,
+                    tb_blk.get("header") or [],
+                    tb_blk.get("rows") or [],
+                    MARGIN_X, body_top, CONTENT_W, max(slot, Inches(0.8)),
+                    pal, latin, ea,
+                )
+                if used <= 0:
+                    continue
+                body_top = int(body_top + used + Inches(0.16))
+
+            # 页码
+            if page_numbers:
+                _, tf = _pptx_add_textbox(
+                    slide, W - MARGIN_X - Inches(1.0),
+                    H - Inches(0.5), Inches(1.0), Inches(0.3),
+                )
+                pp = tf.paragraphs[0]
+                pp.alignment = PP_ALIGN.RIGHT
+                r = pp.add_run()
+                r.text = f"{idx} / {total}"
+                _pptx_set_run(r, size=11, color=text_color, latin=latin, ea=ea)
+
         prs.save(out_abs)
-        return {"success": True, "path": out_abs, "note": f"{len(slides_blocks)} 页"}
+        return {
+            "success": True,
+            "path": out_abs,
+            "note": f"{total} 页 · {key} · 主题 {theme or 'default'}",
+        }
     except Exception as e:
         return {"success": False, "error": f"python-pptx 写入失败: {e}"}
 
@@ -826,17 +1366,43 @@ DOC_TOOLS_SCHEMAS = {
     "md_to_pptx": {
         "risk_channel": "write",
         "func": md_to_pptx,
-        "description": "把 Markdown 写成 .pptx(按二级/三级标题分页,正文与列表做幻灯片要点)。",
+        "description": (
+            "把 Markdown 写成 .pptx。'#'/'##' 各起一页,'###' 作为页内小标题;"
+            "支持段落、多级列表(按缩进)、代码块、表格(真 pptx 表格)。"
+            "可选 aspect 画幅、theme 配色、font 字体、body_size 字号、page_numbers 页码。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "md_content": {
                     "type": "string",
-                    "description": "Markdown 文本,建议用 ## / ### 分节作为每页标题",
+                    "description": "Markdown 文本,用 # / ## 分节作为每页标题",
                 },
                 "out_path": {
                     "type": "string",
                     "description": "输出的 .pptx 路径",
+                },
+                "aspect": {
+                    "type": "string",
+                    "enum": ["16:9", "4:3"],
+                    "description": "画幅,默认 16:9(现代投影)；4:3 给老模板",
+                },
+                "theme": {
+                    "type": "string",
+                    "enum": ["default", "dark", "light", "business", "warm"],
+                    "description": "配色预设,默认 default",
+                },
+                "font": {
+                    "type": "string",
+                    "description": "正文字体名,留空用 Calibri + 中文微软雅黑",
+                },
+                "body_size": {
+                    "type": "integer",
+                    "description": "正文字号(磅)。0 或不填 = 按每页内容量自动收缩(18/16/14/12)",
+                },
+                "page_numbers": {
+                    "type": "boolean",
+                    "description": "是否在右下角标 '当前/总数',默认 true",
                 },
             },
             "required": ["md_content", "out_path"],
