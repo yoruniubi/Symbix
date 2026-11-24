@@ -10,6 +10,15 @@ export interface ToolCallStep {
   progress?: string
 }
 
+/** 一轮里某个文件的磁盘变更（后端 artifact_tracker 的 diff 结果）。 */
+export interface FileChange {
+  /** 绝对路径（Windows 反斜杠，已被 normcase） */
+  path: string
+  op: 'create' | 'edit' | 'delete'
+  /** 变更后的字节数；delete 时是删除前的字节数 */
+  size?: number
+}
+
 export interface Message {
   /**
    * 稳定唯一 id，仅前端用，不传给后端。
@@ -26,6 +35,13 @@ export interface Message {
   content: string
   reasoning?: string
   steps?: ToolCallStep[]
+  /**
+   * 本轮真正落盘 / 改掉 / 删掉的文件（后端轮末磁盘快照 diff 得出）。
+   *
+   * 替代「靠工具名 + 正则扫参数」的产物推断：Agent 用终端命令写盘时那个办法
+   * 会漏，命令里提到的输入文件又会被误当产物。这里只认磁盘上真变了的东西。
+   */
+  fileChanges?: FileChange[]
   approval_id?: string
   /** 审批/提问已失效(后端重启或挂起态被清理):卡片只展示原因,不再可点 */
   approval_expired?: boolean

@@ -1665,6 +1665,9 @@ function handleSSEEvent(
       if (evt.reasoning) msg.reasoning = evt.reasoning
       // 后端本轮自动判决的执行模式(reactive / plan_solve):聊天页据此显示角标
       if (evt.act_mode) msg.act_mode = evt.act_mode
+      // 本轮真实落盘的文件(磁盘快照 diff)。比靠 steps 推准:
+      // Agent 用终端命令写盘也能覆盖,也不再误判命令里提到的输入文件。
+      if (Array.isArray(evt.file_changes)) msg.fileChanges = evt.file_changes
       // token 用量(后端估算,不是每轮都有:审批挂起/报错轮的 done 也带)
       recordUsage(evt.usage)
       msg.retryHint = ''

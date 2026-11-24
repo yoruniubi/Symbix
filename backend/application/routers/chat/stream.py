@@ -43,6 +43,7 @@ from Symbix_sdk.checkpoint import (
 from Symbix_sdk.memory.memory import TOOL_MEMO_ROLE
 from Symbix_sdk.time_context import current_time_line
 from Symbix_sdk.tools.file_pipeline import set_active_session, reset_active_session
+from Symbix_sdk.tools.artifact_tracker import snapshot as _snap_files, round_file_changes
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
     _is_interaction_tool,
@@ -214,6 +215,25 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             ckpt_start_ts = asyncio.get_event_loop().time()
             full_text = ""
             last_reasoning = None
+            # 本轮产物追踪:轮初拍磁盘快照,轮末 diff。判定与「哪个工具干的」
+            # 完全解耦 —— 终端命令写盘、脚本批量导出、MCP 工具落盘都能覆盖。
+            _files_before = _snap_files(request.session_id)
+
+            def _take_file_changes() -> list:
+                """取本轮产物变更,并重置基准。
+
+                一轮可能被审批/提问分成两段(先返回 done,用户回答后由
+                /chat/approve 续跑),两个 done 都会调到这里。重置基准是为了
+                不让同一批文件重复上报。
+                """
+                nonlocal _files_before
+                try:
+                    out = round_file_changes(request.session_id, _files_before)
+                except Exception as _fc_err:
+                    print(f"[stream] 产物追踪失败: {_fc_err}")
+                    out = []
+                _files_before = _snap_files(request.session_id)
+                return out
 
             user_for_llm, parsed_atts, image_parts = _prepare_user_message(request)
             # auto-pilot 自然语言开关指令(消费时替换为提示占位)
@@ -674,7 +694,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                                 "kind": qdata.get("kind", ""),
                                 "tool": {"id": tc_id, "name": tc_name},
                             })
-                            yield format_sse({"type": "done", "content": full_text, "usage": _usage_payload()})
+                            yield format_sse({"type": "done", "content": full_text, "usage": _usage_payload(),
+                                              "file_changes": _take_file_changes()})
                             # 掉出本轮工具循环,等待用户回答后由 /chat/approve 续跑
                             tool_calls_raw = None
                             break
@@ -738,7 +759,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         _emit_tool(request.session_id, ckpt_round_id, tc_name, tc_args,
                                    risk_level, False, "", status="skipped",
                                    error="awaiting user approval")
-                        yield format_sse({"type": "done", "content": full_text, "usage": _usage_payload()})
+                        yield format_sse({"type": "done", "content": full_text, "usage": _usage_payload(),
+                                          "file_changes": _take_file_changes()})
                         # — checkpoint: 本轮被审批拦住,尚未完成 → round 未完待续
                         _emit_round_summary(
                             request.session_id, ckpt_round_id,
@@ -966,12 +988,17 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     )
 
             memory.add(request.session_id, "assistant", full_text)
+            # 轮末产物 diff。放在 done 之前,前端一条消息就能拿到,不用二次请求。
+            # 失败必须静默 —— 产物卡是锦上添花,不能因为扫描出错把正常回复变成报错。
+            _file_changes = _take_file_changes()
             yield format_sse({
                 "type": "done",
                 "content": full_text,
                 "act_mode": act_mode,
                 "act_plan": act_plan,
                 "usage": _usage_payload(),
+                # 本轮真正落盘/改掉/删掉的文件(磁盘快照 diff)
+                "file_changes": _file_changes,
                 # 上游失败的原话:只给前端提示用,不进 content。
                 # 前端拿不到它时,正文里的兜底文案本身也说明了原因。
                 "error_notice": error_notice or None,

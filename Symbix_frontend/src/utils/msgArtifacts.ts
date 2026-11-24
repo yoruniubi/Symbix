@@ -1,21 +1,22 @@
 /**
- * 从一条 assistant 消息的工具步骤里提取「本轮真正产出的文件」。
+ * 从一条 assistant 消息里提取「本轮真正产出的文件」。
  *
  * 背景:Agent 写完文件往往只在正文里说一句「已保存到 C:\...\报告.docx」,用户还得照着
  * 路径去翻。这份清单喂给 MessageArtifactBar,把产物直接列成卡片(打开 / 定位 / 预览)。
  *
- * 判定原则 —— 宁可少列,也不要乱列:
- * 1. 只认 `status === 'done'` 的步骤:调用中 / 等审批 / 被拒 / 跳过都没有真的落盘;
- * 2. 只认绝对路径 + 带扩展名:相对路径判断不了落在哪,而 `path: "."` 这类入参满地都是;
- * 3. 路径来源分三路,且都要求该步骤是「会写盘的工具」:
- *    - 入参里的输出字段(create_file/edit_file 的 file_path、doc_tools 的 out_path);
- *    - 返回值里的输出字段(doc_tools / download_file 的 JSON `path`、
- *      search_and_replace 的 `results[].file`、`File created:` / `File saved:` 文案);
- *    - MCP 绘图工具的落盘标记 `[Image saved: <路径>]`(任何工具都可能带,标记本身够唯一);
- *    读类工具(read_file / list_files / search_files)的返回值一律不扫,否则会把
- *    「读到的文件」当成「产出的文件」;
- * 4. 同一路径多次出现按「先新建后改写」只占一格,不重复列。
+ * 数据来源有两路,优先级不同:
+ * 1. **磁盘快照 diff(主)** —— 后端在轮初/轮末各拍一次 `uploads/{会话}` 与
+ *    工作区,比对出真正新增/修改/删除的文件(`fileChanges`)。这条路与「哪个
+ *    工具干的」彻底解耦:终端命令、脚本批量导出、MCP 落盘都能覆盖。
+ * 2. **工具步骤推断(兜底)** —— 老会话的历史消息没有 fileChanges(那时后端不
+ *    发),只能从 steps 里按白名单工具名推。规则见下方 collectFromSteps。
+ *
+ * 两路同时存在时以磁盘为准:推断结果里不在 diff 中的路径直接丢弃 —— 它大概率
+ * 是命令里被提到的输入文件(`ffmpeg -i in.mp4 out.mp4` 的 in.mp4),或者写了
+ * 又删了、或者落在不监控的目录里。
  */
+
+import type { FileChange } from '@/composables/useChatStore'
 
 export type ArtifactKind =
   | 'image'
@@ -28,8 +29,8 @@ export type ArtifactKind =
   | 'archive'
   | 'other'
 
-/** 产物是怎么来的:新建 / 改写 / 下载 / 绘图落盘。 */
-export type ArtifactOp = 'create' | 'edit' | 'download' | 'image'
+/** 产物是怎么来的:新建 / 改写 / 下载 / 绘图落盘 / 删除。 */
+export type ArtifactOp = 'create' | 'edit' | 'download' | 'image' | 'delete'
 
 export interface MessageArtifact {
   /** 绝对路径原样(Windows 反斜杠保留),直接喂 /files/read 与 revealItemInDir */
@@ -40,6 +41,8 @@ export interface MessageArtifact {
   dir: string
   kind: ArtifactKind
   op: ArtifactOp
+  /** 字节数(后端 diff 提供);来自 steps 推断时没有 */
+  size?: number
 }
 
 /** 单条消息最多列多少个产物,避免脚本批量写盘时把聊天页撑炸 */
@@ -281,13 +284,93 @@ function safeOp(name: string): ArtifactOp {
   if (EDIT_TOOLS.has(name)) return 'edit'
   return 'create'
 }
+
+/** 后端 diff 的 op → 卡片 op。 */
+const OP_FROM_CHANGE: Record<string, ArtifactOp> = {
+  create: 'create',
+  edit: 'edit',
+  delete: 'delete',
+}
+
 /**
- * 主入口:把一条消息的 steps 变成产物清单(按出现顺序,已去重)。
+ * 主入口:把一条消息变成产物清单(按出现顺序,已去重)。
  *
- * @param steps Message.steps(形状 {name,arguments,result,status}[])
+ * @param steps Message.steps
+ * @param changes 后端轮末下发的磁盘变更列表(可选;历史消息没有)
  * @returns 产物清单;没有产物时返回空数组,调用方据此整块不渲染
  */
-export function collectMessageArtifacts(steps: unknown): MessageArtifact[] {
+export function collectMessageArtifacts(
+  steps: unknown,
+  changes?: unknown,
+): MessageArtifact[] {
+  const fromChanges = arrayChanges(changes)
+  if (!fromChanges.length) return collectFromSteps(steps)
+
+  // 有磁盘 diff 就以它为准:只报真变了的文件。
+  // 同时把「哪个工具干的」用于细分 op(下载/绘图比泛 create 更具体)。
+  const opHints = collectFromSteps(steps)
+  const hintByPath = new Map(opHints.map((a) => [a.path.toLowerCase(), a.op]))
+
+  const byPath = new Map<string, MessageArtifact>()
+  for (const c of fromChanges) {
+    // normcase 过的 Windows 路径已经全小写;其它平台保持原样
+    const path = c.path
+    if (!looksProducedPath(path)) continue
+    const key = path.toLowerCase()
+    if (byPath.has(key)) continue
+    if (byPath.size >= MAX_ARTIFACTS) break
+    const { name: fileName, dir } = splitPath(path)
+    const op = OP_FROM_CHANGE[c.op] || 'create'
+    const hint = hintByPath.get(key)
+    byPath.set(key, {
+      path,
+      name: fileName,
+      dir,
+      kind: artifactKindOf(fileName),
+      // 删除就是删除,不用工具提示美化;否则用更具体的提示(下载/绘图)
+      op: op === 'delete' || op === 'edit' ? op : hint && opRank(hint) > opRank('create') ? hint : op,
+      size: typeof c.size === 'number' ? c.size : undefined,
+    })
+  }
+  return Array.from(byPath.values())
+}
+
+/** 把后端的 file_changes 收敛成结构体,容错各种脏数据。 */
+function arrayChanges(changes: unknown): FileChange[] {
+  if (!Array.isArray(changes)) return []
+  const out: FileChange[] = []
+  for (const c of changes) {
+    if (!c || typeof c !== 'object') continue
+    const rec = c as Record<string, unknown>
+    const path = typeof rec.path === 'string' ? rec.path.trim() : ''
+    if (!path) continue
+    const op = String(rec.op || 'create')
+    if (op !== 'create' && op !== 'edit' && op !== 'delete') continue
+    out.push({
+      path,
+      op,
+      size: typeof rec.size === 'number' ? rec.size : undefined,
+    })
+  }
+  return out
+}
+
+/**
+ * 旧路径:没有磁盘 diff 时从工具步骤推(历史会话只能走这条)。
+ *
+ * 判定原则 —— 宁可少列,也不要乱列:
+ * 1. 只认 `status === 'done'` 的步骤:调用中 / 等审批 / 被拒 / 跳过都没有真的落盘;
+ * 2. 只认绝对路径 + 带扩展名:相对路径判断不了落在哪,而 `path: "."` 这类入参满地都是;
+ * 3. 路径来源分三路,且都要求该步骤是「会写盘的工具」:
+ *    - 入参里的输出字段(create_file/edit_file 的 file_path、doc_tools 的 out_path);
+ *    - 返回值里的输出字段(doc_tools / download_file 的 JSON `path`、
+ *      search_and_replace 的 `results[].file`、`File created:` / `File saved:` 文案);
+ *    - MCP 绘图工具的落盘标记 `[Image saved: <路径>]`(任何工具都可能带,标记本身够唯一);
+ *    读类工具(read_file / list_files / search_files)的返回值一律不扫,否则会把
+ *    「读到的文件」当成「产出的文件」;
+ * 4. 同一路径多次出现按「先新建后改写」只占一格,不重复列。
+ */
+export function collectFromSteps(steps: unknown): MessageArtifact[] {
   const list = Array.isArray(steps) ? steps : []
   const byPath = new Map<string, MessageArtifact>()
 
@@ -353,7 +436,8 @@ export function collectMessageArtifacts(steps: unknown): MessageArtifact[] {
   return Array.from(byPath.values())
 }
 
-/** 卡片上「能不能点开看」:图片走字节流,文本/代码走 /files/read。 */
+/** 卡片上「能不能点开看」:图片走字节流,文本/代码走 /files/read。删除掉的文件不能看。 */
 export function canPreviewArtifact(a: MessageArtifact): boolean {
+  if (a.op === 'delete') return false
   return a.kind === 'image' || a.kind === 'text' || a.kind === 'code'
 }

@@ -22,7 +22,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getCurrentWindow, cursorPosition } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
-// 后端端口是动态的,SSE(EventSource)不走 fetch 改写,必须直接引用
+// 后端端口是动态的，内存哨兵上报不走 fetch 改写，必须直接引用
 import { BACKEND_URL } from '@/utils/backend'
 import { startMemorySentinel } from '@/utils/memorySentinel'
 
@@ -44,8 +44,12 @@ interface DanmakuItem {
 
 const activeDanmaku = ref<DanmakuItem[]>([])
 let nextId = 1
-let es: EventSource | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+// 弹幕窗不再自己订阅 /pet/events:
+//   · 它按需创建,挂载时触发建窗的那条事件早过去了 → 必然丢;
+//   · 空闲弹幕 10 分钟才一条,丢一条等于这次搭话白搭;
+//   · 每个常住窗口一条 SSE = 多一份长连接 + 多一份解析。
+// 现在由常驻的 Home 窗口做唯一消费者,通过 Tauri event 'danmaku-push' 转发。
+let unlistenPush: (() => void) | null = null
 /** 已处理过的事件 id:防同一条事件插两次(SSE 重连/多连接时最容易发生) */
 const seenEventIds = new Set<string>()
 
@@ -71,61 +75,43 @@ const MAX_ACTIVE_DANMAKU = 24
  *  一个像素都没有。而后端空闲弹幕的间隔是 idle_interval_s=600s（10 分钟），
  *  也就是说 99% 的时间它都在白占着这层。
  *
- *  用 hide() 而不是 close()：hide 只是让窗口不可见，webview 和里面的 SSE
- *  连接都还活着，下一条弹幕来了直接 show() 就能画。close() 会销毁 webview，
- *  下次还得重建+重连，反而更贵。
+ *  所以生命周期改成「有弹幕 → Home 建窗 → 屏上清空 → close() 销毁」。
+ *  下一条弹幕到来时 Home 会重新建窗(见 Home.vue 的 SSE 分支)。
  *
- *  注意不算「合成层能省多少」，而是省掉一个常年存在的全屏透明窗口本身。 */
-const IDLE_HIDE_MS = 30_000
+ *  close() 而不是 hide()：hide 只让窗口不可见，webview 和里面的 renderer
+ *  一个都不会少 —— 内存占的大头正是 renderer，不是那层合成。
+ *
+ *  ⚠️ 建窗到页面挂载要几百毫秒，这期间到的事件会错过。依赖两点兜底：
+ *  1. 弹幕事件之间有最小间隔(普通弹幕不密集，空闲弹幕 10 分钟起)，
+ *     所以「建窗期间恰好又来一条」几乎不会发生；真丢了顶多少飘一句；
+ *  2. 后端 /pet/events 支持 ?replay=N 回放，必要时可补。 */
+const IDLE_CLOSE_MS = 45_000
 let winOriginX = 0
 let winOriginY = 0
 let dpr = 1
-/** 空闲隐藏定时器（详见 IDLE_HIDE_MS 注释） */
-let idleHideTimer: ReturnType<typeof setTimeout> | null = null
-/** 窗口当前是否因为我们空闲隐藏而不可见 */
-let hiddenByIdle = false
+/** 空闲销毁定时器（详见 IDLE_CLOSE_MS 注释） */
+let idleCloseTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 正在进行的 show()：并发来的气泡共用它，避免各插各的 */
-let showing: Promise<void> | null = null
-
-/** 有气泡要画时确保窗口可见。返回的 promise 在窗口真正可见后 resolve。 */
+/** 有气泡要画时确保窗口可见。窗口由 Home 按需建好、建完就是可见的，
+ *  所以这里不需要再 show()，留着空实现是为了不改调用点的时序假设。 */
 function ensureVisible(): Promise<void> {
-  if (!hiddenByIdle) return Promise.resolve()
-  // 已经在显示了：后来的调用者等同一个 promise，而不是直接往下走
-  if (showing) return showing
-  hiddenByIdle = false
-  showing = (async () => {
-    try {
-      const win = getCurrentWindow()
-      await win.show()
-      // show() 会重置焦点相关状态,穿透和不可聚焦需要重新设一遍
-      await win.setIgnoreCursorEvents(true)
-      await win.setFocusable(false)
-    } catch (e) {
-      console.warn('[danmaku] show failed:', e)
-    } finally {
-      showing = null
-    }
-  })()
-  return showing
+  return Promise.resolve()
 }
 
-/** 屏上没东西了就开始计时,到点 hide 掉 */
-function scheduleIdleHide() {
-  if (idleHideTimer) clearTimeout(idleHideTimer)
-  idleHideTimer = setTimeout(async () => {
-    idleHideTimer = null
-    // 计时期间又有新气泡了,就什么也不做
+/** 屏上没东西了就开始计时，到点销毁整个窗口 */
+function scheduleIdleClose() {
+  if (idleCloseTimer) clearTimeout(idleCloseTimer)
+  idleCloseTimer = setTimeout(async () => {
+    idleCloseTimer = null
+    // 计时期间又有新气泡了，就什么也不做
     if (activeDanmaku.value.length > 0) return
-    hiddenByIdle = true
     try {
-      await getCurrentWindow().hide()
+      // close() 销毁 webview → 连带 renderer / SSE / 合成层全部归还。
+      await getCurrentWindow().close()
     } catch (e) {
-      // hide 失败不影响功能,最多是继续占着那层合成
-      hiddenByIdle = false
-      console.warn('[danmaku] hide failed:', e)
+      console.warn('[danmaku] idle close failed:', e)
     }
-  }, IDLE_HIDE_MS)
+  }, IDLE_CLOSE_MS)
 }
 
 async function applyIgnore(through: boolean) {
@@ -224,36 +210,27 @@ async function startHitTest() {
   syncHitTest()
 }
 
-// ---- SSE 连接:订阅后端 /pet/events ----
-function connectSSE() {
-  if (es) return
-  es = new EventSource(`${BACKEND_URL}/pet/events`)
-  // 后端 format_sse 发的是命名事件(event: danmaku / proactive),必须用 addEventListener
-  es.addEventListener('danmaku', (ev) => {
-    handleEvent((ev as MessageEvent).data)
-  })
-  es.addEventListener('proactive', (ev) => {
-    handleEvent((ev as MessageEvent).data)
-  })
-  // onmessage 兜底:兼容不带 event 字段的默认消息
-  es.onmessage = (ev) => handleEvent(ev.data)
-  es.onerror = () => {
-    es?.close()
-    es = null
-    if (reconnectTimer) clearTimeout(reconnectTimer)
-    reconnectTimer = setTimeout(() => connectSSE(), 3000)
+// ---- 事件来源:常驻的 Home 窗转发过来 ----
+// 挂 listener 成功后必须回一句 'danmaku-ready',让 Home 把建窗期间暂存的
+// 事件补发过来 —— 那个窗口期(新建 webview → 页面挂载 → 注册 listener)
+// 里 emitTo 会静默丢失,而我们恰恰是被那条事件触发建窗的。
+async function listenPush() {
+  if (unlistenPush) return
+  try {
+    const { listen, emit } = await import('@tauri-apps/api/event')
+    unlistenPush = await listen<any>('danmaku-push', (ev) => {
+      handlePayload(ev.payload)
+    })
+    await emit('danmaku-ready')
+  } catch (e) {
+    console.warn('[danmaku] listen push failed:', e)
   }
 }
 
 /** 统一入口:去重后按 type 分派 */
-function handleEvent(raw: string) {
-  let data: any
-  try {
-    data = JSON.parse(raw)
-  } catch {
-    return
-  }
-  if (!data?.text) return
+function handlePayload(data: any) {
+  if (!data || typeof data !== 'object') return
+  if (!data.text) return
   // 同一条事件只认一次(后端每条事件都带 id;老版本没有就退化成 ts+text)
   const key = String(data.id || `${data.ts ?? ''}|${data.text}`)
   if (seenEventIds.has(key)) return
@@ -265,8 +242,7 @@ function handleEvent(raw: string) {
     keep.forEach((k) => seenEventIds.add(k))
   }
   const kind = String(data.type === 'proactive' ? 'proactive' : data.kind || 'idle')
-  // spawnDanmaku 现在是 async（要等窗口 show 完再插节点），
-  // 这里不 await：事件处理不该因为一次 show 而串行，也不需要它的返回值。
+  // spawnDanmaku 是 async，这里不 await：事件处理不该被单个气泡阻塞。
   void spawnDanmaku(String(data.text), kind, data.memory ? String(data.memory) : undefined)
 }
 
@@ -274,15 +250,14 @@ function handleEvent(raw: string) {
 const removeTimers = new Set<ReturnType<typeof setTimeout>>()
 
 async function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
-  // 有东西要画了，先取消空闲隐藏
-  if (idleHideTimer) {
-    clearTimeout(idleHideTimer)
-    idleHideTimer = null
+  // 有东西要画了，先取消空闲销毁计时
+  if (idleCloseTimer) {
+    clearTimeout(idleCloseTimer)
+    idleCloseTimer = null
   }
-  // 窗口可能正被我们空闲隐藏着。必须**等它真的可见**再插节点：
-  // 气泡一进 DOM，CSS 动画（danmaku-move）就开始计时；要是先插后 show，
-  // 这段飘动会在隐藏期间偷偷跑完，等窗口亮起来气泡早已飘出屏幕外，
-  // 用户什么也看不到。
+  // 窗口由 Home 按需建好，建完就是可见的；ensureVisible() 保留为空实现
+  // （以前窗口会被空闲 hide，所以需要等 show 完成再插节点 —— 先插后 show 会让
+  //  CSS 动画在隐藏期间跑完，等窗口亮起来气泡已飘出屏幕）。
   await ensureVisible()
   const id = nextId++
   const item: DanmakuItem = {
@@ -311,7 +286,7 @@ async function spawnDanmaku(text: string, kind = 'idle', memory?: string) {
     // 最后一条主动搭话消失时,轮询该停了(顺带恢复穿透)
     if (kind === 'proactive') syncHitTest()
     // 屏上清空了 → 开始空闲计时,到点把这个全屏透明窗 hide 掉
-    if (activeDanmaku.value.length === 0) scheduleIdleHide()
+    if (activeDanmaku.value.length === 0) scheduleIdleClose()
   }, item.duration + 200)
   removeTimers.add(timer)
 }
@@ -326,7 +301,7 @@ function onDanmakuClick(d: DanmakuItem) {
   // 点完立刻恢复穿透,不等下一轮轮询
   void applyIgnore(true)
   syncHitTest()
-  if (activeDanmaku.value.length === 0) scheduleIdleHide()
+  if (activeDanmaku.value.length === 0) scheduleIdleClose()
 }
 
 /** kind → 样式类:完成 / 出错 / 时段问候 / 主动搭话 各有强调,其余走默认柔和 */
@@ -354,7 +329,7 @@ onMounted(async () => {
   } catch (e) {
     console.warn('[danmaku] window init failed:', e)
   }
-  connectSSE()
+  void listenPush()
   await startHitTest()
   // 这个窗口是全屏透明的,一旦渲染进程被 OOM 杀掉,透明合成失效就会露出
   // 白底盖满整个屏幕(用户看到的「弹窗覆盖整个界面」)。之前它没上报内存,
@@ -373,24 +348,21 @@ onMounted(async () => {
   })
   // 刚起来屏上是空的：按当前有没有气泡决定要不要开始空闲计时。
   // 不写这句的话，开机后若一直没弹幕，这个全屏透明窗会永远挂着。
-  if (activeDanmaku.value.length === 0) scheduleIdleHide()
+  if (activeDanmaku.value.length === 0) scheduleIdleClose()
 })
 
 onUnmounted(() => {
   stopMemSentinel?.()
   stopMemSentinel = null
-  if (idleHideTimer) clearTimeout(idleHideTimer)
-  idleHideTimer = null
+  if (idleCloseTimer) clearTimeout(idleCloseTimer)
+  idleCloseTimer = null
   for (const tid of removeTimers) clearTimeout(tid)
   removeTimers.clear()
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
-  if (reconnectTimer) clearTimeout(reconnectTimer)
-  reconnectTimer = null
-  // 断开 SSE:否则重挂载后会有两条连接,同一条事件被处理两次(气泡会重复)
-  if (es) {
-    try { es.close() } catch { /* ignore */ }
-    es = null
+  if (unlistenPush) {
+    unlistenPush()
+    unlistenPush = null
   }
   // 离场前确保恢复穿透
   void applyIgnore(true)

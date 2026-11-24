@@ -22,6 +22,7 @@
           <div class="artifact-sub">
             <span class="artifact-op" :class="a.op">{{ opLabel(a.op) }}</span>
             <span class="artifact-dir" :title="a.path">{{ a.dir }}</span>
+            <span v-if="sizeLabel(a.size)" class="artifact-size">{{ sizeLabel(a.size) }}</span>
           </div>
         </div>
 
@@ -33,8 +34,8 @@
           >{{ previewIndex === i ? t('artifact.collapse') : t('artifact.preview') }}</button>
           <!-- 「打开」按钮已移除:交给系统打开需要按文件类型挑程序(浏览器/编辑器/
                Office/看图器),这条路不可靠。改为「预览」内联看内容 + 「定位」在资源
-               管理器里高亮,用户自己选程序。 -->
-          <button class="artifact-btn" @click="revealArtifact(a)">{{ t('artifact.reveal') }}</button>
+               管理器里高亮,用户自己选程序。删掉的文件两者都没意义,只留 op 尾标。 -->
+          <button v-if="a.op !== 'delete'" class="artifact-btn" @click="revealArtifact(a)">{{ t('artifact.reveal') }}</button>
         </div>
       </div>
 
@@ -65,12 +66,16 @@ import {
 const props = defineProps<{
   /** 该条消息的 steps,内部自行挑出产物 */
   steps?: unknown
+  /** 后端轮末下发的磁盘变更列表(比 steps 推断更准,优先用它) */
+  changes?: unknown
 }>()
 
 const { t } = useI18n()
 const messageUi = useMessage()
 
-const artifacts = computed<MessageArtifact[]>(() => collectMessageArtifacts(props.steps))
+const artifacts = computed<MessageArtifact[]>(() =>
+  collectMessageArtifacts(props.steps, props.changes),
+)
 
 /** 展开预览的下标;-1 表示全收起(一次只展开一个,避免长会话里堆一屏图) */
 const previewIndex = ref(-1)
@@ -167,11 +172,21 @@ async function revealArtifact(a: MessageArtifact) {
   }
 }
 
+/** 字节数 → 「1.2 MB」这类短文案;拿不到就空串 */
+function sizeLabel(size?: number): string {
+  if (typeof size !== 'number' || size < 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
+  return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
 const OP_LABEL_KEY: Record<ArtifactOp, string> = {
   create: 'artifact.opCreate',
   edit: 'artifact.opEdit',
   download: 'artifact.opDownload',
   image: 'artifact.opImage',
+  delete: 'artifact.opDelete',
 }
 
 function opLabel(op: ArtifactOp): string {
@@ -202,7 +217,18 @@ function iconPaths(kind: ArtifactKind): string[] {
 
 <style scoped>
 .artifact-bar {
-  max-width: min(72%, 760px);
+  /* 宽度上限跟气泡走(父消息 .message-content 上的 --msg-max),
+     否则气泡宽 640、卡片宽 760,上下贴在一起右边差一截。 */
+  max-width: var(--msg-max, min(78%, 640px));
+  /* 气泡是 border-box,卡片也得是,否则 padding+边框会把卡片顶宽 2px。 */
+  box-sizing: border-box;
+  /* 跟气泡同宽:两者都 align-self:stretch,但被同一个 max-width 封顶。
+     取 stretch 而不是 fit-content,才能让「短回复 + 宽卡片」这种情况
+     两边对齐 —— 列宽由较宽的那个决定,矮的补到同一宽度。 */
+  align-self: stretch;
+  /* 与上方气泡之间留出间距:气泡自身没有 margin-bottom,卡片
+     之前也没有 margin-top,两者是紧贴的。 */
+  margin-top: 8px;
   margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -316,6 +342,17 @@ function iconPaths(kind: ArtifactKind): string[] {
 .artifact-op.download,
 .artifact-op.image {
   color: #4CAF7D;
+}
+
+.artifact-op.delete {
+  color: #E05B5B;
+}
+
+.artifact-size {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
 
 .artifact-dir {

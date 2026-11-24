@@ -74,6 +74,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Application, Texture, AnimatedSprite, TextureSource, Assets } from 'pixi.js'
 import { createPetFrameGetter } from '@/utils/petFrameCache'
+import { createDanmakuQueue } from '@/utils/danmakuQueue'
 import { useI18n } from 'vue-i18n'
 import { speak, assetUrl, waitBackendReady } from '@/utils/backend'
 import { fitsSheetContract, SHEET_COLS, SHEET_FRAME_H, SHEET_FRAME_W, SHEET_MIN_ROWS } from '@/utils/petSheet'
@@ -768,6 +769,11 @@ async function connectPetEvents() {
           const type = payload?.type || ev.event
           if (type === 'pet_action') {
             applyRemotePetAction(payload)
+          } else if (type === 'danmaku' || type === 'proactive') {
+            // 弹幕窗按需创建:先入队再建窗,建好/挂载后统一投递。
+            // 窗口屏上清空后会自己 close()(见 DanmakuWindow 的 scheduleIdleClose),
+            // 下一条弹幕来了在这里再建一次。
+            void pushDanmaku(payload)
           }
           // pet_hello / pet_heartbeat 忽略
         }
@@ -918,7 +924,40 @@ async function openJournalWindow() {
 // ---- 全屏弹幕窗口(透明 + 鼠标点击穿透) ----
 // 在最大的显示器上铺满,alwaysOnTop + skipTaskbar + focusable=false,
 // 创建后再 setIgnoreCursorEvents(true),点击直接穿透到桌面/其他窗口。
+//
+// ⚠️ 按需创建(不再开机就建):这个窗口是全屏透明,只要它存在且可见,
+// 合成器就得为整块屏幕维持一层透明合成层 —— 一个像素都没有也照占。
+// 之前是开机建一次、空闲只 hide,renderer 还是常驻,实测整窗能涨到 8GB 级。
+// 现在改成「有弹幕才建窗,屏上清空就 close()」,见 DanmakuWindow 的 scheduleIdleClose。
+//
+// 建窗是异步的(探测显示器 + new WebviewWindow),而弹幕事件可能连着来。不加锁
+// 的话两个并发调用会各自 getByLabel 拿到 null,然后各建一个 —— Tauri 会拒绕
+// 同 label 的第二个,但日志里会多一条失败,而且真正那个窗可能刚建好就被后来
+// 的 close 逻辑误杀。这里用 inflight 串起来,同一时刻只允许一个在建。
+let danmakuCreating: Promise<void> | null = null
+
+/** 弹幕事件的转发队列(队列语义 + ready 门控的细节见 utils/danmakuQueue.ts)。
+ *  为什么需要它:窗口从 new WebviewWindow() 到挂上 listener 有几百毫秒,
+ *  这期间 emitTo() 不报错、只是静默丢包,所以必须等窗口主动回 ready 才能下发。 */
+const danmakuQueue = createDanmakuQueue({
+  windowExists: async () => !!(await WebviewWindow.getByLabel('danmaku')),
+  emit: async (payload) => {
+    const { emitTo } = await import('@tauri-apps/api/event')
+    await emitTo('danmaku', 'danmaku-push', payload)
+  },
+})
+
 async function ensureDanmakuWindow() {
+  if (danmakuCreating) return danmakuCreating
+  danmakuCreating = createDanmakuWindow()
+  try {
+    await danmakuCreating
+  } finally {
+    danmakuCreating = null
+  }
+}
+
+async function createDanmakuWindow() {
   try {
     // 先检查后端配置:弹幕总开关关闭则不创建
     try {
@@ -932,6 +971,8 @@ async function ensureDanmakuWindow() {
     if (existing) {
       return
     }
+    // 马上要新建:listener 还没挂,'danmaku-ready' 之前发什么都丢
+    danmakuQueue.markLost()
     const { availableMonitors } = await import('@tauri-apps/api/window')
     let mw = 0
     let mh = 0
@@ -984,6 +1025,19 @@ async function ensureDanmakuWindow() {
   }
 }
 
+// ---- 弹幕事件转发 ----
+// 弹幕窗改成按需创建后,它自己那份 SSE 已经没必要了:
+//   · 它一挂载就去连,但触发建窗的那条事件早过去了 → 必然丢;
+//   · 空闲弹幕 10 分钟才一条,丢一条等于这次搭话白搭;
+//   · 每个常住窗口一条 SSE = 多一份长连接 + 多一份解析开销。
+// 所以改成:Home(常驻) 做唯一消费者,通过 Tauri event 转给弹幕窗。
+//
+/** 把一条弹幕事件送给弹幕窗;窗口不在就先建 */
+async function pushDanmaku(payload: any) {
+  await ensureDanmakuWindow()
+  await danmakuQueue.push(payload)
+}
+
 /** 根据配置关闭弹幕窗(仅总开关) */
 async function closeDanmakuWindow() {
   try {
@@ -995,6 +1049,7 @@ async function closeDanmakuWindow() {
 }
 
 let unlistenDanmakuCfg: UnlistenFn | null = null
+let unlistenDanmakuReady: UnlistenFn | null = null
 let unlistenProactiveChat: UnlistenFn | null = null
 
 // 点击弹幕窗里的主动搭话气泡 → 打开聊天窗,并把搭话内容作为开场上下文
@@ -1281,10 +1336,11 @@ onMounted(async () => {
   tickerGuard = installTickerResilience(app.ticker)
   // 订阅后端 emit_pet_action → SSE,驱动远程动作
   void connectPetEvents()
-  // 全屏弹幕窗口(透明 + 鼠标穿透),静默创建
-  void ensureDanmakuWindow()
+  // 全屏弹幕窗不再开机就建：它是全屏透明 + alwaysOnTop，建着就得养一个
+  // renderer（实测能涨到 8GB 量级）。改成「后端推来弹幕事件才建窗」（见
+  // connectPetEvents 的 danmaku 分支），窗口屏上清空后自己 close()。
 
-  // 监听弹幕开关变化:总开关关闭时关窗,开启时建窗
+  // 监听弹幕开关变化:总开关关闭时关窗（开启时不用建，等下一条事件）
   try {
     unlistenDanmakuCfg = await listen<{ config?: { enabled?: boolean } }>(
       'danmaku-config-changed',
@@ -1292,13 +1348,21 @@ onMounted(async () => {
         const enabled = event.payload?.config?.enabled
         if (enabled === false) {
           void closeDanmakuWindow()
-        } else if (enabled === true) {
-          void ensureDanmakuWindow()
         }
       },
     )
   } catch (e) {
     console.warn('[danmaku] config listen failed:', e)
+  }
+
+  // 弹幕窗挂载完成 → 把建窗期间暂存的事件补发。窗口可能有多个、
+  // 也可能反复重建,所以这个监听必须常驻。
+  try {
+    unlistenDanmakuReady = await listen('danmaku-ready', () => {
+      void danmakuQueue.markReady()
+    })
+  } catch (e) {
+    console.warn('[danmaku] ready listen failed:', e)
   }
 
   // 主动搭话气泡被点击 → 打开聊天窗并带入上下文
@@ -1405,6 +1469,10 @@ onUnmounted(() => {
   if (unlistenDanmakuCfg) {
     unlistenDanmakuCfg()
     unlistenDanmakuCfg = null
+  }
+  if (unlistenDanmakuReady) {
+    unlistenDanmakuReady()
+    unlistenDanmakuReady = null
   }
   if (unlistenProactiveChat) {
     unlistenProactiveChat()

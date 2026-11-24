@@ -207,6 +207,74 @@ const termNotDone = collectMessageArtifacts([
 ])
 check('终端产物: running 不算', termNotDone.length, 0)
 
+// ══════════════ 磁盘快照 diff（fileChanges）优先 ══════════════
+// 后端在一轮开始/结束时各拍一次 uploads+工作区 的快照,比对出差集下发。
+// 这路与「哪个工具干的」解耦,所以下面的例子故意用「终端命令」和「MCP」
+// 这些 step 推断覆盖不到/会误判的场景。
+
+// 1) 终端 cp 静默写盘:step 推断漏,但磁盘 diff 看得到
+const cpSilent = collectMessageArtifacts(
+  [{ name: 'open_terminal', arguments: '{}', result: '', status: 'done' }],
+  [{ path: 'E:\\out\\b.mp4', op: 'create', size: 5242880 }],
+)
+check('diff: 终端静默写盘能识别', cpSilent.length, 1)
+check('diff: 文件名', cpSilent[0].name, 'b.mp4')
+check('diff: 目录', cpSilent[0].dir, 'E:\\out')
+check('diff: op', cpSilent[0].op, 'create')
+check('diff: size', cpSilent[0].size, 5242880)
+
+// 2) ffmpeg -i input.mp4 out.mp4:step 推断会把输入当产物,diff 只有真的 output
+const ffmpegInput = collectMessageArtifacts(
+  [{ name: 'open_terminal', arguments: '{}', result: 'ffmpeg -i E:\\in\\input.mp4 E:\\out\\output.mp4', status: 'done' }],
+  [{ path: 'E:\\out\\output.mp4', op: 'create', size: 1024 }],
+)
+check('diff: ffmpeg 输入文件不被当产物', ffmpegInput.length, 1)
+check('diff: 只剩 output', ffmpegInput[0].name, 'output.mp4')
+
+// 3) 修改/删除 也要报（以前完全看不到）
+const editDel = collectMessageArtifacts(
+  [],
+  [
+    { path: 'E:\\w\\a.md', op: 'edit', size: 200 },
+    { path: 'E:\\w\\b.txt', op: 'delete', size: 50 },
+  ],
+)
+check('diff: edit + delete 都列', editDel.length, 2)
+check('diff: edit op', editDel.find((a) => a.name === 'a.md')?.op, 'edit')
+check('diff: delete op', editDel.find((a) => a.name === 'b.txt')?.op, 'delete')
+check('diff: 删除项不可预览', canPreviewArtifact(editDel.find((a) => a.name === 'b.txt')!), false)
+
+// 4) diff 里没有的路径不能被 step 推断拉回来
+const notInDiff = collectMessageArtifacts(
+  [step('create_file', { file_path: 'E:\\ghost\\x.md' }, 'File created: E:\\ghost\\x.md')],
+  [{ path: 'E:\\real\\y.md', op: 'create', size: 10 }],
+)
+check('diff: 只信 diff,不拉回 ghosts', notInDiff.length, 1)
+check('diff: 保留真产物', notInDiff[0].name, 'y.md')
+
+// 5) 下载/绘图提示能美化 op（diff 只说 create，tools 说 download）
+//    注意 result 必须是**合法 JSON**：JSON 里 `\d` 不是合法转义，
+//    所以路径分隔符要写成 `\\`。
+const dlDiff = collectMessageArtifacts(
+  [step('download_file', { url: 'https://x/a.zip' }, '{"status":"ok","path":"E:\\\\dl\\\\a.zip"}')],
+  [{ path: 'E:\\dl\\a.zip', op: 'create', size: 999 }],
+)
+check('diff: download 提示被采纳', dlDiff[0].op, 'download')
+
+// 6) 脏数据容错
+check('diff: 非数组容错', collectMessageArtifacts([], 'nope').length, 0)
+check('diff: 缺 path 丢弃', collectMessageArtifacts([], [{ op: 'create' }]).length, 0)
+check('diff: 未知 op 丢弃', collectMessageArtifacts([], [{ path: 'E:\\a.md', op: 'rename' }]).length, 0)
+// 相对路径/无扩展名仍然不能进清单
+check('diff: 相对路径丢弃', collectMessageArtifacts([], [{ path: 'a.md', op: 'create' }]).length, 0)
+check('diff: 无扩展名丢弃', collectMessageArtifacts([], [{ path: 'E:\\a', op: 'create' }]).length, 0)
+// 空数组 → 退回 steps 推断（历史会话走这条）
+check(
+  'diff: 空数组退回 steps 推断',
+  collectMessageArtifacts([step('create_file', { file_path: 'E:\\k\\z.md' }, 'File created: E:\\k\\z.md')], []).length,
+  1,
+)
+
 if (failed > 0) {
   console.error(`\n${failed} 项失败`)
   process.exit(1)

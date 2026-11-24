@@ -30,6 +30,7 @@ from application.services.memory_ops import (
 from Symbix_sdk.tools.risk_classifier import classify_tool_risk, ToolRiskLevel
 from Symbix_sdk.client import build_tool_result_messages
 from Symbix_sdk.tools.file_pipeline import set_active_session, reset_active_session
+from Symbix_sdk.tools.artifact_tracker import snapshot as _snap_files, round_file_changes
 from Symbix_sdk.checkpoint import set_current as _ctx_set_current
 from application.routers.chat.helpers import (
     _INTERACTION_TOOLS,
@@ -347,6 +348,20 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 full_text = ""
                 tool_calls_raw = None
                 _batcher = _DeltaBatcher()
+                # 本轮产物追踪:与 /chat/stream 同口径(续跑这段是独立的一套 done,
+                # 不拍快照的话「审批通过后才真正开始写文件」的那部分全漏)。
+                _files_before = _snap_files(session_id)
+
+                def _take_file_changes() -> list:
+                    """取本轮产物变更并重置基准(一段可能被嵌套审批分成多截)。"""
+                    nonlocal _files_before
+                    try:
+                        out = round_file_changes(session_id, _files_before)
+                    except Exception as _fc_err:
+                        print(f"[approve] 产物追踪失败: {_fc_err}")
+                        out = []
+                    _files_before = _snap_files(session_id)
+                    return out
                 # token 统计:上游若在 done 里带回真实 usage,从这里收集(与 /chat/stream 同口径)
                 last_usage: dict | None = None
 
@@ -517,6 +532,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                     "type": "done",
                                     "content": full_text,
                                     "usage": _usage_payload(),
+                                    "file_changes": _take_file_changes(),
                                 })
                                 return
 
@@ -573,6 +589,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                                 "type": "done",
                                 "content": full_text,
                                 "usage": _usage_payload(),
+                                "file_changes": _take_file_changes(),
                             })
                             return
 
@@ -662,12 +679,14 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                 if not full_text:
                     full_text = "[已完成工具调用，但模型未返回最终文本。]"
                 memory.add(session_id, "assistant", full_text)
+                _file_changes = _take_file_changes()
                 yield format_sse({
                     "type": "done",
                     "content": full_text,
                     "act_mode": act_mode,
                     "act_plan": act_plan,
                     "usage": _usage_payload(),
+                    "file_changes": _file_changes,
                 })
                 # — checkpoint: approve-stream 本轮完成 → 记 round 总结点
                 _emit_round_summary(

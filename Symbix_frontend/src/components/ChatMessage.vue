@@ -161,8 +161,10 @@
              故意放在正文**之后**:这些是用户需要操作或查看的东西,贴着气泡底部
              就等于贴着输入框。放在正文上方时,长回复会把卡片和输入框隔开,
              用户滚到输入框就看不见「等你确认」,以为 Agent 卡住了。 -->
-        <!-- 本轮产物:Agent 写出/下载的文件直接列成卡片,免得照着路径去翻 -->
-        <MessageArtifactBar :steps="msg.steps" />
+        <!-- 本轮产物:Agent 写出/下载的文件直接列成卡片,免得照着路径去翻。
+             changes 是后端轮末的磁盘快照 diff(准);老历史消息没有它,组件内部
+             会退回从 steps 推断。 -->
+        <MessageArtifactBar :steps="msg.steps" :changes="msg.fileChanges" />
 
         <!-- 提问卡:Agent 向用户提问,选项/输入回答后继续。kind=plan 时为待办清单确认卡 -->
         <div v-if="msg.pending_question" class="question-block"
@@ -838,6 +840,10 @@ onMounted(() => {
   flex-direction: column;
   min-width: 0;              /* flex 子项默认 min-width:auto,不放开就压不下去 */
   max-width: 100%;           /* 子元素里的百分比 max-width 才有意义 */
+  /* 气泡与「本轮结果区」共用同一个宽度上限:之前气泡 78%/640、结果卡
+     72%/760,两者贴在一起时右边一直差一截,看起来别扭。改成一处定义、
+     两处引用 —— 子组件根节点会继承这个自定义属性。 */
+  --msg-max: min(78%, 640px);
 }
 .message-content.assistant {
   align-items: flex-start;
@@ -869,7 +875,10 @@ onMounted(() => {
 /* ---- Bubble ---- */
 .message-bubble {
   min-width: 0;
-  max-width: min(78%, 640px);     /* 原本 72%/760, 凑窄 unicode 内容仍造氣 */
+  max-width: var(--msg-max, min(78%, 640px));
+  /* 让 max-width 就是最终宽度(含 padding/border),否则气泡比卡片宽
+     24+2px —— 两者的 padding 不一样。 */
+  box-sizing: border-box;
   padding: 8px 12px;              /* 原 12 18，减少内边距 */
   border-radius: var(--radius-md, 8px);
   color: var(--text-primary);
@@ -889,6 +898,14 @@ onMounted(() => {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
+}
+
+/* 有条产物卡时,气泡和卡片要「同宽」——短消息的气泡不能被卡片显成窄窄一条。
+   两边都 stretch 到同一列宽(列宽由较宽的那个的 max-content 决定,再被
+   --msg-max 封顶),右边缘就齐了。只在本轮确有产物时才生效:无条件 stretch
+   会把只有 reasoning/steps 的普通气泡也拉宽。 */
+.message-content:has(.artifact-bar) > .message-bubble {
+  align-self: stretch;
 }
 
 

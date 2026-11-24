@@ -6,6 +6,7 @@ import queue
 import time
 import uuid
 import os
+import re
 import shutil
 from pathlib import Path
 from collections import deque
@@ -446,7 +447,9 @@ class McpServerClient:
                 else:
                     output_parts.append(str(item))
 
-            return "\n".join(output_parts)
+            # 浏览器未安装是最常见的「MCP 看着正常但完全用不了」原因,
+            # 在这里统一换成可操作的中文提示(见 _translate_browser_install_error)
+            return _translate_browser_install_error("\n".join(output_parts))
 
         except Exception as e:
             return f"[Error] Exception calling tool: {e}"
@@ -837,7 +840,9 @@ class McpRemoteClient:
                         output_parts.append(json.dumps(item, ensure_ascii=False))
                 else:
                     output_parts.append(str(item))
-            return "\n".join(output_parts) if output_parts else json.dumps(result, ensure_ascii=False)
+            return _translate_browser_install_error(
+                "\n".join(output_parts) if output_parts else json.dumps(result, ensure_ascii=False)
+            )
         except Exception as e:
             return f"[Error] Exception calling remote tool: {e}"
 
@@ -860,6 +865,34 @@ _BROWSER_LOCAL_HINT = (
     "本地文件请用 read_file / parse_file;图片内容无法用文本工具读取,"
     "请基于本轮已提供的视觉输入,或请用户用文字描述(不要反复尝试打开本地图片)。"
 )
+
+# 浏览器二进制缺失/版本对不上:必须给出可执行的下一步。
+# 实测背景(这是「有 playwright MCP 却完全不能自动化」的真正原因):
+# 配的 `--browser firefox` 要求 firefox-1578,用户机器上只有 firefox-1572;
+# chromium 同理(要 1255,只有 1254)。于是**每一个** browser_* 调用都直接返回
+# “Browser "firefox" is not installed; expected executable at ...”，而且是英文。
+# 模型拿到这种报错通常只会换个参数重试,不会想到去装浏览器 —— 表现就是白转几圈后放弃。
+# 这里识别成中文 + 说清怎么修,让它能一次性告诉用户该做什么。
+_BROWSER_NOT_INSTALLED_MARK = "is not installed; expected executable at"
+
+
+def _translate_browser_install_error(text: str) -> str:
+    """把 playwright 的「浏览器未安装」报错换成可操作的提示;其它内容原样返回。"""
+    if _BROWSER_NOT_INSTALLED_MARK not in text:
+        return text
+    m = re.search(r'Browser "([^"]+)" is not installed', text)
+    name = m.group(1) if m else "浏览器"
+    exe = re.search(r"expected executable at ([^\n]+?)\.\s", text)
+    where = f"（它找的是 {exe.group(1).strip()}）" if exe else ""
+    return (
+        f"[Error] 浏览器不可用:配置指定的 `{name}` 没有装到本地{where}。\n"
+        "这属于**环境问题,重试同样的调用不会有任何变化** —— 不要反复调 browser_*。\n"
+        "给用户的修法(二选一):\n"
+        "  1) 改用系统已有的浏览器:把 MCP 配置里 playwright 的 args 改成 "
+        "`--browser msedge`(`npx playwright install` 不参与,直接用系统 Edge);\n"
+        f"  2) 装对应浏览器:`npx playwright install {name}`。\n"
+        "在用户处理好之前,请直接说明情况,并改用 fetch_webpage 等非浏览器方式。"
+    )
 
 
 def _is_local_reference(value: str) -> bool:

@@ -44,6 +44,7 @@ export default {
     opEdit: 'updated',
     opDownload: 'downloaded',
     opImage: 'image saved',
+    opDelete: 'deleted',
     copied: 'Path copied to clipboard',
     truncated: '…(truncated, content too long)',
     previewEmpty: 'Nothing to preview',

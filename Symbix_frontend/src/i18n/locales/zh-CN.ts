@@ -44,6 +44,7 @@ export default {
     opEdit: '已修改',
     opDownload: '已下载',
     opImage: '已生成图片',
+    opDelete: '已删除',
     copied: '路径已复制到剪贴板',
     truncated: '…（内容过长，已截断）',
     previewEmpty: '没有可预览的内容',
