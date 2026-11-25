@@ -219,7 +219,7 @@ const { startupCheck } = useUpdateCheck()
 const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat'), t('home.petGreetingList')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
-import { useChatStore, mapBackendSteps } from '@/composables/useChatStore'
+import { useChatStore, mapBackendSteps, clampToolResult, clampToolArguments } from '@/composables/useChatStore'
 import { parseSessionMarkdown } from '@/utils/sessionMarkdown'
 import { startMemorySentinel } from '@/utils/memorySentinel'
 import { notifyTaskComplete } from '@/composables/useNotify'
@@ -1519,13 +1519,13 @@ function handleSSEEvent(
         (id && s.id === id) || (!id && s._toolKey === key),
       )
       if (found) {
-        found.arguments = toolCallAcc[key]
+        found.arguments = clampToolArguments(toolCallAcc[key])
       } else {
-        steps.push({ id, _toolKey: key, name, arguments: toolCallAcc[key], status: 'pending' })
+        steps.push({ id, _toolKey: key, name, arguments: clampToolArguments(toolCallAcc[key]), status: 'pending' })
       }
       msg.steps = steps.map((s: any) => ({
         ...s,
-        arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+        arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
       }))
       nextTick(() => scrollToBottom())
       break
@@ -1540,7 +1540,7 @@ function handleSSEEvent(
         : (toolResultFailed(evt.content) ? 'error' : 'done')
       const target = steps.find((s: any) => s.id === evt.id)
       if (target) {
-        target.result = evt.content || ''
+        target.result = clampToolResult(evt.content || '')
         target.status = status
         target.progress = undefined  // 子 Agent 完成,清除进行中的进度文案
       } else {
@@ -1548,13 +1548,13 @@ function handleSSEEvent(
           id: evt.id || '',
           name: evt.name || '(result)',
           arguments: '',
-          result: evt.content || '',
+          result: clampToolResult(evt.content || ''),
           status,
         })
       }
       msg.steps = steps.map((s: any) => ({
         ...s,
-        arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+        arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
       }))
       if (status === 'done') {
         publishAgentProgress(steps.filter((s: any) => s.status === 'done').length)
@@ -1588,7 +1588,7 @@ function handleSSEEvent(
         }
         msg.steps = steps.map((s: any) => ({
           ...s,
-          arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+          arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
         }))
       }
       break

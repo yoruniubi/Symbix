@@ -140,10 +140,25 @@ _SLOW_START_COMMANDS = {
     "bun", "bun.exe", "bunx", "bunx.exe",
 }
 
+# 单次 tools/call 的等待上限。
+# 默认 30s 对大多数 MCP 工具够用,但浏览器类工具**冷启动就要几十秒**:
+# 实测带 `--executable-path` 指向错浏览器的配置会挂 108s,而 30s 上限会先返回
+# "Request timeout | stderr: npm notice..." —— 真实原因(浏览器启动失败)被完全遮住,
+# 模型和用户都只看到一句无意义的超时。
+# 所以:凡调用 browser_* 一律给更宽的窗口,宁可慢一拍也要拿到真实报错。
+_CALL_TIMEOUT_DEFAULT = 30.0
+_CALL_TIMEOUT_BROWSER = 180.0
+
+
+def _call_timeout(tool_name: str) -> float:
+    """按工具名决定 tools/call 的等待上限。"""
+    if tool_name.startswith("browser_"):
+        return _CALL_TIMEOUT_BROWSER
+    return _CALL_TIMEOUT_DEFAULT
+
 
 class McpServerClient:
     """通过 stdio 与 MCP server 通信的客户端"""
-
     transport = "stdio"
 
     #: 单次请求等待上限(秒)
@@ -427,7 +442,7 @@ class McpServerClient:
                     "name": tool_name,
                     "arguments": arguments
                 }
-            })
+            }, timeout=_call_timeout(tool_name))
 
             if "error" in response:
                 return f"[Error] {response['error'].get('message', 'Unknown error')}"

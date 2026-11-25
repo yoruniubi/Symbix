@@ -1,5 +1,48 @@
 import { ref, watch } from 'vue'
 
+/**
+ * 工具返回原文在内存里保留的上限（字符）。
+ *
+ * 为什么必须在**写入时**截、而不是只靠显示层 `truncateResult()`：
+ * 显示层只截了给用户看的那 800 字，完整原文照样整份存在 `step.result` 里。
+ * 一个 `browser_snapshot` / `read_file` 的返回常常几万到几百万字符，
+ * 累计几十轮后光这一项就能把 renderer 顶到几百 MB —— 而用户其实永远只能看到前 800 字。
+ * 所以真正占用内存的这份要当场封顶，尾巴上标明被截了多少，便于日后回溯。
+ */
+export const TOOL_RESULT_KEEP = 4000
+
+/** 截断标记尾缀。带上它是为了幂等 —— 再次 clamp 时能认出「这条已经截过了」。 */
+const RESULT_CUT_MARK = '... [已截断'
+const ARGS_CUT_MARK = '... [参数过长已截断'
+
+/** 把工具返回原文压到保留上限内（幂等，短文本原样返回）。 */
+export function clampToolResult(raw: string): string {
+  if (typeof raw !== 'string' || raw.length <= TOOL_RESULT_KEEP) return raw
+  // 已截过就直接还回去：否则第二轮会把尾部的截断说明自己再截一次，
+  // 叠成「已截断 N 字... [已截断 M 字]」，而每次 map 都会调一次。
+  if (raw.indexOf(RESULT_CUT_MARK) !== -1) return raw
+  const cut = raw.length - TOOL_RESULT_KEEP
+  return `${raw.slice(0, TOOL_RESULT_KEEP)}\n\n${RESULT_CUT_MARK} ${cut} 字，仅保留前 ${TOOL_RESULT_KEEP} 字]`
+}
+
+/**
+ * 工具参数的上限（字符）。
+ *
+ * 参数比返回值更容易被无视：`write_file` / `create_file` 会把**整个文件内容**
+ * 当参数流上来，一个几百 KB 的源码文件就是几百 KB 字符串常驻。
+ * 而参数区在界面上默认是折起来的，用户几乎不会看全文 ——
+ * 所以保留开头足以判断「它要干什么」，后面直接丢掉。
+ */
+export const TOOL_ARGS_KEEP = 2000
+
+/** 把工具参数压到保留上限内（幂等）。 */
+export function clampToolArguments(raw: string): string {
+  if (typeof raw !== 'string' || raw.length <= TOOL_ARGS_KEEP) return raw
+  if (raw.indexOf(ARGS_CUT_MARK) !== -1) return raw
+  const cut = raw.length - TOOL_ARGS_KEEP
+  return `${raw.slice(0, TOOL_ARGS_KEEP)}\n${ARGS_CUT_MARK} ${cut} 字]`
+}
+
 export interface ToolCallStep {
   id: string
   name: string
@@ -138,7 +181,7 @@ export function mapBackendSteps(
       steps.push({
         id: s.id,
         name: s.name,
-        arguments: typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {}),
+        arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
         need_approval: !!s.need_approval,
         status: pendingTool && pendingTool.id === s.id ? 'awaiting_approval' : 'pending',
       })
@@ -147,7 +190,7 @@ export function mapBackendSteps(
         steps.push({
           id: tc.id,
           name: tc.name,
-          arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments ?? {}),
+          arguments: clampToolArguments(typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments ?? {})),
           need_approval: false,
           status: 'pending',
         })
@@ -155,16 +198,16 @@ export function mapBackendSteps(
     } else if (s.type === 'tool_result') {
       const target = steps.find(st => st.id === s.tool_call_id || st.id === s.id)
       if (target) {
-        target.result = typeof s.content === 'string'
+        target.result = clampToolResult(typeof s.content === 'string'
           ? s.content
-          : (typeof s.output === 'string' ? s.output : JSON.stringify(s.content ?? s.output ?? ''))
+          : (typeof s.output === 'string' ? s.output : JSON.stringify(s.content ?? s.output ?? '')))
         target.status = s.approved === false ? 'rejected' : 'done'
       } else {
         steps.push({
           id: s.tool_call_id || s.id || '',
           name: s.name || '(结果)',
           arguments: '',
-          result: typeof s.content === 'string' ? s.content : JSON.stringify(s.content ?? ''),
+          result: clampToolResult(typeof s.content === 'string' ? s.content : JSON.stringify(s.content ?? '')),
           status: s.approved === false ? 'rejected' : 'done',
         })
       }

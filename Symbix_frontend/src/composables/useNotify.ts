@@ -198,6 +198,14 @@ function playSoftTone(
   gain.connect(ctx.destination)
   osc.start(start)
   osc.stop(end + 0.08)
+  // 节点用完要主动 disconnect：oscillator 停止后虽然会被 GC，但它仍然注册在
+  // AudioContext 的图里，WebView2 里实测节点的 native 侧引用会比 JS 那边多活很久。
+  // 通知音是长期反复播的（每条消息响一次），漏得久了就是一批死节点。
+  osc.onended = () => {
+    try { osc.disconnect() } catch { /* 已断开 */ }
+    try { filter.disconnect() } catch { /* 已断开 */ }
+    try { gain.disconnect() } catch { /* 已断开 */ }
+  }
 }
 
 function pickRandomSoft(): NotifySoundId {

@@ -669,7 +669,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import TitleBar from '@/components/TitleBar.vue'
@@ -700,6 +700,7 @@ import {
 } from '@/utils/backend'
 import { useUpdateCheck } from '@/composables/useUpdateCheck'
 import { openUpdateWindow } from '@/composables/useUpdateWindow'
+import { startMemorySentinel } from '@/utils/memorySentinel'
 
 const message = useMessage()
 const { t } = useI18n()
@@ -1260,6 +1261,12 @@ const notifyVolumePercent = computed({
     notifyForm.value.volume = Math.min(1, Math.max(0, v / 100))
   },
 })
+/* ---------- 内存哨兵 ----------
+ * 设置窗之前是唯一没有哨兵的窗口(聊天/弹幕/桌宠都有),所以它 OOM 时
+ * 后端日志里一个字都没有,只能靠用户截图。它不承载会话状态,重载代价极小
+ * (相当于关掉重开),所以直接允许自动重载。 */
+let stopMemSentinel: (() => void) | null = null
+
 onMounted(() => {
   loadNotifySettings()
   notifyForm.value = { ...notifySettings.value }
@@ -1270,6 +1277,20 @@ onMounted(() => {
   // 版本信息(含自动检查开关)；不在这里主动检查，避免进设置页就发请求
   void initCurrentVersion()
   loadAutoCheck()
+
+  stopMemSentinel = startMemorySentinel({
+    window: 'setting',
+    autoReload: true,
+    reportUrl: `${BACKEND_URL}/api/diagnostics/client-memory`,
+    onWarn: (s) => console.warn(`[mem] setting 窗口内存偏高 ${s.heapMB.toFixed(0)}MB,建议重启`),
+    onHard: (s) => console.warn(`[mem] setting 窗口内存过高 ${s.heapMB.toFixed(0)}MB,将自动重载`),
+  })
+})
+
+onBeforeUnmount(() => {
+  stopMemSentinel?.()
+  stopMemSentinel = null
+  disposeTtsAudio()
 })
 
 async function saveNotify() {
@@ -1391,6 +1412,27 @@ function resetTts() {
 }
 
 let ttsAudio: HTMLAudioElement | null = null
+/** 当前试听音频的 blob URL。必须自己存着:重新试听/离开页面时才能 revoke ——
+ *  只 pause() 不 revoke 的话,每点一次试听就多留一份完整音频字节在 renderer 里,
+ *  JS 堆看不见(字节在 C++ 侧),但内存是真的在涨。 */
+let ttsAudioUrl: string | null = null
+
+/** 释放当前试听音频:暂停 + 摘掉回调 + revoke，幂等。 */
+function disposeTtsAudio() {
+  if (ttsAudio) {
+    ttsAudio.onended = null
+    ttsAudio.onerror = null
+    try { ttsAudio.pause() } catch { /* 已失效 */ }
+    ttsAudio.src = ''
+    ttsAudio = null
+  }
+  if (ttsAudioUrl) {
+    try { URL.revokeObjectURL(ttsAudioUrl) } catch { /* 已 revoke */ }
+    ttsAudioUrl = null
+  }
+}
+
+// 设置窗关掉时由上方 onBeforeUnmount 调 disposeTtsAudio() 一并收走
 
 async function previewTts() {
   ttsPreviewing.value = true
@@ -1404,11 +1446,12 @@ async function previewTts() {
       ttsForm.value.speed,
       ttsForm.value.priority0,
     )
-    if (ttsAudio) { ttsAudio.pause(); ttsAudio = null }
+    // 先释放上一段再接管新的(旧代码只 pause,URL 悄悄漏掉)
+    disposeTtsAudio()
+    ttsAudioUrl = url
     ttsAudio = new Audio(url)
-    // ended / error 都要回收,否则 blob URL 会一直挂着
-    ttsAudio.onended = () => { URL.revokeObjectURL(url) }
-    ttsAudio.onerror = () => { URL.revokeObjectURL(url) }
+    ttsAudio.onended = () => disposeTtsAudio()
+    ttsAudio.onerror = () => disposeTtsAudio()
     await ttsAudio.play()
   } catch (e) {
     // 后端把引擎失败原因放在 detail 里(可能很长,如 edge 403 的处置建议),用弹窗完整展示

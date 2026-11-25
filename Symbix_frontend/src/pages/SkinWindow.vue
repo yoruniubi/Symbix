@@ -1023,9 +1023,15 @@ async function bakeTheme(pet: PetSkin) {
 
 // ── 切换 / 删除 ─────────────────────────────────────────────
 async function switchPet(pet: PetSkin) {
+  // 预检纹理的 URL 必须用**带 cache-bust 的完整地址**去 unload：
+  // Pixi 的 Assets 是全局缓存，key 就是完整 URL；拿裸 path 去 unload 会静默失败。
+  // 以前这里只 load 不 unload，于是每点一次皮肤就多留一整张图集
+  // （2500x1680 RGBA 约 17MB）在 renderer 里永不释放 —— 而真正渲染这张图的
+  // 是 Home 窗口，这里只是为了量尺寸临时读进来。
+  const previewUrl = assetUrl(pet.preview)
   try {
     // 预检纹理是否可加载、尺寸是否符合切片契约(不符则不切、不提示成功)
-    const tex = await Assets.load<Texture>(assetUrl(pet.preview))
+    const tex = await Assets.load<Texture>(previewUrl)
     if (!fitsSheetContract(tex.width, tex.height)) {
       throw new Error(t('skinWindow.sheetMismatch', { w: tex.width, h: tex.height }))
     }
@@ -1034,7 +1040,7 @@ async function switchPet(pet: PetSkin) {
     localStorage.setItem('currentPetId', pet.id)
     rememberPet(pet)
 
-    // 文件夹名以 preview 路径为准(兼容 /pet/ 旧前缀、/codex_pet/、/pixiv_pet/),
+    // 文件夹名以 preview 路径为准(兼容 /pet/ 旧前缀、/codex_pet/、/pixiv_pet/)，
     // 取不到时退回后端给的 folder / 去掉 id 前缀
     const matched = pet.preview.match(/^\/(?:pet|codex_pet|pixiv_pet)\/([^/]+)\//)
     const petFolder = pet.folder || matched?.[1] || pet.id.replace(/^(?:codex|pixiv|custom)_/, '')
@@ -1050,6 +1056,14 @@ async function switchPet(pet: PetSkin) {
     message.success(t('skinWindow.switchSuccess', { name: pet.displayName }))
   } catch (e: any) {
     message.error(t('skinWindow.loadFail', { msg: e.message || e }))
+  } finally {
+    // 预检只为量尺寸，读完即可释放。切肤失败时也必须释放，
+    // 否则「反复点一个坏皮肤」会把每次的图集都留在内存里。
+    try {
+      await Assets.unload(previewUrl)
+    } catch {
+      /* 卸载失败不该影响切肤结果 */
+    }
   }
 }
 

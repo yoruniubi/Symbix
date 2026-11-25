@@ -664,6 +664,13 @@ function autoSendSttText(text: string) {
 function startVoice() {
   isRecording.value = true
   sttOpened = false
+  // 建新连接前先把旧的收掉：`checkSttModeAndStart()` 里有一次 await /voice/config，
+  // 这期间用户完全可能再点一次语音键 —— 旧代码直接覆盖 `sttSource`，
+  // 前一个 EventSource 就此失去引用、永远不关，连带着后端的流式识别任务一起挂着。
+  if (sttSource) {
+    sttSource.close()
+    sttSource = null
+  }
   // 先订 SSE 再 start,避免引擎秒出结果时丢首句
   sttSource = new EventSource(`${BACKEND_URL}/voice/stt/events`)
   sttSource.onopen = () => {
