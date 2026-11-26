@@ -20,12 +20,12 @@ https://github.com/user-attachments/assets/5c8d7f29-7ac0-423a-8592-0855031d0158
 
 </div>
 
-**Stack**: Tauri 2 desktop shell (Vue 3 + PixiJS) + FastAPI backend + a custom Python Agent SDK (31 tools / memory / skills / MCP / scheduled jobs).
+**Stack**: Tauri 2 desktop shell (Vue 3 + PixiJS) + FastAPI backend + a custom Python Agent SDK (40 tools / memory / skills / MCP / scheduled jobs).
 
 ## ✨ Highlights
 
 - 📦 **Delivers finished files, not just answers** — formatted Word / PPT / Excel / PDF, ready to send
-- 🧬 **Reads and writes any format** — papers, reports, spreadsheets, handouts; scanned PDFs fall back to OCR
+- 🧬 **Reads and writes any format** — papers, reports, spreadsheets, handouts; scanned PDFs fall back to OCR. **Existing Word / PPT files can be edited in place** — fonts, sizes, colors, alignment, spacing, shading, bulk find-and-replace — with the original layout left untouched (not “parse it out and regenerate”)
 - 🤖 **One sentence, whole pipeline** — search → download → deep-read → summarize → deliver, fully unattended
 - 🔍 **Every step is out in the open** — which tool was called, what went in, what came back, how long it took, why it failed: all logged in the chat stream, no black box
 - 🎭 **Multi-agent teamwork** — complex tasks spawn parallel sub-agents, each with its own model
@@ -143,6 +143,18 @@ npm run tauri dev    # desktop app
 ```
 
 > Speech recognition is local out of the box: the installer bundles SenseVoice (native stack + model) — works offline, no key needed. Only when running from source do you need to fetch the native stack yourself from the `assets-v1` release and place it under `backend/Symbix_sdk/stt/multi-platform/<platform>/`.
+
+### Runtimes: your Python / Node wins
+
+The installer bundles `uv` (41MB) and `bun` (86MB), but they do **not** replace the Python / Node you already have — they are a fallback:
+
+| Situation | Behaviour |
+| --- | --- |
+| You have Python / Node installed | Your own is used first; an existing `npx` or `uv` is never shadowed |
+| No Node on the machine | `npx` / `bunx` forwarder scripts are generated, pointing at the bundled `bun` — MCP and `bunx` commands keep working |
+| No uv / uvx on the machine | A `uvx` forwarder is generated, pointing at the bundled `uv` (equivalent to `uv tool run`) |
+
+Forwarders are only created for **missing** commands (under `data/_runtime_shims/`, git-ignored), so they never override your own toolchain. The agent runs Python through `uv run` by default — an isolated environment that leaves your system Python untouched — and declares any third-party libraries as tool arguments, which are installed automatically. The model also sees, in its system prompt, which runtimes come from the system and which are bundled.
 
 ### Configure a model
 

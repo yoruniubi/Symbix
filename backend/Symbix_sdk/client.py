@@ -390,6 +390,19 @@ class SymbixClient:
                 "程序目录顶替,也不要用长期记忆里的其他项目来猜。\n"
             )
 
+        # ── 运行环境:本机有什么 python / node,该用哪个跑 ──────────
+        # 不写这一段,模型就只能凭训练先验走「系统 python + pip install」,
+        # 既污染用户环境,也用不上随包捆绑的 uv / bun。探测结果在本进程内缓存,
+        # 会话内稳定,放 system 前缀不影响 prompt cache。
+        try:
+            from .runtime_env import describe_runtime as _describe_runtime
+
+            _runtime_block = _describe_runtime()
+        except Exception:
+            _runtime_block = ""
+        if _runtime_block:
+            system += "\n\n" + _runtime_block + "\n"
+
         # ── 当轮动态内容:匹配到的技能指南(不进 system) ─────────────
         # 紧跟在用户请求前面,模型注意力更好;且不污染 system 前缀。
         user_prefix = ""

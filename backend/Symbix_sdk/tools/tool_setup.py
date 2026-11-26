@@ -10,6 +10,8 @@ from Symbix_sdk.tools.builtin.agent_tools import AGENT_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.job_tools import JOB_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.memory_tools import MEMORY_TOOLS_SCHEMAS
 from Symbix_sdk.tools.builtin.extension_tools import EXTENSION_TOOLS_SCHEMAS
+from Symbix_sdk.tools.builtin.python_tools import PYTHON_TOOLS_SCHEMAS
+from Symbix_sdk.tools.builtin.docx_edit_tools import DOCX_EDIT_TOOLS_SCHEMAS
 ALL_TOOL_SCHEMAS = {}
 ALL_TOOL_SCHEMAS.update(FILE_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(DOC_TOOLS_SCHEMAS)
@@ -22,6 +24,8 @@ ALL_TOOL_SCHEMAS.update(AGENT_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(JOB_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(MEMORY_TOOLS_SCHEMAS)
 ALL_TOOL_SCHEMAS.update(EXTENSION_TOOLS_SCHEMAS)
+ALL_TOOL_SCHEMAS.update(PYTHON_TOOLS_SCHEMAS)
+ALL_TOOL_SCHEMAS.update(DOCX_EDIT_TOOLS_SCHEMAS)
 
 def setup_builtin_tools(toolkit) -> None:
     """将定义在所有子模块中的工具注册到给定的 NativeToolkit 实例。

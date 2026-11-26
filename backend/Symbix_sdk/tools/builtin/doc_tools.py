@@ -1278,6 +1278,8 @@ DOC_TOOLS_SCHEMAS = {
             "读取办公文档(docx/xlsx/pptx/pdf/doc)并把内容解析为 Markdown 文本返回,"
             "供模型分析/理解。适用于论文、合同、报告、表格等二进制文档 —— read_file/parse_file 读不了或读不全时用它。"
             "内部优先用 markitdown,自动降级。返回文本可能较长,注意 max_chars。"
+            "注意:输出**只有文字,没有任何样式信息**(字号/颜色/字体/对齐/底纹/页眉全丢)。"
+            "要改 docx 的格式或保格式换字,请用 inspect_docx / format_docx / replace_docx_text。"
         ),
         "parameters": {
             "type": "object",
@@ -1323,8 +1325,9 @@ DOC_TOOLS_SCHEMAS = {
         "description": (
             "把 Markdown 内容写成 .docx 文件(新建或覆盖)。"
             "适合把模型整理的文本/报告落成 Word。样式以默认模板为主(内容优先、样式让位)。"
-            "注意:这不是对已有 docx 的原地编辑 —— 若想修改已有 docx,先用 doc_to_markdown 读出内容,"
-            "修改后调用本工具写到一个新 .docx 路径(原样式不会保留)。"
+            "**注意:这不是对已有 docx 的原地编辑** —— 重写会完全丢失原文件的样式(字体/字号/颜色/"
+            "页眉/底纹等全没)。**修改已有 docx 请用 format_docx(改格式)或 replace_docx_text"
+            "(换文字),那两者才保样式。** 本工具只用于从零生成新文件。"
         ),
         "parameters": {
             "type": "object",

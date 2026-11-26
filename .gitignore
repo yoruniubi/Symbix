@@ -118,3 +118,6 @@ backend/dist-assets/
 Symbix_frontend/public/codex_pet
 Symbix_frontend/public/pixiv_pet
 launch-video
+
+# 运行期生成：uvx/bunx/npx 的 .cmd 转发脚本（系统缺什么才生成什么）
+backend/_runtime_shims/

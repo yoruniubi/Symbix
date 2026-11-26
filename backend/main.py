@@ -40,26 +40,40 @@ from application.routers import chat, providers_api, mcp, skills, sessions, pet,
 
 
 def _ensure_bundled_runtime_on_path() -> None:
-    """将 SDK 捆绑运行时目录(bun.exe / uv.exe)注入 PATH。
+    """将 SDK 捆绑运行时目录(bun.exe / uv.exe)与 shim 目录注入 PATH。
 
     skill 脚本(open_terminal 里的 `uv run ...` / `bun x ...`)与
     stdio MCP 子进程都继承本后端进程的环境;注入后即使系统未装
     node / pip,也能靠 SDK 内置的 bun.exe / uv.exe 拉起 uv / uvx /
     bunx 语义的命令,不再依赖用户机器预装运行时。
+
+    顺序有讲究:**系统 PATH 在前,兜底目录在后**。否则打包内置的 uv.exe
+    会盖掉用户自己装的 uv,扶持过来的运行时反而成了累赘。
+    shim 只为系统缺失的命令生成(系统有 npx 就不造 npx),所以放在中间
+    也不会遮蔽已有命令。
     """
     try:
-        from Symbix_sdk.resource_path import resource
-        sdk_dir = str(resource("Symbix_sdk"))
+        from Symbix_sdk.runtime_env import ensure_shims, runtime_path_entries
+
+        # 先生成 shim,再拿目录清单 —— 否则首次启动 shim 目录还不存在
+        created = ensure_shims()
+        entries = runtime_path_entries()
     except Exception as e:
-        print(f"[runtime] SDK 路径解析失败,跳过 PATH 注入: {e}")
+        print(f"[runtime] 运行时探测失败,跳过 PATH 注入: {e}")
         return
-    if not os.path.isdir(sdk_dir):
+
+    if not entries:
         return
     path = os.environ.get("PATH", "")
-    if sdk_dir in path:
+    existing = path.split(os.pathsep)
+    added = [p for p in entries if p not in existing]
+    if not added:
         return
-    os.environ["PATH"] = sdk_dir + os.pathsep + path
-    print(f"[runtime] SDK 运行时目录已加入 PATH: {sdk_dir}")
+    # 系统 PATH 在前:用户已装的 python / node / uv 永远优先
+    os.environ["PATH"] = path + os.pathsep + os.pathsep.join(added)
+    print(f"[runtime] 兜底运行时已加入 PATH: {', '.join(added)}")
+    if created:
+        print(f"[runtime] 已生成命令 shim: {', '.join(created)}")
 
 
 def _ensure_first_run_files() -> None:
