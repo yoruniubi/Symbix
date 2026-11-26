@@ -118,6 +118,7 @@ export default {
     unknownTool: '未知工具',
     param: '参数',
     result: '结果',
+    stepsFolded: '已折叠较早的 {count} 个步骤，点击展开',
     emptyResult: '(空)',
     resultTruncated: '... (结果已截断,共 {count} 字符)',
     continueProcessing: '继续处理...',

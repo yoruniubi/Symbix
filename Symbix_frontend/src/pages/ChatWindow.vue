@@ -219,7 +219,7 @@ const { startupCheck } = useUpdateCheck()
 const { fetchModels, chatCompletion } = useApiClient()
 const hello_list = [t('home.petGreeting'), t('home.petGreetingWelcome'), t('home.petGreetingHelp'), t('home.petGreetingChat'), t('home.petGreetingList')]
 const greeting = hello_list[Math.floor(Math.random() * hello_list.length)]
-import { useChatStore, mapBackendSteps, clampToolResult, clampToolArguments } from '@/composables/useChatStore'
+import { useChatStore, mapBackendSteps, clampToolResult, clampToolArguments, TOOL_ARGS_KEEP } from '@/composables/useChatStore'
 import { parseSessionMarkdown } from '@/utils/sessionMarkdown'
 import { startMemorySentinel } from '@/utils/memorySentinel'
 import { notifyTaskComplete } from '@/composables/useNotify'
@@ -1236,7 +1236,69 @@ function hideDuringLoading(msg: any): boolean {
   return true
 }
 
-/** 排队:ChatInput 在流不可注入时转来;轮末(loading 变 false)合并成一条自动发送 */
+/** 思考流保留上限（字符）。超出后只留尾部，开头补省略标记。 */
+const REASONING_KEEP = 12000
+
+/**
+ * 把过长思考文本裁到 REASONING_KEEP 以内，保留尾部。
+ * 仅用于展示，不影响发给模型的内容（那边由后端 clamp）。
+ */
+function capReasoning(text: string): string {
+  if (text.length <= REASONING_KEEP) return text
+  return `...(前部思考已省略)\n${text.slice(-REASONING_KEEP)}`
+}
+
+/**
+ * 把局部聚合数组 steps 与 msg.steps 对齐，并返回 msg.steps。
+ *
+ * 旧写法是 `msg.steps = steps.map(s => ({...s, arguments: clamp(...)}))`，
+ * 每收到一个 SSE 事件就**整包重建**所有 step 对象：
+ *   1. 产生 O(N²) 的量级的临时对象（N=已发生工具调用数）
+ *   2. msg.steps 每次换新引用 → 所有 ToolStepCard 全部重渲染
+ *   3. 重建出的新对象与局部 steps 里的不是同一个 → 只能整包替换来保持同步
+ * 现在只改需要改的字段，数组引用不变，Vue 按字段级依赖重新渲染。
+ *
+ * @param steps 局部聚合数组（与 msg.steps 共享元素引用）
+ * @param msg 当前消息对象
+ * @param touched 刚被修改的元素；未传则只做引用对齐（不重建对象）
+ */
+function syncSteps(steps: any[], msg: any): any[] {
+  // 必须换一个新数组引用才能触发 msg.steps 的 setter → ChatMessage 的 prop 变更。
+  // 只复制数组（引用），不 clone 每个对象，相比旧版
+  // `steps.map(s => ({...s, ...}))` 少了 N 个对象分配。
+  msg.steps = steps.slice()
+  return steps
+}
+
+/**
+ * 就地修改一个 step 并把它换成浅拷贝。
+ *
+ * 为什么要克隆：ChatMessage 里 `:step="s"` 传的是对象本身，
+ * 若直接改字段而不换对象引用，子组件 props 不变 → 不会重渲染（界面不更新）。
+ * 克隆只针对**刚被改动的这一个** step，其余步骤保持原引用不变，
+ * 因此只有这一张卡片重渲染，而不是整包 N 张。
+ *
+ * @param steps 局部聚合数组
+ * @param target 要修改的 step 对象（steps 中的元素）
+ * @param patch 要覆盖的字段
+ * @returns 新数组（已同步到 msg.steps）
+ */
+function patchStep(steps: any[], target: any, patch: Record<string, any>): any[] {
+  const idx = steps.indexOf(target)
+  if (idx < 0) {
+    // target 可能是 msg.steps 里的 reactive proxy(和 steps 不是同一批引用,
+    // indexOf 找不到)。按 id/name 兜底定位,找不到就放弃 —— 常见于
+    // delegate_progress 先于 tool_call 到达时,此时 step 尚不存在,更新无意义。
+    const byId = steps.findIndex((s: any) => target && s && (s.id && s.id === target.id || (!s.id && s.name && s.name === target.name)))
+    if (byId < 0) return steps
+    steps[byId] = { ...steps[byId], ...patch }
+    return steps
+  }
+  steps[idx] = { ...target, ...patch }
+  return steps
+}
+
+/** 排队:ChatInput 在流不可注入时转来；轮末(loading 变 false)合并成一条自动发送 */
 function handleQueuedMessage(text: string) {
   if (!text) return
   // 攒着而不是覆盖:连续插两句时前一句不该被吃掉
@@ -1495,7 +1557,11 @@ function handleSSEEvent(
       break
 
     case 'reasoning':
-      msg.reasoning = (msg.reasoning || '') + (evt.content || '')
+      // 思考流只用于卡片里折叠展示，没必要无限累积：
+      // 一个长任务可以产出几十万字的推理，全部拼进 msg.reasoning 后
+      // 每次 localStorage 序列化 / 会话快照都要重新转一次。
+      // 只保留尾部（用户实际会看的部分），前面的丢弃。
+      msg.reasoning = capReasoning((msg.reasoning || '') + (evt.content || ''))
       break
 
     case 'user_injected': {
@@ -1513,20 +1579,22 @@ function handleSSEEvent(
       // 同一工具调用的参数可能跨多个 SSE 事件,按 id 聚合。
       const key = id || `name:${name}`
       if (toolCallAcc[key] === undefined) toolCallAcc[key] = ''
-      toolCallAcc[key] += argsChunk
+      // 参数只用于卡片展示(前端展示上限是 TOOL_ARGS_KEEP),
+      // 超限后不再追加 —— 否则 write_file 这种整篇文件当参数流上来的调用
+      // 会把几十 MB 字符串一直持到本轮结束。
+      if (toolCallAcc[key].length < TOOL_ARGS_KEEP * 2) {
+        toolCallAcc[key] += argsChunk
+      }
 
       const found = steps.find((s: any) =>
         (id && s.id === id) || (!id && s._toolKey === key),
       )
       if (found) {
-        found.arguments = clampToolArguments(toolCallAcc[key])
+        patchStep(steps, found, { arguments: clampToolArguments(toolCallAcc[key]) })
       } else {
         steps.push({ id, _toolKey: key, name, arguments: clampToolArguments(toolCallAcc[key]), status: 'pending' })
       }
-      msg.steps = steps.map((s: any) => ({
-        ...s,
-        arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
-      }))
+      syncSteps(steps, msg)
       nextTick(() => scrollToBottom())
       break
     }
@@ -1540,9 +1608,11 @@ function handleSSEEvent(
         : (toolResultFailed(evt.content) ? 'error' : 'done')
       const target = steps.find((s: any) => s.id === evt.id)
       if (target) {
-        target.result = clampToolResult(evt.content || '')
-        target.status = status
-        target.progress = undefined  // 子 Agent 完成,清除进行中的进度文案
+        patchStep(steps, target, {
+          result: clampToolResult(evt.content || ''),
+          status,
+          progress: undefined, // 子 Agent 完成,清除进行中的进度文案
+        })
       } else {
         steps.push({
           id: evt.id || '',
@@ -1552,10 +1622,7 @@ function handleSSEEvent(
           status,
         })
       }
-      msg.steps = steps.map((s: any) => ({
-        ...s,
-        arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
-      }))
+      syncSteps(steps, msg)
       if (status === 'done') {
         publishAgentProgress(steps.filter((s: any) => s.status === 'done').length)
       }
@@ -1578,18 +1645,19 @@ function handleSSEEvent(
             role: roleLabel,
             tool: evt.tool || '',
           }
-          target.progress = evt.phase === 'tool_start'
-            ? t('chat.delegateBatchUsingTool', vars)
-            : t('chat.delegateBatchThinking', vars)
+          patchStep(steps, target, {
+            progress: evt.phase === 'tool_start'
+              ? t('chat.delegateBatchUsingTool', vars)
+              : t('chat.delegateBatchThinking', vars),
+          })
         } else {
-          target.progress = evt.phase === 'tool_start'
-            ? t('chat.delegateUsingTool', { role: roleLabel, tool: evt.tool || '' })
-            : t('chat.delegateThinking', { role: roleLabel })
+          patchStep(steps, target, {
+            progress: evt.phase === 'tool_start'
+              ? t('chat.delegateUsingTool', { role: roleLabel, tool: evt.tool || '' })
+              : t('chat.delegateThinking', { role: roleLabel }),
+          })
         }
-        msg.steps = steps.map((s: any) => ({
-          ...s,
-          arguments: clampToolArguments(typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments ?? {})),
-        }))
+        syncSteps(steps, msg)
       }
       break
     }

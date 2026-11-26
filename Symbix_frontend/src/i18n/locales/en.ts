@@ -118,6 +118,7 @@ export default {
     unknownTool: 'Unknown tool',
     param: 'Args',
     result: 'Result',
+    stepsFolded: '{count} earlier steps folded, click to expand',
     emptyResult: '(empty)',
     resultTruncated: '... (truncated, {count} chars in total)',
     continueProcessing: 'Continuing...',

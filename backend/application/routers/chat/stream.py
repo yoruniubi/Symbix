@@ -56,6 +56,7 @@ from application.routers.chat.helpers import (
     _emit_round_summary,
     _estimate_tool_tokens,
     _steps_to_tool_messages,
+    steps_for_sse,
     _assert_tool_pairing,
     _prepare_user_message,
     _filter_image_parts,
@@ -553,7 +554,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                         for tc in tool_calls_raw
                     ],
                 })
-                yield format_sse({"type": "steps", "steps": steps})
+                # 全量 steps 里堆着之前所有轮的原始工具输出,越攒越大;
+                # 直接整包下发会把 O(N²) 的文本塞给前端(见 helpers.steps_for_sse 注释)。
+                # 这里只下发截断副本,完整 steps 仍留作模型上下文。
+                yield format_sse({"type": "steps", "steps": steps_for_sse(steps)})
 
                 parallel_claimed: set[int] = set()
                 for idx_tc, tc in enumerate(tool_calls_raw):

@@ -450,6 +450,72 @@ def build_usage_payload(
     return payload
 
 
+# SSE 下发给前端的 steps 里,单条工具结果/单条工具参数最多带多少字符。
+#
+# 为什么要裁:`steps` 每次工具调用都会整包重发一次(见 stream.py 的
+# `yield format_sse({"type": "steps", "steps": steps})`),而工具结果是**未裁剪**的
+# 原始输出 —— 一个 read_file 读几百 KB 源码、一个 doc_to_markdown 转几万行文档,
+# 都原样堆在 steps 里。N 轮下来这一条 SSE 的文本量就是 O(N²):第 k 轮要重发
+# 前面所有轮的结果。前端 TextDecoder + JSON.parse 后旧对象被丢弃,但**每次解析
+# 都会瞬时持有一份完整的 N² 文本**,renderer 私有内存就是这么到几百 MB 的。
+#
+# 保留长度对齐前端的 clampToolResult(4000)/clampToolArguments(2000) 上限:
+# 前端本来就会把这之后的内容截掉,多发纯属浪费带宽和内存。
+_SSE_STEP_RESULT_KEEP = 4000
+_SSE_STEP_ARGS_KEEP = 2000
+
+
+def clamp_step_result(text) -> str:
+    """把单条工具结果压到 SSE 下发上限内(幂等,已截过就原样返回)。"""
+    if not isinstance(text, str) or len(text) <= _SSE_STEP_RESULT_KEEP:
+        return text
+    if "... [已截断" in text:
+        return text
+    cut = len(text) - _SSE_STEP_RESULT_KEEP
+    return (
+        f"{text[:_SSE_STEP_RESULT_KEEP]}\n\n"
+        f"... [已截断 {cut} 字,仅保留前 {_SSE_STEP_RESULT_KEEP} 字]"
+    )
+
+
+def clamp_step_args(text) -> str:
+    """把单条工具参数压到 SSE 下发上限内(幂等)。"""
+    if not isinstance(text, str) or len(text) <= _SSE_STEP_ARGS_KEEP:
+        return text
+    if "... [参数过长已截断" in text:
+        return text
+    cut = len(text) - _SSE_STEP_ARGS_KEEP
+    return (
+        f"{text[:_SSE_STEP_ARGS_KEEP]}\n"
+        f"... [参数过长已截断 {cut} 字]"
+    )
+
+
+def steps_for_sse(steps: list[dict]) -> list[dict]:
+    """造一份可安全下发给前端的 steps 副本:超长的结果/参数就地裁掉。
+
+    必须返回**新对象**,不能就地改 steps —— 原数组还要用来拼回模型的上下文
+    (`_steps_to_tool_messages`)和审批快照,那里需要完整内容。
+    """
+    out: list[dict] = []
+    for block in steps or []:
+        btype = block.get("type")
+        if btype == "tool_result":
+            item = dict(block)
+            item["content"] = clamp_step_result(block.get("content"))
+            out.append(item)
+        elif btype == "tool_calls":
+            item = dict(block)
+            item["tool_calls"] = [
+                {**tc, "arguments": clamp_step_args(tc.get("arguments"))}
+                for tc in (block.get("tool_calls") or [])
+            ]
+            out.append(item)
+        else:
+            out.append(block)
+    return out
+
+
 def _steps_to_tool_messages(steps: list[dict]) -> list[dict]:
     """从 steps 中提取"已执行"的工具链,转成 OpenAI 消息序列。
 

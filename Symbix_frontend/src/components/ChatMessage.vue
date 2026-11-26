@@ -64,6 +64,10 @@
 
         <!-- Steps / 工具卡片 — 过滤无效空 step -->
         <div v-if="visibleSteps.length" class="steps-block">
+          <!-- 超出上限的更早步骤默认折叠,点一下全部展开(数据都在,只是不渲染) -->
+          <button v-if="hiddenStepCount > 0" class="steps-fold-hint" @click="stepsExpandedAll = true">
+            {{ t('chat.stepsFolded', { count: hiddenStepCount }) }}
+          </button>
           <div v-for="(step, i) in visibleSteps" :key="step.id || i" class="step-card" :class="step.status">
 
             <div class="step-header" @click="toggleStep(Number(i))">
@@ -599,6 +603,11 @@ onUnmounted(() => {
   releaseRig()
   mcpImgToken++
   releaseMcpImg()
+  // 清掉尚未触发的注入定时器,避免卸载后回调读到已销毁的 bubbleRef
+  if (copyBtnTimer) {
+    clearTimeout(copyBtnTimer)
+    copyBtnTimer = null
+  }
 })
 
 /** 提问卡选项:优先用后端给的 options(带描述/动作),旧消息回退到 suggestions 纯文本。 */
@@ -771,8 +780,14 @@ const hasReasoning = computed(() => {
   return typeof r === 'string' ? r.trim().length > 0 : !!r
 })
 
+/** 步骤卡片最多同时渲染多少张；超出部分折叠成一行提示。 */
+const STEP_RENDER_CAP = 40
+
+/** 用户点「展开全部」后不再折叠 */
+const stepsExpandedAll = ref(false)
+
 /** 过滤掉无 name 的空 step（流式过程中可能短暂出现） */
-const visibleSteps = computed(() => {
+const allVisibleSteps = computed(() => {
   const steps = props.msg?.steps
   if (!Array.isArray(steps) || steps.length === 0) return []
   return steps.filter((s: any) => {
@@ -780,6 +795,26 @@ const visibleSteps = computed(() => {
     const name = (s.name || '').trim()
     return !!(name || s.arguments || s.result || s.status === 'awaiting_approval')
   })
+})
+
+/**
+ * 真正渲染的步骤列表。
+ *
+ * 长任务（几十轮工具调用）下 steps 会累积到上百条，每张卡片都有
+ * header + 可展开的参数/结果区（预渲染的 <pre>），全部挂进 DOM 是
+ * renderer 私有内存的另一大来源。这里只保留**最近** STEP_RENDER_CAP 条，
+ * 更早的默认不渲染（用户可手动展开），既不丢数据也不炸 DOM。
+ */
+const visibleSteps = computed(() => {
+  const all = allVisibleSteps.value
+  if (stepsExpandedAll.value || all.length <= STEP_RENDER_CAP) return all
+  return all.slice(-STEP_RENDER_CAP)
+})
+
+/** 被折叠掉的步骤数量（用于提示文案） */
+const hiddenStepCount = computed(() => {
+  if (stepsExpandedAll.value) return 0
+  return Math.max(0, allVisibleSteps.value.length - STEP_RENDER_CAP)
 })
 
 const hasContent = computed(() => {
@@ -803,16 +838,28 @@ const markdownContent = computed(() => {
 const plainContent = computed(() => String(props.msg?.content ?? ''))
 
 /** Markdown 内容变化后，延迟注入代码块复制按钮 */
+// 流式输出时 markdownContent 每个 token 都变，旧写法每次 new 一个 50ms 定时器，
+// 一秒钟能排上百个，每个都全量 querySelectorAll 扫一遍消息 DOM（O(节点数)）。
+// 改为合并式防抖：只保留最后一个定时器。
+let copyBtnTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleInjectCopyButtons(delay = 50) {
+  if (copyBtnTimer) clearTimeout(copyBtnTimer)
+  copyBtnTimer = setTimeout(() => {
+    copyBtnTimer = null
+    injectCopyButtons()
+  }, delay)
+}
+
 watch(markdownContent, () => {
   nextTick(() => {
     // markstream-vue 的 batch 渲染有延迟，多等一帧确保 DOM 就绪
-    setTimeout(() => injectCopyButtons(), 50)
+    scheduleInjectCopyButtons()
   })
 })
 
 onMounted(() => {
   nextTick(() => {
-    setTimeout(() => injectCopyButtons(), 50)
+    scheduleInjectCopyButtons()
   })
 })
 </script>
@@ -1286,6 +1333,22 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.steps-fold-hint {
+  align-self: flex-start;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+}
+
+.steps-fold-hint:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
 }
 
 .step-card {

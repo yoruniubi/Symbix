@@ -43,6 +43,7 @@ from application.routers.chat.helpers import (
     _emit_round_summary,
     _estimate_tool_tokens,
     _steps_to_tool_messages,
+    steps_for_sse,
     _assert_tool_pairing,
     _execute_tool,
     _stream_tool_events,
@@ -304,8 +305,8 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
             _gen_task = asyncio.current_task()
             register_session_task(session_id, _gen_task)
             try:
-                # 先把已执行的步骤发给前端
-                yield format_sse({"type": "steps", "steps": steps})
+                # 先把已执行的步骤发给前端(截断副本,避免 O(N²) 全量重发)
+                yield format_sse({"type": "steps", "steps": steps_for_sse(steps)})
 
                 # 拒绝审批时补发 tool_result 事件,让前端立刻把对应 step 标记为 rejected,
                 # 避免残留 awaiting_approval 的 step-card(旧 step 被后续同名工具误标)。
@@ -434,7 +435,7 @@ async def chat_approve(req: ApproveRequest, http_request: Request):
                             for tc in tool_calls_raw
                         ],
                     })
-                    yield format_sse({"type": "steps", "steps": steps})
+                    yield format_sse({"type": "steps", "steps": steps_for_sse(steps)})
 
                     # 本轮的签名集合:同一轮里出现两条一模一样的调用 → 直接拦
                     round_signatures: set = set()
