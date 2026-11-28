@@ -10,8 +10,10 @@ from .retry_policy import (
     RETRYABLE_EXCEPTIONS,
     is_non_retryable_body,
     is_retryable_status,
+    is_route_flap_body,
     reset_reason,
     retry_delay,
+    route_flap_delay,
     is_moderation_block_body,
 )
 from .app_paths import data_path
@@ -707,7 +709,12 @@ class SymbixClient:
         重试前会补发 `stream_reset`,让前端把上一次已渲染的部分清空重来。
         """
         total = max_retries + 1
-        for attempt in range(total):
+        # 路由抖动时每次退避只有 0.25~1s,可以多试几次 —— 而常规 5xx/限流仍是
+        # max_retries 次(每次退避 1.5~10s),不跟着一起放宽,免得真限流时干等更久。
+        # 因此循环上限按「较宽的那个预算」取,每轮再用 budget 决定是否继续。
+        flap_max_retries = max(max_retries, 6)
+        max_attempts = max(total, flap_max_retries + 1)
+        for attempt in range(max_attempts):
             produced = False
             acc_text = ""
             acc_reasoning = ""
@@ -735,12 +742,14 @@ class SymbixClient:
                         return
                     yield evt
             except RETRYABLE_EXCEPTIONS as e:
-                print(f"[{label}] 流式连接第 {attempt + 1}/{total} 次中断: {e}")
+                print(f"[{label}] 流式连接第 {attempt + 1}/{max_attempts} 次中断: {e}")
                 if attempt < max_retries:
                     if produced:
                         yield {"type": "stream_reset", "reason": reset_reason(exc=e),
                                "attempt": attempt + 1, "total": total}
-                    delay = retry_delay(attempt)
+                    # 连接被掐断也常是负载均衡层的瞬时行为,跟 no_route 同类:
+                    # 用亚秒级退避,别让用户为一个 0.3s 就恢复的抖动等 1.5s。
+                    delay = route_flap_delay(attempt)
                     print(f"[{label}] {delay}s 后第 {attempt + 2}/{total} 次尝试")
                     await asyncio.sleep(delay)
                     continue
@@ -753,15 +762,19 @@ class SymbixClient:
 
             if http_status is not None:
                 print(f"[{label}] HTTP {http_status}: {http_body[:400]}")
+                # 路由抖动(no_route / 无可用渠道)是上游负载均衡的瞬时故障,
+                # 毫秒级就恢复 —— 用亚秒级退避多试几次就绪,而不是把用户按在秒级退避上。
+                flap = is_route_flap_body(http_body)
+                budget = flap_max_retries if flap else max_retries
                 # 内容审核/额度耗尽这类业务判定包成 500 时,重试只会让用户多等十几秒
                 # 再拿到同样结果,直接失败并把上游原话告诉他更有用。
-                if (is_retryable_status(http_status) and attempt < max_retries
+                if (is_retryable_status(http_status) and attempt < budget
                         and not is_non_retryable_body(http_body)):
                     if produced:
                         yield {"type": "stream_reset", "reason": reset_reason(status=http_status),
-                               "attempt": attempt + 1, "total": total}
-                    delay = retry_delay(attempt, retry_after)
-                    print(f"[{label}] HTTP {http_status} 可重试,{delay}s 后第 {attempt + 2}/{total} 次尝试")
+                               "attempt": attempt + 1, "total": budget + 1}
+                    delay = retry_delay(attempt, retry_after, http_body)
+                    print(f"[{label}] HTTP {http_status} 可重试,{delay}s 后第 {attempt + 2}/{budget + 1} 次尝试")
                     await asyncio.sleep(delay)
                     continue
                 # 不要冒充模型正文:这条占位曾经作为 delta 下发给前端,

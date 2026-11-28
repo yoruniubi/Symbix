@@ -30,6 +30,33 @@ _BACKOFF_JITTER = 0.35
 # 上游 Retry-After 给得太离谱(比如 600s)时不干等,超过这个上限就按自己的退避走。
 _RETRY_AFTER_CAP = 30.0
 
+# 路由抖动(no_route / 无可用渠道)专用退避:亚秒级。
+#
+# 理由:这类故障是上游负载均衡层的瞬时抖动,毫秒级就会恢复 —— 实测失败后
+# 立刻重试几乎都能拿到 200。用上面的秒级退避纯属白等:一次请求撞 3 次
+# no_route 就要空等 1.5+3+4.5 ≈ 9s,这就是用户感知到的「响应慢」。
+# 而真正限流(429 且带 Retry-After)仍然走完整退避,不会把上游打死。
+_ROUTE_FLAP_BACKOFF_BASE = 0.25
+_ROUTE_FLAP_BACKOFF_CAP = 1.0
+
+
+def is_route_flap_body(body: str) -> bool:
+    """上游错误体是否表明「路由瞬时抖动」(模型没路由到,但马上会恢复)。
+
+    跟 `is_non_retryable_body` 是互补关系:那些是确定性判定(不值得重试),
+    而这里是**值得重试、但不该按秒级退避**的那类。
+
+    Args:
+        body: 上游返回的错误正文
+
+    Returns:
+        True 表示应当快速重试
+    """
+    if not body:
+        return False
+    low = body.lower()
+    return any(m in low for m in _ROUTE_FLAP_MARKERS)
+
 
 def is_retryable_status(status: int) -> bool:
     """HTTP 状态码是否值得重试。"""
@@ -50,6 +77,21 @@ _NON_RETRYABLE_MARKERS = (
     "model_not_found",        # 模型不存在
     "does not exist",         # 模型/资源不存在
     "unauthorized",
+)
+
+# 路由层瞬时故障的标记。**注意:这些必须保留重试**,不能归入上面的
+# `_NON_RETRYABLE_MARKERS`。
+#
+# 实测数据(某中转站 deepseek-v4.1-flash,12 组无退避连测):
+#   no_route 成阵发出现 —— 爆发时连打十几条,但 12 组里有 11 组
+#   首次就成功,且失败后「立刻」重试基本都能拿到 200。
+# 说明它是上游负载均衡层的毫秒级抖动,不是确定性结论。
+# 归入不重试会直接打死 30%~60% 本来可用的请求。
+# 真正需要改的是**退避时长**(见 _BACKOFF_BASE),而不是是否重试。
+_ROUTE_FLAP_MARKERS = (
+    "no_route",
+    "no visible model id",
+    "no available channel",
 )
 
 
@@ -134,10 +176,32 @@ def backoff_seconds(attempt: int, base: float = _BACKOFF_BASE, cap: float = _BAC
     return round(delay * (1 + random.uniform(0, _BACKOFF_JITTER)), 3)
 
 
-def retry_delay(attempt: int, retry_after: str | None = None) -> float:
-    """下一次重试前等多久:优先听上游的 Retry-After,否则用自己的退避。"""
+def route_flap_delay(attempt: int) -> float:
+    """路由抖动专用的亚秒级退避。attempt 从 0 开始。"""
+    delay = min(_ROUTE_FLAP_BACKOFF_BASE * (2 ** max(0, attempt)), _ROUTE_FLAP_BACKOFF_CAP)
+    return round(delay * (1 + random.uniform(0, _BACKOFF_JITTER)), 3)
+
+
+def retry_delay(attempt: int, retry_after: str | None = None,
+                body: str | None = None) -> float:
+    """下一次重试前等多久。
+
+    优先级:上游 Retry-After > 路由抖动的亚秒级退避 > 常规指数退避。
+
+    Args:
+        attempt: 已尝试次数(从 0 开始)
+        retry_after: 上游 `Retry-After` 响应头
+        body: 上游错误正文。命中路由抖动时改用亚秒级退避
+
+    Returns:
+        需要等待的秒数
+    """
     parsed = retry_after_seconds(retry_after)
-    return parsed if parsed is not None else backoff_seconds(attempt)
+    if parsed is not None:
+        return parsed
+    if body and is_route_flap_body(body):
+        return route_flap_delay(attempt)
+    return backoff_seconds(attempt)
 
 
 def reset_reason(exc: BaseException | None = None, status: int | None = None) -> str:

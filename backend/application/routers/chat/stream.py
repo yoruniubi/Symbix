@@ -3,6 +3,7 @@ import asyncio
 import time as _time
 import uuid
 import json as _json
+import re as _re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -80,12 +81,38 @@ def _humanize_upstream_error(raw: str) -> str:
     429 时上游通常不给响应体,原样会是 `HTTP 429: ` 这种空尾巴 ——
     直接写进 round 记录,下一轮模型看到「error」也说不出是限流,
     照样从头重试一遍。
+
+    另外上游会把内部路由细节(如 `$any$contains$<needle>$`)直接写进
+    错误文案,原样展示给用户只会让人一头雾水 —— 这里统一换成
+    「发生了什么 + 该怎么办」。
+
+    Args:
+        raw: 上游 `done` 事件里的 error 原文(通常形如 `HTTP 500: {...}`)
+
+    Returns:
+        适合展示的中文短句,不带句末句号
     """
     text = (raw or "").strip().rstrip(":").strip()
+    low = text.lower()
+
+    if not text:
+        return "上游未返回内容,本轮未完成"
+    # 路由抖动:上游自己找不到这个模型的路由。对用户来说就是「服务商那边没排上队」。
+    if "no_route" in low or "no visible model id" in low or "no available channel" in low:
+        return "服务商侧暂时没有可用线路(重试后仍失败),稍后重试或换一个模型"
+    # 渠道级限流:所有候选渠道都被本地限流
+    if "locally rate limited" in low or "get_channel_failed" in low:
+        return "服务商侧所有渠道都在限流,本轮未完成,稍后重试"
     if "429" in text:
         return "上游限流(HTTP 429),重试到上限仍未成功,本轮未完成"
     if "401" in text or "403" in text:
         return f"上游鉴权失败({text[:60]}),本轮未完成"
+    if "524" in text or "521" in text or "522" in text or "523" in text:
+        # 从原文里把状态码抽出来,别用固定下标切 —— text 可能是
+        # `HTTP 524: {...}` 也可能带其他前缀
+        m = _re.search(r"\b(52[1-4])\b", text)
+        code = m.group(1) if m else "5xx"
+        return f"上游网关超时(HTTP {code}),本轮未完成"
     return f"{text},本轮未完成" if text else "上游未返回内容,本轮未完成"
 
 
